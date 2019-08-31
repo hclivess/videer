@@ -16,8 +16,8 @@ ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get(
 
 ## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
-- For avisynth, you will need [avisynth](http://avisynth.nl/index.php/Main_Page) installed
-- For deinterlacing, you will need to have [QTGMC](http://forum.doom9.org/attachment.php?attachmentid=16264&d=1521180781) installed and all the required plugins:
+- For AviSynth, you will need [AviSynth](http://avisynth.nl/index.php/Main_Page) installed
+- For deinterlacing, you will need to have AviSynth with [QTGMC](http://forum.doom9.org/attachment.php?attachmentid=16264&d=1521180781) installed and all the required plugins:
     - [MaskTools2](https://github.com/pinterf/masktools/releases/download/2.2.18/masktools2-v2.2.18.7z)
     - [MVTools2](https://github.com/pinterf/mvtools/releases/download/2.7.41/mvtools-2.7.41-with-depans.7z)
     - [nnedi3](https://github.com/jpsdr/NNEDI3/releases/download/0.9.4.53/NNEDI3_v0_9_4_53.7z)
