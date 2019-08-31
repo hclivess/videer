@@ -11,3 +11,5 @@ Requirements:
     - [RgTools](https://github.com/pinterf/RgTools/releases/download/0.98/RgTools-0.98.7z)
     - [SMDegrain](https://pastebin.com/u1xsPLwK) (smdegrain.avsi)
     
+![thumb](thumb.png)    
+    
