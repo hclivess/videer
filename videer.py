@@ -109,11 +109,11 @@ class Application(tk.Frame):
         self.outfile.grid(row=12, column=1, sticky='W', padx=5)
 
         self.crf_label = tk.Label(self)
-        self.crf_label["text"] = "CRF : "
+        self.crf_label["text"] = "CRF: "
         self.crf_label.grid(row=13, column=0, sticky='', padx=5)
 
-        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL)
-        self.crf.grid(row=13, column=1, sticky='W', pady=5, padx=5)
+        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, width=30)
+        self.crf.grid(row=13, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
         self.extras_label = tk.Label(self)
