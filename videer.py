@@ -22,11 +22,11 @@ class Application(tk.Frame):
         self.create_widgets()
 
     @staticmethod
-    def runfx(codec, preset, crf, outfile):
+    def runfx(codec, preset, crf, outfile, extras):
         avs = CreateAvs(infile="test.avi")
 
         os.system("notepad")
-        print(f'ffmpeg.exe" -hide_banner -i "parameters.avs" -y -c:v lib{codec} -preset {preset} -crf {crf} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{outfile}"')
+        print(f'ffmpeg.exe" -hide_banner -i "parameters.avs" -y -c:v lib{codec} -preset {preset} -crf {crf} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{outfile}" {extras}')
 
     def create_widgets(self):
 
@@ -100,7 +100,7 @@ class Application(tk.Frame):
         self.extras = tk.Entry(self, textvariable=self.extras_value, width=10)
         self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
 
-        self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx(self.codec_var.get(), self.preset_var.get(), self.crf.get(), self.outfile.get()))
+        self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx(self.codec_var.get(), self.preset_var.get(), self.crf.get(), self.outfile.get(), self.extras_value.get()))
         self.run.grid(row=15, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
