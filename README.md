@@ -23,6 +23,6 @@ ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get(
     - [nnedi3](https://github.com/jpsdr/NNEDI3/releases/download/0.9.4.53/NNEDI3_v0_9_4_53.7z)
     - [RgTools](https://github.com/pinterf/RgTools/releases/download/0.98/RgTools-0.98.7z)
     - [SMDegrain](https://pastebin.com/u1xsPLwK) (smdegrain.avsi)
-    
-![thumb](thumb.png)    
-    
+
+### Preview:    
+![thumb](thumb.png)
