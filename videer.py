@@ -23,9 +23,6 @@ class Application(tk.Frame):
         self.create_widgets()
 
     def runfx(self):
-        if self.deinterlace_var.get():
-            self.use_avisynth_var.set(True)
-
         if self.use_avisynth_var.get():
             CreateAvs(infile=self.infile.get())
             os.system(f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{self.outfile.get()}" {self.extras_value.get()}')
@@ -36,17 +33,21 @@ class Application(tk.Frame):
     def select_file(self, var):
         var.set(fd.askopenfilename(multiple=False, initialdir="", title="Select file"))
 
+    def set_avisynth_true(self,click):
+        self.use_avisynth_var.set(True)
+
     def create_widgets(self):
 
-        self.deinterlace_var = tk.BooleanVar()
-        self.deinterlace_var.set(False)
-        self.deinterlace_button = tk.Checkbutton(self, text="Deinterlace", variable=self.deinterlace_var)
-        self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
-        
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
         self.use_avisynth_button = tk.Checkbutton(self, text="Use Avisynth", variable=self.use_avisynth_var)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+
+        self.deinterlace_var = tk.BooleanVar()
+        self.deinterlace_var.set(False)
+        self.deinterlace_button = tk.Checkbutton(self, text="Deinterlace", variable=self.deinterlace_var)
+        self.deinterlace_button.bind("<Button-1>", self.set_avisynth_true)
+        self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
 
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Codec: "
