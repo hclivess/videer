@@ -113,7 +113,7 @@ class Application(tk.Frame):
         self.crf.set(18)
 
         self.extras_label = tk.Label(self)
-        self.extras_label["text"] = "FFMPEG Extras: "
+        self.extras_label["text"] = "FFmpeg Extras: "
         self.extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
