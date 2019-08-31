@@ -121,14 +121,14 @@ class Application(tk.Frame):
         self.extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
-        self.extras = tk.Entry(self, textvariable=self.extras_value, width=10)
+        self.extras = tk.Entry(self, textvariable=self.extras_value, width=70)
         self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
 
         self.avisynth_extras_label = tk.Label(self)
         self.avisynth_extras_label["text"] = "AviSynth extras: "
         self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
-        self.avisynth_extras.grid(row=15, column=1, sticky='WE', padx=5)
+        self.avisynth_extras.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
