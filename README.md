@@ -1,5 +1,5 @@
 # videer
-FFmpeg GUI with avisynth support for deinterlacing and profile configuration that can be used in frameserving ([link](https://github.com/satishsampath/frame-server)).
+FFmpeg GUI with AviSynth support for deinterlacing and profile configuration that can be used in frameserving ([link](https://github.com/satishsampath/frame-server)).
 
 Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
