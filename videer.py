@@ -9,6 +9,10 @@ class CreateAvs():
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
 
+            if app.avisynth_extras.get("1.0",tk.END).strip():
+                avsfile.write('\n')
+                avsfile.write(app.avisynth_extras.get("1.0",tk.END))
+
             if app.deinterlace_var.get():
                 avsfile.write('\n')
                 avsfile.write('QTGMC(Preset="Slower")')
@@ -40,7 +44,7 @@ class Application(tk.Frame):
 
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
-        self.use_avisynth_button = tk.Checkbutton(self, text="Use Avisynth", variable=self.use_avisynth_var)
+        self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
 
         self.deinterlace_var = tk.BooleanVar()
@@ -120,11 +124,18 @@ class Application(tk.Frame):
         self.extras = tk.Entry(self, textvariable=self.extras_value, width=10)
         self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
 
+        self.avisynth_extras_label = tk.Label(self)
+        self.avisynth_extras_label["text"] = "AviSynth extras: "
+        self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
+        self.avisynth_extras = tk.Text(self, height=2, width=30)
+        self.avisynth_extras.grid(row=15, column=1, sticky='WE', padx=5)
+        #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
+
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=15, column=1, sticky='WE', padx=5)
+        self.run.grid(row=16, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=16, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=17, column=1, sticky='WE', padx=5, pady=(5))
 
 if __name__ == "__main__":
     root = tk.Tk()
