@@ -1,7 +1,20 @@
 # videer
 FFmpeg GUI with AviSynth support for deinterlacing and profile configuration that can be used in frameserving ([link](https://github.com/satishsampath/frame-server)).
 
-Requirements:
+## Default settings:
+
+### AviSynth
+```
+AVISource("c:/test.avi", audio=true)
+ConvertToYV24(matrix="rec709")
+```
+
+### FFmpeg
+```
+ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{self.outfile.get()}" {self.extras_value.get()}
+```
+
+## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
 - For avisynth, you will need [avisynth](http://avisynth.nl/index.php/Main_Page) installed
 - For deinterlacing, you will need to have [QTGMC](http://forum.doom9.org/attachment.php?attachmentid=16264&d=1521180781) installed and all the required plugins:
