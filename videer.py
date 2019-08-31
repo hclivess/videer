@@ -38,13 +38,19 @@ class Application(tk.Frame):
         var.set(fd.askopenfilename(multiple=False, initialdir="", title="Select file"))
 
     def set_avisynth_true(self,click):
-        self.use_avisynth_var.set(True)
+        if not self.deinterlace_var.get():
+            self.use_avisynth_var.set(True)
+
+    def set_deinterlace_false(self,click):
+        if self.use_avisynth_var.get():
+            self.deinterlace_var.set(False)
 
     def create_widgets(self):
 
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
         self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
+        self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
 
         self.deinterlace_var = tk.BooleanVar()
