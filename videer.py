@@ -61,7 +61,7 @@ class Application(tk.Frame):
         self.codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
 
         self.preset_label = tk.Label(self)
-        self.preset_label["text"] = "preset: "
+        self.preset_label["text"] = "Preset: "
         self.preset_var = tk.StringVar()
         self.preset_var.set("medium")
         self.preset_label.grid(row=4, column=0, sticky='', pady=5, padx=5)
@@ -113,7 +113,7 @@ class Application(tk.Frame):
         self.crf.set(18)
 
         self.extras_label = tk.Label(self)
-        self.extras_label["text"] = "FFmpeg Extras: "
+        self.extras_label["text"] = "FFmpeg extras: "
         self.extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
