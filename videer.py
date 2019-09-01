@@ -76,7 +76,7 @@ class Application(tk.Frame):
         self.preset_var.set("medium")
         self.preset_label.grid(row=4, column=0, sticky='', pady=5, padx=5)
 
-        self.preset_button = tk.Radiobutton(self, text="slowest", variable=self.preset_var, value="slowest")
+        self.preset_button = tk.Radiobutton(self, text="veryslow", variable=self.preset_var, value="veryslow")
         self.preset_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
         self.preset_button = tk.Radiobutton(self, text="slower", variable=self.preset_var, value="slower")
         self.preset_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
@@ -88,7 +88,7 @@ class Application(tk.Frame):
         self.preset_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
         self.preset_button = tk.Radiobutton(self, text="fast", variable=self.preset_var, value="fast")
         self.preset_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="fastest", variable=self.preset_var, value="fastest")
+        self.preset_button = tk.Radiobutton(self, text="veryfast", variable=self.preset_var, value="veryfast")
         self.preset_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
 
         self.infile_value = tk.StringVar()
