@@ -24,5 +24,12 @@ ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get(
     - [RgTools](https://github.com/pinterf/RgTools/releases/download/0.98/RgTools-0.98.7z)
     - [SMDegrain](https://pastebin.com/u1xsPLwK) (smdegrain.avsi)
 
+### Build requirements:
+- Python 3 with tkinter, no additional requirements
+- My favorite way to build is using Nuitka:
+```
+python -m nuitka --follow-imports videer.py --standalone --show-progress -j 8 --recurse-all
+```
+
 ### Preview:    
 ![thumb](thumb.png)
