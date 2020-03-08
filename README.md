@@ -11,7 +11,7 @@ ConvertToYV24(matrix="rec709")
 
 ### FFmpeg
 ```
-ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{self.outfile.get()}" {self.extras_value.get()}
+ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}
 ```
 
 ## Requirements:
