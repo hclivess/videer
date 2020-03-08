@@ -124,7 +124,7 @@ class Application(tk.Frame):
         self.infile_value.set("c:/test.avi")
 
         self.infile_label = tk.Label(self)
-        self.infile_label["text"] = "Input file(s): "
+        self.infile_label["text"] = "Input File(s): "
         self.infile_label.grid(row=11, column=0, sticky='', pady=5, padx=5)
         self.infile_button = tk.Button(self, text="Select", fg="green", command=lambda: self.select_file(self.infile_value))
         self.infile_button.grid(row=11, column=2, sticky='WE', padx=5, pady=(5))
@@ -147,7 +147,7 @@ class Application(tk.Frame):
         self.abr.set(384)
 
         self.extras_label = tk.Label(self)
-        self.extras_label["text"] = "FFmpeg extras: "
+        self.extras_label["text"] = "FFmpeg Extras: "
         self.extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
@@ -155,7 +155,7 @@ class Application(tk.Frame):
         self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
 
         self.avisynth_extras_label = tk.Label(self)
-        self.avisynth_extras_label["text"] = "AviSynth extras: "
+        self.avisynth_extras_label["text"] = "AviSynth Extras: "
         self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
