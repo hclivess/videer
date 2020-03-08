@@ -1,6 +1,9 @@
+import threading
 import tkinter as tk
 import tkinter.filedialog as fd
 import os
+import logging.handlers
+import subprocess
 
 class CreateAvs():
     def __init__(self, infile):
@@ -25,17 +28,43 @@ class Application(tk.Frame):
 
         self.grid()
         self.create_widgets()
+        self.file_queue = []
+
+    def do_files(self, files, info_box):
+
+        for file in files:
+            info_box.insert(tk.INSERT, f"Processing {file}\n")
+
+            if self.use_avisynth_var.get():
+                CreateAvs(infile=file)
+                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "processed/{file}_processed.mp4" {self.extras_value.get()}')
+            else:
+                command_line = (f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
+
+            rootLogger.info(f"Working on {file}")
+            pipe = subprocess.Popen(command_line, shell=True, stdout=subprocess.PIPE).stdout
+            output = pipe.read().decode()
+            pipe.close()
+            rootLogger.info(output)
+
+            info_box.insert(tk.INSERT, f"Finished {file}\n")
 
     def runfx(self):
-        if self.use_avisynth_var.get():
-            CreateAvs(infile=self.infile.get())
-            os.system(f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{self.outfile.get()}" {self.extras_value.get()}')
-        else:
-            os.system(f'ffmpeg.exe -hide_banner -i "{self.infile.get()}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{self.outfile.get()}" {self.extras_value.get()}')
 
+        top = tk.Toplevel()
+        top.title("Info")
+        info_box = tk.Text(top, width=100)
+        info_box.grid(row=0, pady=0)
+
+        file_thread = threading.Thread(target=self.do_files, args=(self.file_queue, info_box,))
+        file_thread.start()
 
     def select_file(self, var):
-        var.set(fd.askopenfilename(multiple=False, initialdir="", title="Select file"))
+        files = fd.askopenfilename(multiple=True, initialdir="", title="Select file")
+        del self.file_queue[:]
+        for file in files:
+            self.file_queue.append(file)
+        var.set(self.file_queue)
 
     def set_avisynth_true(self,click):
         if not self.deinterlace_var.get():
@@ -95,7 +124,7 @@ class Application(tk.Frame):
         self.infile_value.set("c:/test.avi")
 
         self.infile_label = tk.Label(self)
-        self.infile_label["text"] = "Input file: "
+        self.infile_label["text"] = "Input file(s): "
         self.infile_label.grid(row=11, column=0, sticky='', pady=5, padx=5)
         self.infile_button = tk.Button(self, text="Select", fg="green", command=lambda: self.select_file(self.infile_value))
         self.infile_button.grid(row=11, column=2, sticky='WE', padx=5, pady=(5))
@@ -103,50 +132,49 @@ class Application(tk.Frame):
         self.infile = tk.Entry(self, textvariable=self.infile_value, width=70)
         self.infile.grid(row=11, column=1, sticky='W', padx=5)
 
-        self.outfile_value = tk.StringVar()
-        self.outfile_value.set("c:/test.mp4")
-        self.outfile_label = tk.Label(self)
-        self.outfile_label["text"] = "Output file: "
-        self.outfile_label.grid(row=12, column=0, sticky='', pady=5, padx=5)
-        self.outfile_button = tk.Button(self, text="Select", fg="green", command=lambda: self.select_file(self.outfile_value))
-        self.outfile_button.grid(row=12, column=2, sticky='WE', padx=5, pady=(5))
-
-        self.outfile = tk.Entry(self, textvariable=self.outfile_value, width=70)
-        self.outfile.grid(row=12, column=1, sticky='W', padx=5)
-
         self.crf_label = tk.Label(self)
         self.crf_label["text"] = "CRF: "
-        self.crf_label.grid(row=13, column=0, sticky='', padx=5)
+        self.crf_label.grid(row=12, column=0, sticky='', padx=5)
 
         self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, width=30)
-        self.crf.grid(row=13, column=1, sticky='WE', pady=5, padx=5)
+        self.crf.grid(row=12, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
         self.extras_label = tk.Label(self)
         self.extras_label["text"] = "FFmpeg extras: "
-        self.extras_label.grid(row=14, column=0, sticky='', padx=5)
+        self.extras_label.grid(row=13, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
         self.extras = tk.Entry(self, textvariable=self.extras_value, width=70)
-        self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
+        self.extras.grid(row=13, column=1, sticky='W', pady=5, padx=5)
 
         self.avisynth_extras_label = tk.Label(self)
         self.avisynth_extras_label["text"] = "AviSynth extras: "
-        self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
+        self.avisynth_extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
-        self.avisynth_extras.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
+        self.avisynth_extras.grid(row=14, column=1, sticky='WE', pady=5, padx=5)
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=16, column=1, sticky='WE', padx=5)
+        self.run.grid(row=15, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=17, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=16, column=1, sticky='WE', padx=5, pady=(5))
 
 if __name__ == "__main__":
     root = tk.Tk()
     root.wm_title("videer")
     #operations = Operations()
+
+    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+    rootLogger = logging.getLogger()
+    rootLogger.setLevel(logging.INFO)
+    fileHandler = logging.FileHandler(f"log.log")
+    fileHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(fileHandler)
+    consoleHandler = logging.StreamHandler()
+    consoleHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(consoleHandler)
 
     app = Application(master=root)
     app.mainloop()
