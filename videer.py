@@ -37,9 +37,9 @@ class Application(tk.Frame):
 
             if self.use_avisynth_var.get():
                 CreateAvs(infile=file)
-                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "processed/{file}_processed.mp4" {self.extras_value.get()}')
+                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "processed/{file}_processed.mp4" {self.extras_value.get()}')
             else:
-                command_line = (f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a 384k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
+                command_line = (f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
 
             rootLogger.info(f"Working on {file}")
             pipe = subprocess.Popen(command_line, shell=True, stdout=subprocess.PIPE).stdout
@@ -135,31 +135,37 @@ class Application(tk.Frame):
         self.crf_label = tk.Label(self)
         self.crf_label["text"] = "CRF: "
         self.crf_label.grid(row=12, column=0, sticky='', padx=5)
-
         self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, width=30)
         self.crf.grid(row=12, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
+        self.abr_label = tk.Label(self)
+        self.abr_label["text"] = "Audio Bitrate: "
+        self.abr_label.grid(row=13, column=0, sticky='', padx=5)
+        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, width=30)
+        self.abr.grid(row=13, column=1, sticky='WE', pady=5, padx=5)
+        self.abr.set(384)
+
         self.extras_label = tk.Label(self)
         self.extras_label["text"] = "FFmpeg extras: "
-        self.extras_label.grid(row=13, column=0, sticky='', padx=5)
+        self.extras_label.grid(row=14, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
         self.extras = tk.Entry(self, textvariable=self.extras_value, width=70)
-        self.extras.grid(row=13, column=1, sticky='W', pady=5, padx=5)
+        self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
 
         self.avisynth_extras_label = tk.Label(self)
         self.avisynth_extras_label["text"] = "AviSynth extras: "
-        self.avisynth_extras_label.grid(row=14, column=0, sticky='', padx=5)
+        self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
-        self.avisynth_extras.grid(row=14, column=1, sticky='WE', pady=5, padx=5)
+        self.avisynth_extras.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=15, column=1, sticky='WE', padx=5)
+        self.run.grid(row=16, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=16, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=17, column=1, sticky='WE', padx=5, pady=(5))
 
 if __name__ == "__main__":
     root = tk.Tk()
