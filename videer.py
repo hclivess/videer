@@ -48,6 +48,8 @@ class Application(tk.Frame):
             rootLogger.info(output)
 
             info_box.insert(tk.INSERT, f"Finished {file}\n")
+        info_box.insert(tk.INSERT, f"All done\n")
+
 
     def runfx(self):
 
