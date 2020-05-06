@@ -37,7 +37,7 @@ class Application(tk.Frame):
 
             if self.use_avisynth_var.get():
                 CreateAvs(infile=file)
-                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "processed/{file}_processed.mp4" {self.extras_value.get()}')
+                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
             else:
                 command_line = (f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
 
