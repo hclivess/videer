@@ -1,9 +1,11 @@
 import threading
 import tkinter as tk
+import tkinter.messagebox as messagebox
 import tkinter.filedialog as fd
 import os
 import logging.handlers
 import subprocess
+
 
 class CreateAvs():
     def __init__(self, infile):
@@ -32,14 +34,22 @@ class Application(tk.Frame):
 
     def do_files(self, files, info_box):
 
+        def with_avisynth(file):
+            return f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v {self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}'
+
+        def without_avisynth(file):
+            return f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v {self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}'
+
         for file in files:
-            info_box.insert(tk.INSERT, f"Processing {file}\n")
+            info_box.configure(state='normal')
+            info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
+            info_box.configure(state='disabled')
 
             if self.use_avisynth_var.get():
                 CreateAvs(infile=file)
-                command_line = (f'ffmpeg.exe -hide_banner -i "parameters.avs" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
+                command_line = with_avisynth(file)
             else:
-                command_line = (f'ffmpeg.exe -hide_banner -i "{file}" -y -c:v lib{self.codec_var.get()} -preset {self.preset_var.get()} -crf {self.crf.get()} -c:a aac -b:a {self.abr.get()}k -movflags +faststart -bf 2 -flags +cgop -pix_fmt yuv420p -f mp4 "{file}_processed.mp4" {self.extras_value.get()}')
+                command_line = without_avisynth(file)
 
             rootLogger.info(f"Working on {file}")
             pipe = subprocess.Popen(command_line, shell=True, stdout=subprocess.PIPE).stdout
@@ -47,8 +57,11 @@ class Application(tk.Frame):
             pipe.close()
             rootLogger.info(output)
 
+            info_box.configure(state='normal')
             info_box.insert(tk.INSERT, f"Finished {file}\n")
-        info_box.insert(tk.INSERT, f"All done\n")
+            info_box.configure(state='disabled')
+
+        messagebox.showinfo(title="Info", message="Queue finished")
 
 
     def runfx(self):
@@ -57,6 +70,7 @@ class Application(tk.Frame):
         top.title("Info")
         info_box = tk.Text(top, width=100)
         info_box.grid(row=0, pady=0)
+        info_box.configure(state='disabled')
 
         file_thread = threading.Thread(target=self.do_files, args=(self.file_queue, info_box,))
         file_thread.start()
@@ -93,81 +107,83 @@ class Application(tk.Frame):
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Codec: "
         self.codec_var = tk.StringVar()
-        self.codec_var.set("x265")
+        self.codec_var.set("libx265")
         self.codec_label.grid(row=2, column=0, sticky='', pady=5, padx=5)
 
-        self.codec_button = tk.Radiobutton(self, text="x264", variable=self.codec_var, value="x264")
+        self.codec_button = tk.Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
         self.codec_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="x265")
+        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
+        self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.codec_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
 
         self.preset_label = tk.Label(self)
         self.preset_label["text"] = "Preset: "
         self.preset_var = tk.StringVar()
         self.preset_var.set("medium")
-        self.preset_label.grid(row=4, column=0, sticky='', pady=5, padx=5)
+        self.preset_label.grid(row=5, column=0, sticky='', pady=5, padx=5)
 
         self.preset_button = tk.Radiobutton(self, text="veryslow", variable=self.preset_var, value="veryslow")
-        self.preset_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="slower", variable=self.preset_var, value="slower")
         self.preset_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="slow", variable=self.preset_var, value="slow")
+        self.preset_button = tk.Radiobutton(self, text="slower", variable=self.preset_var, value="slower")
         self.preset_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="medium", variable=self.preset_var, value="medium")
+        self.preset_button = tk.Radiobutton(self, text="slow", variable=self.preset_var, value="slow")
         self.preset_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="faster", variable=self.preset_var, value="faster")
+        self.preset_button = tk.Radiobutton(self, text="medium", variable=self.preset_var, value="medium")
         self.preset_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="fast", variable=self.preset_var, value="fast")
+        self.preset_button = tk.Radiobutton(self, text="faster", variable=self.preset_var, value="faster")
         self.preset_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="veryfast", variable=self.preset_var, value="veryfast")
+        self.preset_button = tk.Radiobutton(self, text="fast", variable=self.preset_var, value="fast")
         self.preset_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
+        self.preset_button = tk.Radiobutton(self, text="veryfast", variable=self.preset_var, value="veryfast")
+        self.preset_button.grid(row=11, column=1, sticky='w', pady=5, padx=5)
 
         self.infile_value = tk.StringVar()
         self.infile_value.set("c:/test.avi")
 
         self.infile_label = tk.Label(self)
         self.infile_label["text"] = "Input File(s): "
-        self.infile_label.grid(row=11, column=0, sticky='', pady=5, padx=5)
+        self.infile_label.grid(row=12, column=0, sticky='', pady=5, padx=5)
         self.infile_button = tk.Button(self, text="Select", fg="green", command=lambda: self.select_file(self.infile_value))
-        self.infile_button.grid(row=11, column=2, sticky='WE', padx=5, pady=(5))
+        self.infile_button.grid(row=12, column=2, sticky='WE', padx=5, pady=(5))
 
         self.infile = tk.Entry(self, textvariable=self.infile_value, width=70)
-        self.infile.grid(row=11, column=1, sticky='W', padx=5)
+        self.infile.grid(row=12, column=1, sticky='W', padx=5)
 
         self.crf_label = tk.Label(self)
         self.crf_label["text"] = "CRF: "
-        self.crf_label.grid(row=12, column=0, sticky='', padx=5)
+        self.crf_label.grid(row=13, column=0, sticky='', padx=5)
         self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, width=30)
-        self.crf.grid(row=12, column=1, sticky='WE', pady=5, padx=5)
+        self.crf.grid(row=13, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
         self.abr_label = tk.Label(self)
         self.abr_label["text"] = "Audio Bitrate: "
-        self.abr_label.grid(row=13, column=0, sticky='', padx=5)
+        self.abr_label.grid(row=14, column=0, sticky='', padx=5)
         self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, width=30)
-        self.abr.grid(row=13, column=1, sticky='WE', pady=5, padx=5)
+        self.abr.grid(row=14, column=1, sticky='WE', pady=5, padx=5)
         self.abr.set(384)
 
         self.extras_label = tk.Label(self)
         self.extras_label["text"] = "FFmpeg Extras: "
-        self.extras_label.grid(row=14, column=0, sticky='', padx=5)
+        self.extras_label.grid(row=15, column=0, sticky='', padx=5)
         self.extras_value = tk.StringVar()
         self.extras_value.set("")
         self.extras = tk.Entry(self, textvariable=self.extras_value, width=70)
-        self.extras.grid(row=14, column=1, sticky='W', pady=5, padx=5)
+        self.extras.grid(row=15, column=1, sticky='W', pady=5, padx=5)
 
         self.avisynth_extras_label = tk.Label(self)
         self.avisynth_extras_label["text"] = "AviSynth Extras: "
-        self.avisynth_extras_label.grid(row=15, column=0, sticky='', padx=5)
+        self.avisynth_extras_label.grid(row=16, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
-        self.avisynth_extras.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
+        self.avisynth_extras.grid(row=16, column=1, sticky='WE', pady=5, padx=5)
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=16, column=1, sticky='WE', padx=5)
+        self.run.grid(row=17, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=17, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=18, column=1, sticky='WE', padx=5, pady=(5))
 
 if __name__ == "__main__":
     root = tk.Tk()
