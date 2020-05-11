@@ -218,7 +218,7 @@ class Application(tk.Frame):
         self.crf.set(18)
 
         self.abr_label = tk.Label(self)
-        self.abr_label["text"] = "Audio Bitrate: "
+        self.abr_label["text"] = "Audio ABR: "
         self.abr_label.grid(row=17, column=0, sticky='', padx=5)
         self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, width=30)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
