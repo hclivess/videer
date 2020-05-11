@@ -72,7 +72,7 @@ class Application(tk.Frame):
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
 
-        file_thread = threading.Thread(target=self.do_files, args=(self.file_queue, info_box,))
+        file_thread = threading.Thread(target=self.do_files, args=(self.file_queue, info_box, ))
         file_thread.start()
 
     def select_file(self, var):
@@ -89,6 +89,15 @@ class Application(tk.Frame):
     def set_deinterlace_false(self,click):
         if self.use_avisynth_var.get():
             self.deinterlace_var.set(False)
+
+    def stop_process(self):
+        pipe = subprocess.Popen("Taskkill /IM ffmpeg.exe /F", shell=True, stdout=subprocess.PIPE).stdout
+        print("Stop signal sent")
+        output = pipe.read().decode()
+        if not output:
+            output = "No relevant process found"
+        messagebox.showinfo(title="Info", message=output)
+        pipe.close()
 
     def create_widgets(self):
 
@@ -180,10 +189,14 @@ class Application(tk.Frame):
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=17, column=1, sticky='WE', padx=5)
+        self.run.grid(row=17, column=1, sticky='WE', padx=5, pady=(5))
+
+        self.stop = tk.Button(self, text="Stop", fg="red", command=self.stop_process)
+        self.stop.grid(row=18, column=1, sticky='WE', padx=5, pady=(5))
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=18, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=19, column=1, sticky='WE', padx=5, pady=(5))
+
 
 if __name__ == "__main__":
     root = tk.Tk()
