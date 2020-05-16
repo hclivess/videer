@@ -39,7 +39,7 @@ class Application(tk.Frame):
                    f'-hide_banner ' \
                    f'-i "parameters.avs" -y ' \
                    f'-c:v {self.codec_var.get()} ' \
-                   f'-preset {self.preset_var.get()} ' \
+                   f'-preset {self.preset_get(self.speed.get())} ' \
                    f'-crf {self.crf.get()} ' \
                    f'-c:a {self.audio_codec_var.get()} ' \
                    f'-b:a {self.abr.get()}k ' \
@@ -55,7 +55,7 @@ class Application(tk.Frame):
         def without_avisynth(file):
             return f'ffmpeg.exe -hide_banner -i "{file}" -y ' \
                    f'-c:v {self.codec_var.get()} ' \
-                   f'-preset {self.preset_var.get()} ' \
+                   f'-preset {self.preset_get(self.speed.get())} ' \
                    f'-crf {self.crf.get()} ' \
                    f'-c:a {self.audio_codec_var.get()} ' \
                    f'-b:a {self.abr.get()}k ' \
@@ -127,6 +127,25 @@ class Application(tk.Frame):
         messagebox.showinfo(title="Info", message=output)
         pipe.close()
 
+    def preset_get(self, number: int):
+
+        if number == 0:
+            preset = "veryslow"
+        elif number == 1:
+            preset = "slower"
+        elif number == 2:
+            preset = "slow"
+        elif number == 4:
+            preset = "faster"
+        elif number == 5:
+            preset = "fast"
+        elif number == 6:
+            preset = "fastest"
+        else:
+            preset = "medium"
+
+        return preset
+
     def create_widgets(self):
 
         self.use_avisynth_var = tk.BooleanVar()
@@ -141,11 +160,6 @@ class Application(tk.Frame):
         self.deinterlace_button.bind("<Button-1>", self.set_avisynth_true)
         self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
 
-
-
-
-
-
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = tk.StringVar()
@@ -158,11 +172,6 @@ class Application(tk.Frame):
         self.audio_codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
         self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
         self.audio_codec_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
-
-
-
-
-
 
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Video Codec: "
@@ -177,26 +186,12 @@ class Application(tk.Frame):
         self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
 
-        self.preset_label = tk.Label(self)
-        self.preset_label["text"] = "Preset: "
-        self.preset_var = tk.StringVar()
-        self.preset_var.set("medium")
-        self.preset_label.grid(row=8, column=0, sticky='', pady=5, padx=5)
-
-        self.preset_button = tk.Radiobutton(self, text="veryslow", variable=self.preset_var, value="veryslow")
-        self.preset_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="slower", variable=self.preset_var, value="slower")
-        self.preset_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="slow", variable=self.preset_var, value="slow")
-        self.preset_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="medium", variable=self.preset_var, value="medium")
-        self.preset_button.grid(row=11, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="faster", variable=self.preset_var, value="faster")
-        self.preset_button.grid(row=12, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="fast", variable=self.preset_var, value="fast")
-        self.preset_button.grid(row=13, column=1, sticky='w', pady=5, padx=5)
-        self.preset_button = tk.Radiobutton(self, text="veryfast", variable=self.preset_var, value="veryfast")
-        self.preset_button.grid(row=14, column=1, sticky='w', pady=5, padx=5)
+        self.speed_label = tk.Label(self)
+        self.speed_label["text"] = "Speed: "
+        self.speed_label.grid(row=8, column=0, sticky='', padx=5)
+        self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL)
+        self.speed.grid(row=8, column=1, sticky='WE', pady=5, padx=5)
+        self.speed.set(3)
 
         self.infile_value = tk.StringVar()
         self.infile_value.set("c:/test.avi")
