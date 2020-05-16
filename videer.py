@@ -186,10 +186,7 @@ class Application(tk.Frame):
         self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
 
-        self.speed_label = tk.Label(self)
-        self.speed_label["text"] = "Speed: "
-        self.speed_label.grid(row=8, column=0, sticky='', padx=5)
-        self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL)
+        self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL, label="Encoding Speed")
         self.speed.grid(row=8, column=1, sticky='WE', pady=5, padx=5)
         self.speed.set(3)
 
@@ -205,17 +202,11 @@ class Application(tk.Frame):
         self.infile = tk.Entry(self, textvariable=self.infile_value, width=70)
         self.infile.grid(row=15, column=1, sticky='W', padx=5)
 
-        self.crf_label = tk.Label(self)
-        self.crf_label["text"] = "CRF: "
-        self.crf_label.grid(row=16, column=0, sticky='', padx=5)
-        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL)
+        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, label="Video CRF")
         self.crf.grid(row=16, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
-        self.abr_label = tk.Label(self)
-        self.abr_label["text"] = "Audio ABR: "
-        self.abr_label.grid(row=17, column=0, sticky='', padx=5)
-        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL)
+        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, label="Audio ABR", resolution=10)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
         self.abr.set(384)
 
@@ -235,13 +226,13 @@ class Application(tk.Frame):
         #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=20, column=1, sticky='WE', padx=5, pady=(5))
+        self.run.grid(row=20, column=1, sticky='WE', padx=5)
 
         self.stop = tk.Button(self, text="Stop", fg="red", command=self.stop_process)
-        self.stop.grid(row=21, column=1, sticky='WE', padx=5, pady=(5))
+        self.stop.grid(row=21, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
-        self.quit.grid(row=22, column=1, sticky='WE', padx=5, pady=(5))
+        self.quit.grid(row=22, column=1, sticky='WE', padx=5, pady=(0,5))
 
 
 if __name__ == "__main__":
