@@ -213,14 +213,14 @@ class Application(tk.Frame):
         self.crf_label = tk.Label(self)
         self.crf_label["text"] = "CRF: "
         self.crf_label.grid(row=16, column=0, sticky='', padx=5)
-        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, width=30)
+        self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL)
         self.crf.grid(row=16, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(18)
 
         self.abr_label = tk.Label(self)
         self.abr_label["text"] = "Audio ABR: "
         self.abr_label.grid(row=17, column=0, sticky='', padx=5)
-        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, width=30)
+        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
         self.abr.set(384)
 
