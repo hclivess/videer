@@ -14,9 +14,9 @@ class CreateAvs():
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
 
-            if app.avisynth_extras.get("1.0",tk.END).strip():
+            if app.avisynth_extras.get("1.0", tk.END).strip():
                 avsfile.write('\n')
-                avsfile.write(app.avisynth_extras.get("1.0",tk.END))
+                avsfile.write(app.avisynth_extras.get("1.0", tk.END))
 
             if app.deinterlace_var.get():
                 avsfile.write('\n')
@@ -36,10 +36,12 @@ class Application(tk.Frame):
 
         def create_command(file):
             command = []
-            command.append(f'ffmpeg.exe -hide_banner -i "{file}" -y')
+            command.append(f'ffmpeg.exe -hide_banner')
             if self.use_avisynth_var.get():
                 command.append(f'-i "parameters.avs" -y')
                 CreateAvs(infile=file)
+            else:
+                command.append(f'-i "{file}" -y')
             if self.deshake_var.get():
                 command.append('-vf deshake')
             command.append(f'-c:v {self.codec_var.get()}')
