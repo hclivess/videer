@@ -34,50 +34,36 @@ class Application(tk.Frame):
 
     def do_files(self, files, info_box):
 
-        def with_avisynth(file):
-            return f'ffmpeg.exe ' \
-                   f'-hide_banner ' \
-                   f'-i "parameters.avs" -y ' \
-                   f'-c:v {self.codec_var.get()} ' \
-                   f'-preset {self.preset_get(self.speed.get())} ' \
-                   f'-crf {self.crf.get()} ' \
-                   f'-c:a {self.audio_codec_var.get()} ' \
-                   f'-b:a {self.abr.get()}k ' \
-                   f'-movflags ' \
-                   f'+faststart ' \
-                   f'-bf 2 ' \
-                   f'-flags ' \
-                   f'+cgop ' \
-                   f'-pix_fmt yuv420p ' \
-                   f'-f mp4 "{file}_processed.mp4" ' \
-                   f'{self.extras_value.get()}'
-
-        def without_avisynth(file):
-            return f'ffmpeg.exe -hide_banner -i "{file}" -y ' \
-                   f'-c:v {self.codec_var.get()} ' \
-                   f'-preset {self.preset_get(self.speed.get())} ' \
-                   f'-crf {self.crf.get()} ' \
-                   f'-c:a {self.audio_codec_var.get()} ' \
-                   f'-b:a {self.abr.get()}k ' \
-                   f'-movflags ' \
-                   f'+faststart ' \
-                   f'-bf 2 ' \
-                   f'-flags ' \
-                   f'+cgop ' \
-                   f'-pix_fmt yuv420p ' \
-                   f'-f mp4 "{file}_processed.mp4" ' \
-                   f'{self.extras_value.get()}'
+        def create_command(file):
+            command = []
+            command.append(f'ffmpeg.exe -hide_banner -i "{file}" -y')
+            if self.use_avisynth_var.get():
+                command.append(f'-i "parameters.avs" -y')
+                CreateAvs(infile=file)
+            if self.deshake_var.get():
+                command.append('-vf deshake')
+            command.append(f'-c:v {self.codec_var.get()}')
+            command.append(f'-preset {self.preset_get(self.speed.get())}')
+            command.append(f'-crf {self.crf.get()}')
+            command.append(f'-c:a {self.audio_codec_var.get()}')
+            command.append(f'-b:a {self.abr.get()}k')
+            command.append(f'-movflags')
+            command.append(f'+faststart')
+            command.append(f'-bf 2')
+            command.append(f'-flags')
+            command.append(f'+cgop')
+            command.append(f'-pix_fmt yuv420p')
+            command.append(f'-f mp4 "{file}_processed.mp4"')
+            command.append(f'{self.extras_value.get()}')
+            return " ".join(command)
 
         for file in files:
             info_box.configure(state='normal')
             info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
             info_box.configure(state='disabled')
 
-            if self.use_avisynth_var.get():
-                CreateAvs(infile=file)
-                command_line = with_avisynth(file)
-            else:
-                command_line = without_avisynth(file)
+            command_line = create_command(file)
+            print(f"Executing {command_line}")
 
             rootLogger.info(f"Working on {file}")
             pipe = subprocess.Popen(command_line, shell=True, stdout=subprocess.PIPE).stdout
@@ -148,46 +134,51 @@ class Application(tk.Frame):
 
     def create_widgets(self):
 
-        self.use_avisynth_var = tk.BooleanVar()
-        self.use_avisynth_var.set(False)
-        self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
-        self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
-        self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
-
         self.deinterlace_var = tk.BooleanVar()
         self.deinterlace_var.set(False)
         self.deinterlace_button = tk.Checkbutton(self, text="Deinterlace", variable=self.deinterlace_var)
         self.deinterlace_button.bind("<Button-1>", self.set_avisynth_true)
         self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
 
+        self.use_avisynth_var = tk.BooleanVar()
+        self.use_avisynth_var.set(False)
+        self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
+        self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
+        self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+
+        self.deshake_var = tk.BooleanVar()
+        self.deshake_var.set(False)
+        self.deshake_button = tk.Checkbutton(self, text="Stabilize", variable=self.deshake_var)
+        self.deshake_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
+
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = tk.StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=2, column=0, sticky='', pady=5, padx=5)
+        self.audio_codec_label.grid(row=3, column=0, sticky='', pady=5, padx=5)
 
         self.audio_codec_button = tk.Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var, value="libmp3lame")
-        self.audio_codec_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
+        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
 
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Video Codec: "
         self.codec_var = tk.StringVar()
         self.codec_var.set("libx265")
-        self.codec_label.grid(row=5, column=0, sticky='', pady=5, padx=5)
+        self.codec_label.grid(row=6, column=0, sticky='', pady=5, padx=5)
 
         self.codec_button = tk.Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.codec_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.codec_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
+        self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.codec_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL, label="Encoding Speed")
-        self.speed.grid(row=8, column=1, sticky='WE', pady=5, padx=5)
+        self.speed.grid(row=9, column=1, sticky='WE', pady=5, padx=5)
         self.speed.set(3)
 
         self.infile_value = tk.StringVar()
