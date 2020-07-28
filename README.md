@@ -11,21 +11,7 @@ ConvertToYV24(matrix="rec709")
 
 ### FFmpeg
 ```
-f'-hide_banner ' \
-f'-i "parameters.avs" -y ' \
-f'-c:v {self.codec_var.get()} ' \
-f'-preset {self.preset_get(self.speed.get())} ' \
-f'-crf {self.crf.get()} ' \
-f'-c:a {self.audio_codec_var.get()} ' \
-f'-b:a {self.abr.get()}k ' \
-f'-movflags ' \
-f'+faststart ' \
-f'-bf 2 ' \
-f'-flags ' \
-f'+cgop ' \
-f'-pix_fmt yuv420p ' \
-f'-f mp4 "{file}_processed.mp4" ' \
-f'{self.extras_value.get()}'
+https://github.com/hclivess/videer/blob/master/videer.py#L37
 ```
 
 ## Requirements:
