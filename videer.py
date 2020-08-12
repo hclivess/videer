@@ -55,7 +55,7 @@ class Application(tk.Frame):
             command.append('-flags')
             command.append('+cgop')
             command.append('-pix_fmt yuv420p')
-            command.append(f'-f mp4 "{file}_processed.mp4"')
+            command.append(f'-f mp4 "{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4"')
             command.append(f'{self.extras_value.get()}')
             return " ".join(command)
 
