@@ -106,13 +106,18 @@ class Application(tk.Frame):
         if self.use_avisynth_var.get():
             self.deinterlace_var.set(False)
 
-    def stop_process(self):
+    def exit(self):
+        self.stop_process()
+        self.master.destroy()
+
+    def stop_process(self, announce=False):
         pipe = subprocess.Popen("Taskkill /IM ffmpeg.exe /F", shell=True, stdout=subprocess.PIPE).stdout
         print("Stop signal sent")
         output = pipe.read().decode()
         if not output:
             output = "No relevant process found"
-        messagebox.showinfo(title="Info", message=output)
+        if announce:
+            messagebox.showinfo(title="Info", message=output)
         pipe.close()
 
     def preset_get(self, number: int):
@@ -221,10 +226,10 @@ class Application(tk.Frame):
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
         self.run.grid(row=20, column=1, sticky='WE', padx=5)
 
-        self.stop = tk.Button(self, text="Stop", fg="red", command=self.stop_process)
+        self.stop = tk.Button(self, text="Stop", fg="red", command=lambda: self.stop_process(True))
         self.stop.grid(row=21, column=1, sticky='WE', padx=5)
 
-        self.quit = tk.Button(self, text="Quit", fg="red", command=self.master.destroy)
+        self.quit = tk.Button(self, text="Quit", fg="red", command=self.exit)
         self.quit.grid(row=22, column=1, sticky='WE', padx=5, pady=(0,5))
 
 
