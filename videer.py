@@ -202,11 +202,11 @@ class Application(tk.Frame):
 
         self.crf = tk.Scale(self, from_=0, to=51, orient=tk.HORIZONTAL, label="Video CRF")
         self.crf.grid(row=16, column=1, sticky='WE', pady=5, padx=5)
-        self.crf.set(18)
+        self.crf.set(24)
 
         self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, label="Audio ABR", resolution=10)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
-        self.abr.set(384)
+        self.abr.set(130)
 
         self.extras_label = tk.Label(self)
         self.extras_label["text"] = "FFmpeg Extras: "
