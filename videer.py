@@ -10,7 +10,7 @@ import subprocess
 class CreateAvs():
     def __init__(self, infile):
         with open("parameters.avs", "w") as avsfile:
-            avsfile.write(f'AVISource("{infile}", audio=true)')
+            avsfile.write(f'DirectShowSource("{infile}", audio=true)')
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
 
