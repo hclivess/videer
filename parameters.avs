@@ -1,2 +1,3 @@
-AVISource("C:/Users/trans/Desktop/snihdronchata.avi", audio=true)
+DirectShowSource("C:/Users/trans/Desktop/babi/sony.mpeg", audio=true)
 ConvertToYV24(matrix="rec709")
+QTGMC(Preset="Slower")
