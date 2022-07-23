@@ -42,8 +42,7 @@ class Application(tk.Frame):
                 CreateAvs(infile=file)
             else:
                 command.append(f'-i "{file}" -y')
-            if self.deshake_var.get():
-                command.append('-vf deshake')
+
             command.append(f'-c:v {self.codec_var.get()}')
             command.append(f'-preset {self.preset_get(self.speed.get())}')
             command.append(f'-crf {self.crf.get()}')
@@ -153,11 +152,6 @@ class Application(tk.Frame):
         self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
 
-        self.deshake_var = tk.BooleanVar()
-        self.deshake_var.set(False)
-        self.deshake_button = tk.Checkbutton(self, text="Stabilize", variable=self.deshake_var)
-        self.deshake_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
-
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = tk.StringVar()
@@ -204,7 +198,7 @@ class Application(tk.Frame):
         self.crf.grid(row=16, column=1, sticky='WE', pady=5, padx=5)
         self.crf.set(24)
 
-        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, label="Audio ABR", resolution=10)
+        self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, label="Audio ABR", resolution=16)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
         self.abr.set(130)
 
