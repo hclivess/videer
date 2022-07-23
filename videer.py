@@ -200,7 +200,7 @@ class Application(tk.Frame):
 
         self.abr = tk.Scale(self, from_=0, to=384, orient=tk.HORIZONTAL, label="Audio ABR", resolution=16)
         self.abr.grid(row=17, column=1, sticky='WE', pady=5, padx=5)
-        self.abr.set(130)
+        self.abr.set(128)
 
         self.extras_label = tk.Label(self)
         self.extras_label["text"] = "FFmpeg Extras: "
