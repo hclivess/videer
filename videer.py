@@ -2,7 +2,6 @@ import threading
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import tkinter.filedialog as fd
-import os
 import logging.handlers
 import subprocess
 
