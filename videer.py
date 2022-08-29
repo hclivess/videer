@@ -30,22 +30,23 @@ class CreateAvs():
             else:
                 avsfile.write(f'AVISource("{infile}", audio=true)')
             avsfile.write('\n')
+
             avsfile.write('SetFilterMTMode("FFVideoSource", 3)')
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
             avsfile.write('\n')
             avsfile.write(f'EdiThreads={multiprocessing.cpu_count()}')
             avsfile.write('\n')
-            avsfile.write('Prefetch(4)')
+            avsfile.write(f'Prefetch({multiprocessing.cpu_count()})')
             avsfile.write('\n')
 
             if app.avisynth_extras.get("1.0", tk.END).strip():
-                avsfile.write('\n')
                 avsfile.write(app.avisynth_extras.get("1.0", tk.END))
+                avsfile.write('\n')
 
             if app.deinterlace_var.get():
-                avsfile.write('\n')
                 avsfile.write(f'QTGMC(Preset="{app.preset_get(app.speed.get())}")')
+                avsfile.write('\n')
 
 class Application(tk.Frame):
     def __init__(self, master=None):
