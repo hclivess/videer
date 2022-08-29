@@ -1,22 +1,16 @@
 # videer
 FFmpeg GUI with AviSynth support for deinterlacing and profile configuration that can be used in frameserving ([link](https://github.com/satishsampath/frame-server)). Created as a replacement for inflexible batch files that do not allow multiple encodings at the same time easily and make configuration complicated.
 
-## Default settings:
+--
 
-### AviSynth
-```
-AVISource("c:/test.avi", audio=true)
-ConvertToYV24(matrix="rec709")
-```
-
-### FFmpeg
-```
-https://github.com/hclivess/videer/blob/master/videer.py#L37
-```
+## New features:
+- Multithreading using `SetFilterMTMode`
+- AviSynth+
+- 64bit Implementation
 
 ## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
-- For AviSynth, you will need [AviSynth](http://avisynth.nl/index.php/Main_Page) installed
+- For AviSynth, you will need [AviSynth+](https://avs-plus.net/) installed
 - For deinterlacing, you will need to have AviSynth with [QTGMC](http://forum.doom9.org/attachment.php?attachmentid=16264&d=1521180781) installed and all the required plugins:
     - [MaskTools2](https://github.com/pinterf/masktools/releases/download/2.2.18/masktools2-v2.2.18.7z)
     - [MVTools2](https://github.com/pinterf/mvtools/releases/download/2.7.41/mvtools-2.7.41-with-depans.7z)
@@ -28,7 +22,7 @@ https://github.com/hclivess/videer/blob/master/videer.py#L37
 - Python 3 with tkinter, no additional requirements
 - My favorite way to build is using Nuitka:
 ```
-python -m nuitka --follow-imports videer.py --standalone --show-progress -j 8 --recurse-all
+python -m nuitka videer.py
 ```
 
 ### Preview:    
