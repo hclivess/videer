@@ -9,7 +9,27 @@ import subprocess
 class CreateAvs():
     def __init__(self, infile):
         with open("parameters.avs", "w") as avsfile:
-            avsfile.write(f'AVISource("{infile}", audio=true)')
+            avsfile.write('Loadplugin("plugins/masktools2.dll")')
+            avsfile.write('\n')
+            avsfile.write('Loadplugin("plugins/mvtools2.dll")')
+            avsfile.write('\n')
+            avsfile.write('Loadplugin("plugins/nnedi3.dll")')
+            avsfile.write('\n')
+            avsfile.write('Loadplugin("plugins/ffms2.dll")')
+            avsfile.write('\n')
+            avsfile.write('Loadplugin("plugins/RgTools.dll")')
+            avsfile.write('\n')
+            avsfile.write('Import("plugins/QTGMC.avsi")')
+            avsfile.write('\n')
+            avsfile.write('Import("plugins/Zs_RF_Shared.avsi")')
+            avsfile.write('\n')
+
+            if app.use_ffms2_var.get():
+                print("asd")
+                avsfile.write(f'FFmpegSource2("{infile}", vtrack = -1, atrack = -1)')
+            else:
+                avsfile.write(f'AVISource("{infile}", audio=true)')
+
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
 
@@ -150,6 +170,12 @@ class Application(tk.Frame):
         self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
         self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+
+        self.use_ffms2_var = tk.BooleanVar()
+        self.use_ffms2_var.set(False)
+        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (not frameserver compatible)", variable=self.use_ffms2_var)
+        self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
+        self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
