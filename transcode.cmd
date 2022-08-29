@@ -1,2 +1,1 @@
-ffmpeg -i sumavavanoce2009.mpeg -q:v 1 -vcodec mpeg4 -y sumavavanoce2009.avi
-pause
+ffmpeg -i %1 -q:v 1 -vcodec rawvideo -acodec pcm_s16le -y %1.avi
