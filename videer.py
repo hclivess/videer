@@ -158,7 +158,7 @@ class Application(tk.Frame):
         elif number == 5:
             preset = "fast"
         elif number == 6:
-            preset = "fastest"
+            preset = "ultrafast"
         else:
             preset = "medium"
 
