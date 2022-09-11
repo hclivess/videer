@@ -147,22 +147,8 @@ class Application(tk.Frame):
 
     def preset_get(self, number: int):
 
-        if number == 0:
-            preset = "veryslow"
-        elif number == 1:
-            preset = "slower"
-        elif number == 2:
-            preset = "slow"
-        elif number == 4:
-            preset = "faster"
-        elif number == 5:
-            preset = "fast"
-        elif number == 6:
-            preset = "ultrafast"
-        else:
-            preset = "medium"
-
-        return preset
+        config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
+        return config_dict.get(number)
 
     def create_widgets(self):
 
