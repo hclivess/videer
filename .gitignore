@@ -1,2 +1,3 @@
 parameters.avs
-log.log
+*.log
+.idea/
