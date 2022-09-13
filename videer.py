@@ -1,4 +1,5 @@
 import threading
+import time
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import tkinter.filedialog as fd
@@ -58,9 +59,9 @@ class Application(tk.Frame):
         self.create_widgets()
         self.file_queue = []
         self.pid=None
-        self.terminate=False
+        self.skip_all=False
 
-    def do_files(self, files, info_box):
+    def queue(self, files, info_box):
 
         def create_command(file):
             command = []
@@ -86,36 +87,37 @@ class Application(tk.Frame):
             command.append(f'{self.extras_value.get()}')
             return " ".join(command)
 
+
         for file in files:
-            while not self.terminate:
+            print(file)
+            if not self.skip_all:
                 info_box.configure(state='normal')
                 info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
                 info_box.configure(state='disabled')
 
                 command_line = create_command(file)
-                print(f"Executing {command_line}")
 
                 rootLogger.info(f"Working on {file}")
                 process = subprocess.Popen(command_line, shell=True)
                 self.pid = process.pid
-                rootLogger.info(output)
+                process.wait()
 
                 info_box.configure(state='normal')
                 info_box.insert(tk.INSERT, f"Finished {file}\n")
                 info_box.configure(state='disabled')
+                self.pid = None
 
         messagebox.showinfo(title="Info", message="Queue finished")
 
-
     def runfx(self):
 
-        top = tk.Toplevel()
-        top.title("Info")
-        info_box = tk.Text(top, width=100)
+        self.top = tk.Toplevel()
+        self.top.title("Queue Info")
+        info_box = tk.Text(self.top, width=100)
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
 
-        file_thread = threading.Thread(target=self.do_files, args=(self.file_queue, info_box, ))
+        file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box, ))
         file_thread.start()
 
     def select_file(self, var):
@@ -138,9 +140,6 @@ class Application(tk.Frame):
         self.master.destroy()
 
     def stop_process(self, announce=False):
-
-        self.terminate=True
-
         if self.pid:
             output = f"Process {self.pid} Terminated"
             process = psutil.Process(self.pid)
@@ -153,6 +152,9 @@ class Application(tk.Frame):
 
         if announce:
             messagebox.showinfo(title="Info", message=output)
+
+        if self.top:
+            self.top.destroy()
 
     def preset_get(self, number: int):
 
