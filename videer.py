@@ -5,6 +5,7 @@ import tkinter.filedialog as fd
 import logging.handlers
 import subprocess
 import multiprocessing
+import psutil
 
 class CreateAvs():
     def __init__(self, infile):
@@ -25,7 +26,6 @@ class CreateAvs():
             avsfile.write('\n')
 
             if app.use_ffms2_var.get():
-                print("asd")
                 avsfile.write(f'FFmpegSource2("{infile}", vtrack = -1, atrack = -1)')
             else:
                 avsfile.write(f'AVISource("{infile}", audio=true)')
@@ -57,6 +57,8 @@ class Application(tk.Frame):
         self.grid()
         self.create_widgets()
         self.file_queue = []
+        self.pid=None
+        self.terminate=False
 
     def do_files(self, files, info_box):
 
@@ -85,22 +87,22 @@ class Application(tk.Frame):
             return " ".join(command)
 
         for file in files:
-            info_box.configure(state='normal')
-            info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
-            info_box.configure(state='disabled')
+            while not self.terminate:
+                info_box.configure(state='normal')
+                info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
+                info_box.configure(state='disabled')
 
-            command_line = create_command(file)
-            print(f"Executing {command_line}")
+                command_line = create_command(file)
+                print(f"Executing {command_line}")
 
-            rootLogger.info(f"Working on {file}")
-            pipe = subprocess.Popen(command_line, shell=True, stdout=subprocess.PIPE).stdout
-            output = pipe.read().decode()
-            pipe.close()
-            rootLogger.info(output)
+                rootLogger.info(f"Working on {file}")
+                process = subprocess.Popen(command_line, shell=True)
+                self.pid = process.pid
+                rootLogger.info(output)
 
-            info_box.configure(state='normal')
-            info_box.insert(tk.INSERT, f"Finished {file}\n")
-            info_box.configure(state='disabled')
+                info_box.configure(state='normal')
+                info_box.insert(tk.INSERT, f"Finished {file}\n")
+                info_box.configure(state='disabled')
 
         messagebox.showinfo(title="Info", message="Queue finished")
 
@@ -136,14 +138,21 @@ class Application(tk.Frame):
         self.master.destroy()
 
     def stop_process(self, announce=False):
-        pipe = subprocess.Popen("Taskkill /IM ffmpeg.exe /F", shell=True, stdout=subprocess.PIPE).stdout
-        print("Stop signal sent")
-        output = pipe.read().decode()
-        if not output:
-            output = "No relevant process found"
+
+        self.terminate=True
+
+        if self.pid:
+            output = f"Process {self.pid} Terminated"
+            process = psutil.Process(self.pid)
+            for proc in process.children(recursive=True):
+                proc.kill()
+            process.kill()
+            self.pid=None
+        else:
+            output = f"No relevant process found"
+
         if announce:
             messagebox.showinfo(title="Info", message=output)
-        pipe.close()
 
     def preset_get(self, number: int):
 
