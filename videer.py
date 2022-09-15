@@ -7,6 +7,7 @@ import logging.handlers
 import subprocess
 import multiprocessing
 import psutil
+from playsound import playsound
 
 class CreateAvs():
     def __init__(self, infile):
@@ -59,7 +60,6 @@ class Application(tk.Frame):
         self.create_widgets()
         self.file_queue = []
         self.pid=None
-        self.skip_all=False
 
     def queue(self, files, info_box):
 
@@ -88,26 +88,31 @@ class Application(tk.Frame):
             return " ".join(command)
 
 
-        for file in files:
-            print(file)
-            if not self.skip_all:
+        for file in enumerate(files):
+            """automatically ends on Popen termination"""
+            info_box.configure(state='normal')
+            info_box.insert(tk.INSERT, f"Processing {file[0]+1}/{len(files)}: {file[1].split('/')[-1]}\n")
+            info_box.configure(state='disabled')
+
+            command_line = create_command(file[1])
+
+            rootLogger.info(f"Working on {file[1]}")
+            process = subprocess.Popen(command_line, shell=True)
+            self.pid = process.pid
+            process.wait()
+
+            if info_box:
                 info_box.configure(state='normal')
-                info_box.insert(tk.INSERT, f"Processing {file.split('/')[-1]}\n")
+                info_box.insert(tk.INSERT, f"Finished {file[1]}\n")
                 info_box.configure(state='disabled')
+            self.pid = None
 
-                command_line = create_command(file)
+        info_box.configure(state='normal')
+        info_box.insert(tk.INSERT, f"Queue finished")
+        info_box.configure(state='disabled')
 
-                rootLogger.info(f"Working on {file}")
-                process = subprocess.Popen(command_line, shell=True)
-                self.pid = process.pid
-                process.wait()
+        playsound("done.mp3")
 
-                info_box.configure(state='normal')
-                info_box.insert(tk.INSERT, f"Finished {file}\n")
-                info_box.configure(state='disabled')
-                self.pid = None
-
-        messagebox.showinfo(title="Info", message="Queue finished")
 
     def runfx(self):
 
