@@ -74,6 +74,7 @@ class Application(tk.Frame):
 
             command.append(f'-c:v {self.codec_var.get()}')
             command.append(f'-preset {self.preset_get(self.speed.get())}')
+            command.append(f'-map 0')
             command.append(f'-crf {self.crf.get()}')
             command.append(f'-c:a {self.audio_codec_var.get()}')
             command.append(f'-b:a {self.abr.get()}k')
