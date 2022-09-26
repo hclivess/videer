@@ -78,6 +78,7 @@ class Application(tk.Frame):
             command.append(f'-crf {self.crf.get()}')
             command.append(f'-c:a {self.audio_codec_var.get()}')
             command.append(f'-b:a {self.abr.get()}k')
+            command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
             command.append('-movflags')
             command.append('+faststart')
             command.append('-bf 2')
