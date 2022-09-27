@@ -115,7 +115,7 @@ class Application(tk.Frame):
 
             if self.replace_button_var.get():
                 self.replace_file(rename_from=self.filename,
-                                  rename_to=file[1])
+                                  original_name=file[1])
 
         info_box.configure(state='normal')
         info_box.insert(tk.INSERT, f"Queue finished")
@@ -175,8 +175,11 @@ class Application(tk.Frame):
         config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
-    def replace_file(self, rename_from, rename_to):
-        os.replace(rename_from, rename_to)
+    def replace_file(self, rename_from, original_name):
+        original_name_no_ext = original_name.split(".")[0]
+        os.replace(rename_from, f"{original_name_no_ext}.mp4")
+        if rename_from != original_name:
+            os.remove(original_name)
 
     def create_widgets(self):
 
