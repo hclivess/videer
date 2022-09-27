@@ -8,6 +8,8 @@ import subprocess
 import multiprocessing
 import psutil
 from playsound import playsound
+import os
+
 
 class CreateAvs():
     def __init__(self, infile):
@@ -50,6 +52,7 @@ class CreateAvs():
                 avsfile.write(f'QTGMC(Preset="{app.preset_get(app.speed.get())}")')
                 avsfile.write('\n')
 
+
 class Application(tk.Frame):
     def __init__(self, master=None):
 
@@ -59,7 +62,8 @@ class Application(tk.Frame):
         self.grid()
         self.create_widgets()
         self.file_queue = []
-        self.pid=None
+        self.pid = None
+        self.filename = None
 
     def queue(self, files, info_box):
 
@@ -72,6 +76,7 @@ class Application(tk.Frame):
             else:
                 command.append(f'-i "{file}" -y')
 
+            self.filename = f"{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4"
             command.append(f'-c:v {self.codec_var.get()}')
             command.append(f'-preset {self.preset_get(self.speed.get())}')
             command.append(f'-map 0')
@@ -85,15 +90,14 @@ class Application(tk.Frame):
             command.append('-flags')
             command.append('+cgop')
             command.append('-pix_fmt yuv420p')
-            command.append(f'-f mp4 "{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4"')
+            command.append(f'-f mp4 {self.filename}')
             command.append(f'{self.extras_value.get()}')
             return " ".join(command)
-
 
         for file in enumerate(files):
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
-            info_box.insert(tk.INSERT, f"Processing {file[0]+1}/{len(files)}: {file[1].split('/')[-1]}\n")
+            info_box.insert(tk.INSERT, f"Processing {file[0] + 1}/{len(files)}: {file[1].split('/')[-1]}\n")
             info_box.configure(state='disabled')
 
             command_line = create_command(file[1])
@@ -109,12 +113,15 @@ class Application(tk.Frame):
                 info_box.configure(state='disabled')
             self.pid = None
 
+            if self.replace_button_var.get():
+                self.replace_file(rename_from=self.filename,
+                                  rename_to=file[1])
+
         info_box.configure(state='normal')
         info_box.insert(tk.INSERT, f"Queue finished")
         info_box.configure(state='disabled')
 
         playsound("done.mp3")
-
 
     def runfx(self):
 
@@ -124,7 +131,7 @@ class Application(tk.Frame):
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
 
-        file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box, ))
+        file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
 
     def select_file(self, var):
@@ -134,11 +141,11 @@ class Application(tk.Frame):
             self.file_queue.append(file)
         var.set(self.file_queue)
 
-    def set_avisynth_true(self,click):
+    def set_avisynth_true(self, click):
         if not self.deinterlace_var.get():
             self.use_avisynth_var.set(True)
 
-    def set_deinterlace_false(self,click):
+    def set_deinterlace_false(self, click):
         if self.use_avisynth_var.get():
             self.deinterlace_var.set(False)
 
@@ -153,7 +160,7 @@ class Application(tk.Frame):
             for proc in process.children(recursive=True):
                 proc.kill()
             process.kill()
-            self.pid=None
+            self.pid = None
         else:
             output = f"No relevant process found"
 
@@ -167,6 +174,9 @@ class Application(tk.Frame):
 
         config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
+
+    def replace_file(self, rename_from, rename_to):
+        os.replace(rename_from, rename_to)
 
     def create_widgets(self):
 
@@ -184,7 +194,8 @@ class Application(tk.Frame):
 
         self.use_ffms2_var = tk.BooleanVar()
         self.use_ffms2_var.set(False)
-        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (not frameserver compatible)", variable=self.use_ffms2_var)
+        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (not frameserver compatible)",
+                                               variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
         self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
@@ -194,7 +205,8 @@ class Application(tk.Frame):
         self.audio_codec_var.set("aac")
         self.audio_codec_label.grid(row=3, column=0, sticky='', pady=5, padx=5)
 
-        self.audio_codec_button = tk.Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var, value="libmp3lame")
+        self.audio_codec_button = tk.Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
+                                                 value="libmp3lame")
         self.audio_codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
         self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
@@ -224,7 +236,8 @@ class Application(tk.Frame):
         self.infile_label = tk.Label(self)
         self.infile_label["text"] = "Input File(s): "
         self.infile_label.grid(row=15, column=0, sticky='', pady=5, padx=5)
-        self.infile_button = tk.Button(self, text="Select", fg="green", command=lambda: self.select_file(self.infile_value))
+        self.infile_button = tk.Button(self, text="Select", fg="green",
+                                       command=lambda: self.select_file(self.infile_value))
         self.infile_button.grid(row=15, column=2, sticky='WE', padx=5, pady=(5))
 
         self.infile = tk.Entry(self, textvariable=self.infile_value, width=70)
@@ -251,22 +264,29 @@ class Application(tk.Frame):
         self.avisynth_extras_label.grid(row=19, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=19, column=1, sticky='WE', pady=5, padx=5)
-        #self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
+        # self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
+
+        self.replace_button_var = tk.StringVar()
+        self.replace_button_var.set(0)
+        self.replace_button = tk.Checkbutton(self, text="Replace Original File(s)",
+                                             variable=self.replace_button_var)
+
+        self.replace_button.grid(row=20, column=1, sticky='w', pady=5, padx=5)
 
         self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
-        self.run.grid(row=20, column=1, sticky='WE', padx=5)
+        self.run.grid(row=21, column=1, sticky='WE', padx=5)
 
         self.stop = tk.Button(self, text="Stop", fg="red", command=lambda: self.stop_process(True))
-        self.stop.grid(row=21, column=1, sticky='WE', padx=5)
+        self.stop.grid(row=22, column=1, sticky='WE', padx=5)
 
         self.quit = tk.Button(self, text="Quit", fg="red", command=self.exit)
-        self.quit.grid(row=22, column=1, sticky='WE', padx=5, pady=(0,5))
+        self.quit.grid(row=23, column=1, sticky='WE', padx=5, pady=(0, 5))
 
 
 if __name__ == "__main__":
     root = tk.Tk()
     root.wm_title("videer")
-    #operations = Operations()
+    # operations = Operations()
 
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
     rootLogger = logging.getLogger()
