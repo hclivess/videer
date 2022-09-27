@@ -188,13 +188,13 @@ class Application(tk.Frame):
 
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
-        self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth", variable=self.use_avisynth_var)
+        self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth+", variable=self.use_avisynth_var)
         self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
         self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
 
         self.use_ffms2_var = tk.BooleanVar()
         self.use_ffms2_var.set(False)
-        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (not frameserver compatible)",
+        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (no frameserver, 1 audio stream by default)",
                                                variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
         self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
