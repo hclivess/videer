@@ -76,7 +76,7 @@ class Application(tk.Frame):
             else:
                 command.append(f'-i "{file}" -y')
 
-            self.filename = f"{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4"
+            self.filename = f"'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4'"
             command.append(f'-c:v {self.codec_var.get()}')
             command.append(f'-preset {self.preset_get(self.speed.get())}')
             command.append(f'-map 0')
@@ -140,6 +140,7 @@ class Application(tk.Frame):
         for file in files:
             self.file_queue.append(file)
         var.set(self.file_queue)
+        print(self.file_queue)
 
     def set_avisynth_true(self, click):
         if not self.deinterlace_var.get():
