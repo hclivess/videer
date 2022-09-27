@@ -8,7 +8,7 @@ FFmpeg batch GUI with AviSynth support for **deinterlacing** and profile configu
 
 ## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
-- To use AviSynth or deinterlacing, you will need [AviSynth+](https://avs-plus.net/) installed
+- To use AviSynth+ or deinterlacing, you will need [AviSynth+](https://avs-plus.net/) installed
 - No need to install plugins, all are bundled
 - `pip install -r requirements.txt`
 
