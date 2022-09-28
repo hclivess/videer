@@ -3,6 +3,7 @@ import time
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import tkinter.filedialog as fd
+import tkinter.scrolledtext as st
 import logging.handlers
 import subprocess
 import multiprocessing
@@ -127,7 +128,7 @@ class Application(tk.Frame):
 
         self.top = tk.Toplevel()
         self.top.title("Queue Info")
-        info_box = tk.Text(self.top, width=100)
+        info_box = st.ScrolledText(self.top, width=100)
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
 
