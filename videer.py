@@ -97,7 +97,7 @@ class Application(tk.Frame):
         for file in enumerate(files):
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
-            info_box.insert(tk.INSERT, f"Processing {file[0] + 1}/{len(files)}: {file[1].split('/')[-1]}\n")
+            info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: {file[1].split('/')[-1]}\n")
             info_box.configure(state='disabled')
 
             command_line = assemble(file[1])
@@ -109,7 +109,7 @@ class Application(tk.Frame):
 
             if info_box:
                 info_box.configure(state='normal')
-                info_box.insert(tk.INSERT, f"Finished {file[1]}\n")
+                info_box.insert(tk.END, f"Finished {file[1]}\n")
                 info_box.configure(state='disabled')
             self.pid = None
 
@@ -118,7 +118,7 @@ class Application(tk.Frame):
                                   original_name=file[1])
 
         info_box.configure(state='normal')
-        info_box.insert(tk.INSERT, f"Queue finished")
+        info_box.insert(tk.END, f"Queue finished")
         info_box.configure(state='disabled')
 
         playsound("done.mp3")
@@ -269,7 +269,6 @@ class Application(tk.Frame):
         self.avisynth_extras_label.grid(row=19, column=0, sticky='', padx=5)
         self.avisynth_extras = tk.Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=19, column=1, sticky='WE', pady=5, padx=5)
-        # self.avisynth_extras.insert(tk.END, "Just a text Widget\nin two lines\n")
 
         self.replace_button_var = tk.StringVar()
         self.replace_button_var.set(0)
