@@ -67,7 +67,7 @@ class Application(tk.Frame):
 
     def queue(self, files, info_box):
 
-        def create_command(file):
+        def assemble(file):
             command = []
             command.append(f'ffmpeg.exe -hide_banner')
             if self.use_avisynth_var.get():
@@ -100,7 +100,7 @@ class Application(tk.Frame):
             info_box.insert(tk.INSERT, f"Processing {file[0] + 1}/{len(files)}: {file[1].split('/')[-1]}\n")
             info_box.configure(state='disabled')
 
-            command_line = create_command(file[1])
+            command_line = assemble(file[1])
 
             rootLogger.info(f"Working on {file[1]}")
             process = subprocess.Popen(command_line, shell=True)
@@ -176,7 +176,7 @@ class Application(tk.Frame):
         return config_dict.get(number)
 
     def replace_file(self, rename_from, original_name):
-        original_name_no_ext = os.path.splitext[0]
+        original_name_no_ext = os.path.splitext(original_name)[0]
         new_name_ext = f"{original_name_no_ext}.mp4"
         if not os.path.exists(new_name_ext):
             os.replace(rename_from, new_name_ext)
