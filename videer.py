@@ -98,7 +98,9 @@ class Application(tk.Frame):
         for file in enumerate(files):
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
-            info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: {file[1].split('/')[-1]}\n")
+            info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
+                                    f"{file[1].split('/')[-1]}: "
+                                    f"{int(((file[0]) / (len(files))) *100)}%\n")
             info_box.configure(state='disabled')
 
             command_line = assemble(file[1])
