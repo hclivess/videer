@@ -176,7 +176,7 @@ class Application(tk.Frame):
         return config_dict.get(number)
 
     def replace_file(self, rename_from, original_name):
-        original_name_no_ext = original_name.split(".")[0]
+        original_name_no_ext = os.path.splitext[0]
         new_name_ext = f"{original_name_no_ext}.mp4"
         if not os.path.exists(new_name_ext):
             os.replace(rename_from, new_name_ext)
