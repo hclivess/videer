@@ -1,3 +1,5 @@
 parameters.avs
 *.log
+*.exe
+*.7z
 .idea/
