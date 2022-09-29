@@ -107,8 +107,9 @@ class Application(tk.Frame):
             command_line = self.assemble(file[1])
 
             rootLogger.info(f"Working on {file[1]}")
-            process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            stdout, stderr = process.communicate()
+            process = subprocess.Popen(command_line)
+            #process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            #stdout, stderr = process.communicate()
             return_code = process.returncode
             self.pid = process.pid
             process.wait()
