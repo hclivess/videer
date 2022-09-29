@@ -109,16 +109,22 @@ class Application(tk.Frame):
             rootLogger.info(f"Working on {file[1]}")
             process = subprocess.Popen(command_line, shell=True)
             self.pid = process.pid
+            streamdata = process.communicate()[0]
+            return_code = process.returncode
             process.wait()
 
             if info_box:
                 info_box.configure(state='normal')
-                info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
-                                        f"{int((file[0]+1) / (len(files)) * 100)}% \n")
+                if not return_code:
+                    info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
+                                            f"{int((file[0]+1) / (len(files)) * 100)}% \n")
+                else:
+                    info_box.insert(tk.END, f"Error with {file[1].split('/')[-1]}: "
+                                            f"{int((file[0]+1) / (len(files)) * 100)}% \n")
                 info_box.configure(state='disabled')
             self.pid = None
 
-            if self.replace_button_var.get():
+            if self.replace_button_var.get() and not return_code:
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
 
