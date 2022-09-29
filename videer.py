@@ -66,45 +66,45 @@ class Application(tk.Frame):
         self.pid = None
         self.filename = None
 
+    def assemble(self, file):
+        command = []
+        command.append(f'ffmpeg.exe -hide_banner')
+        if self.use_avisynth_var.get():
+            command.append(f'-i "parameters.avs" -y')
+            CreateAvs(infile=file)
+        else:
+            command.append(f'-i "{file}" -y')
+
+        self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4'
+        command.append(f'-c:v {self.codec_var.get()}')
+        command.append(f'-preset {self.preset_get(self.speed.get())}')
+        command.append(f'-map 0:v -map 0:a -map 0:s?')
+        command.append(f'-crf {self.crf.get()}')
+        command.append(f'-c:a {self.audio_codec_var.get()}')
+        command.append(f'-b:a {self.abr.get()}k')
+        command.append(f'-c:s mov_text')
+        command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
+        command.append('-movflags')
+        command.append('+faststart')
+        command.append('-bf 2')
+        command.append('-flags')
+        command.append('+cgop')
+        command.append('-pix_fmt yuv420p')
+        command.append(f'-f mp4 "{self.filename}"')
+        command.append(f'{self.extras_value.get()}')
+        return " ".join(command)
+
     def queue(self, files, info_box):
-
-        def assemble(file):
-            command = []
-            command.append(f'ffmpeg.exe -hide_banner')
-            if self.use_avisynth_var.get():
-                command.append(f'-i "parameters.avs" -y')
-                CreateAvs(infile=file)
-            else:
-                command.append(f'-i "{file}" -y')
-
-            self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4'
-            command.append(f'-c:v {self.codec_var.get()}')
-            command.append(f'-preset {self.preset_get(self.speed.get())}')
-            command.append(f'-map 0:v -map 0:a -map 0:s')
-            command.append(f'-crf {self.crf.get()}')
-            command.append(f'-c:a {self.audio_codec_var.get()}')
-            command.append(f'-b:a {self.abr.get()}k')
-            command.append(f'-c:s mov_text')
-            command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
-            command.append('-movflags')
-            command.append('+faststart')
-            command.append('-bf 2')
-            command.append('-flags')
-            command.append('+cgop')
-            command.append('-pix_fmt yuv420p')
-            command.append(f'-f mp4 "{self.filename}"')
-            command.append(f'{self.extras_value.get()}')
-            return " ".join(command)
 
         for file in enumerate(files):
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
-                                    f"{file[1].split('/')[-1]}: \n"
-                                    )
+                                    f"{file[1].split('/')[-1]}\n"
+                            )
             info_box.configure(state='disabled')
 
-            command_line = assemble(file[1])
+            command_line = self.assemble(file[1])
 
             rootLogger.info(f"Working on {file[1]}")
             process = subprocess.Popen(command_line, shell=True)
@@ -114,7 +114,7 @@ class Application(tk.Frame):
             if info_box:
                 info_box.configure(state='normal')
                 info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
-                                        f"{int(((file[1]) / (len(files))) *100)}% \n")
+                                        f"{int((file[0]+1) / (len(files)) * 100)}% \n")
                 info_box.configure(state='disabled')
             self.pid = None
 
