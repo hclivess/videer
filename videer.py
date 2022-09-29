@@ -80,10 +80,11 @@ class Application(tk.Frame):
             self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4'
             command.append(f'-c:v {self.codec_var.get()}')
             command.append(f'-preset {self.preset_get(self.speed.get())}')
-            command.append(f'-map 0')
+            command.append(f'-map 0:v -map 0:a -map 0:s')
             command.append(f'-crf {self.crf.get()}')
             command.append(f'-c:a {self.audio_codec_var.get()}')
             command.append(f'-b:a {self.abr.get()}k')
+            command.append(f'-c:s mov_text')
             command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
             command.append('-movflags')
             command.append('+faststart')
