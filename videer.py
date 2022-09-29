@@ -100,8 +100,8 @@ class Application(tk.Frame):
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
-                                    f"{file[1].split('/')[-1]}: "
-                                    f"{int(((file[0]) / (len(files))) *100)}%\n")
+                                    f"{file[1].split('/')[-1]}: \n"
+                                    )
             info_box.configure(state='disabled')
 
             command_line = assemble(file[1])
@@ -113,7 +113,8 @@ class Application(tk.Frame):
 
             if info_box:
                 info_box.configure(state='normal')
-                info_box.insert(tk.END, f"Finished {file[1]}\n")
+                info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
+                                        f"{int(((file[1]) / (len(files))) *100)}% \n")
                 info_box.configure(state='disabled')
             self.pid = None
 
