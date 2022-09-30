@@ -75,7 +75,7 @@ class Application(tk.Frame):
         else:
             command.append(f'-i "{file}" -y')
 
-        self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mp4'
+        self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mkv'
         command.append(f'-c:v {self.codec_var.get()}')
         command.append(f'-preset {self.preset_get(self.speed.get())}')
         command.append(f'-map 0:v -map 0:a -map 0:s?')
@@ -90,7 +90,7 @@ class Application(tk.Frame):
         command.append('-flags')
         command.append('+cgop')
         command.append('-pix_fmt yuv420p')
-        command.append(f'-f mp4 "{self.filename}"')
+        command.append(f'-f matroska "{self.filename}"')
         command.append(f'{self.extras_value.get()}')
         return " ".join(command)
 
@@ -119,6 +119,7 @@ class Application(tk.Frame):
             if info_box:
                 info_box.configure(state='normal')
                 if return_code == 0:
+                    """error code can be None, force numeric check"""
                     info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
                                             f"{int((file[0]+1) / (len(files)) * 100)}% \n")
                 else:
@@ -193,7 +194,7 @@ class Application(tk.Frame):
 
     def replace_file(self, rename_from, original_name):
         original_name_no_ext = os.path.splitext(original_name)[0]
-        new_name_ext = f"{original_name_no_ext}.mp4"
+        new_name_ext = f"{original_name_no_ext}.mkv"
         if not os.path.exists(new_name_ext):
             os.replace(rename_from, new_name_ext)
             if rename_from != original_name:
