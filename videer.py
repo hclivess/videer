@@ -127,7 +127,7 @@ class Application(tk.Frame):
                                             f"{int((file[0]+1) / (len(files)) * 100)}% \n")
                 info_box.configure(state='disabled')
 
-            if self.replace_button_var.get() and return_code == 0:
+            if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 print("Replacing original file as requested")
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
@@ -196,7 +196,7 @@ class Application(tk.Frame):
         original_name_no_ext = os.path.splitext(original_name)[0]
         new_name_ext = f"{original_name_no_ext}.mkv"
         os.replace(rename_from, new_name_ext)
-        if rename_from != original_name:
+        if original_name != new_name_ext:
             os.remove(original_name)
 
     def create_widgets(self):
