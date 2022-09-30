@@ -195,10 +195,9 @@ class Application(tk.Frame):
     def replace_file(self, rename_from, original_name):
         original_name_no_ext = os.path.splitext(original_name)[0]
         new_name_ext = f"{original_name_no_ext}.mkv"
-        if not os.path.exists(new_name_ext):
-            os.replace(rename_from, new_name_ext)
-            if rename_from != original_name:
-                os.remove(original_name)
+        os.replace(rename_from, new_name_ext)
+        if rename_from != original_name:
+            os.remove(original_name)
 
     def create_widgets(self):
 
