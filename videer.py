@@ -126,7 +126,7 @@ class Application(tk.Frame):
                                             f"{int((file[0]+1) / (len(files)) * 100)}% \n")
                 info_box.configure(state='disabled')
 
-            if self.replace_button_var.get() and return_code == 1:
+            if self.replace_button_var.get() and return_code == 0:
                 print("Replacing original file as requested")
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
