@@ -82,7 +82,7 @@ class Application(tk.Frame):
         command.append(f'-crf {self.crf.get()}')
         command.append(f'-c:a {self.audio_codec_var.get()}')
         command.append(f'-b:a {self.abr.get()}k')
-        command.append(f'-c:s mov_text')
+        command.append(f'-c:s copy')
         command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
         command.append('-movflags')
         command.append('+faststart')
@@ -127,6 +127,7 @@ class Application(tk.Frame):
                 info_box.configure(state='disabled')
 
             if self.replace_button_var.get() and return_code == 1:
+                print("Replacing original file as requested")
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
 
