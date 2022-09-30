@@ -5,6 +5,7 @@ FFmpeg batch GUI with AviSynth support for **deinterlacing** and profile configu
 - Multithreading using `SetFilterMTMode`
 - AviSynth+
 - 64bit Implementation
+- Matroska format as it is the only one to support `pgssub`
 
 ## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
