@@ -106,14 +106,15 @@ class Application(tk.Frame):
 
             command_line = self.assemble(file[1])
 
-            rootLogger.info(f"Working on {file[1]}")
+            rootLogger.info(f"Processing {file[1]}")
             process = subprocess.Popen(command_line)
-            #process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            #stdout, stderr = process.communicate()
+            # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            # stdout, stderr = process.communicate()
             process.communicate()
             return_code = process.returncode
             self.pid = process.pid
             print(f"Return code: {return_code}")
+            rootLogger.info(f"Return code: {return_code}")
             process.wait()
 
             if info_box:
@@ -121,22 +122,27 @@ class Application(tk.Frame):
                 if return_code == 0:
                     """error code can be None, force numeric check"""
                     info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
-                                            f"{int((file[0]+1) / (len(files)) * 100)}% \n")
+                                            f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
+                    rootLogger.info(f"Finished {file[1]}")
                 else:
                     info_box.insert(tk.END, f"Error with {file[1].split('/')[-1]}: "
-                                            f"{int((file[0]+1) / (len(files)) * 100)}% \n")
+                                            f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
+                    rootLogger.info(f"Error with {file[1]}")
+
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 print("Replacing original file as requested")
+                rootLogger.info("Replacing original file as requested")
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
 
             self.pid = None
 
         info_box.configure(state='normal')
-        info_box.insert(tk.END, f"Queue finished")
+        info_box.insert(tk.END, "Queue finished")
         info_box.configure(state='disabled')
+        rootLogger.info("Queue finished")
 
         playsound("done.mp3")
 
