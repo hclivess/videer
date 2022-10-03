@@ -1,13 +1,14 @@
 import subprocess
 import os
 import sys
+import json
 
 files = sys.argv[1:]
 # files = ["a.mkv"]
 
 for file in files:
-
-    command_line = f'ffmpeg -v error -i "{file}" -map 0:v -map 0:a -map 0:s? -c:s copy -vcodec copy -acodec copy -f null -'
+    print(f"Checking {file}...")
+    command_line = f'ffmpeg -v error -i "{file}" -map 0:v -map 0:a -vcodec copy -acodec copy -f null -'
     base_name = os.path.splitext(file)[0]
     extension = os.path.splitext(file)[1]
 
@@ -23,5 +24,12 @@ for file in files:
         print(f"Errors!")
         print(os.path.splitext(file)[1])
         os.rename(file, f"{file}.error")
+        with open(f"{file}.errorlog", "w") as errfile:
+            if stdout:
+                errfile.write(stdout.decode())
+            if stderr:
+                errfile.write(stderr.decode())
+    else:
+        print("File OK.")
 
     process.wait()
