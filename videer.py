@@ -113,7 +113,6 @@ class Application(tk.Frame):
             process.communicate()
             return_code = process.returncode
             self.pid = process.pid
-            print(f"Return code: {return_code}")
             rootLogger.info(f"Return code: {return_code}")
             process.wait()
 
@@ -128,11 +127,11 @@ class Application(tk.Frame):
                     info_box.insert(tk.END, f"Error with {file[1].split('/')[-1]}: "
                                             f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Error with {file[1]}")
+                    os.rename(self.filename, f"ERROR - {self.filename}")
 
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
-                print("Replacing original file as requested")
                 rootLogger.info("Replacing original file as requested")
                 self.replace_file(rename_from=self.filename,
                                   original_name=file[1])
