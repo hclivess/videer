@@ -127,7 +127,9 @@ class Application(tk.Frame):
                     info_box.insert(tk.END, f"Error with {file[1].split('/')[-1]}: "
                                             f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Error with {file[1]}")
-                    os.rename(self.filename, f"{self.filename}.error")
+
+                    if os.path.exists(self.filename):
+                        os.rename(self.filename, f"{self.filename}.error")
 
                 info_box.configure(state='disabled')
 
