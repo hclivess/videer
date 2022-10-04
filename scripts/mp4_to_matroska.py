@@ -9,9 +9,9 @@ def swap_container(files):
 
     for file in files:
         print(f"Converting {file}...")
-        command_line = f'ffmpeg -i "{file}" -map 0:v -map 0:a -map 0:s? -c:s srt -vcodec copy -acodec copy -f matroska %1.mkv'
         base_name = os.path.splitext(file)[0]
         extension = os.path.splitext(file)[1]
+        command_line = f'ffmpeg -i "{file}" -map 0:v -map 0:a -map 0:s? -c:s srt -vcodec copy -acodec copy -f matroska "{base_name}".mkv'
 
         process = subprocess.Popen(command_line)
         process.communicate()
@@ -24,8 +24,7 @@ def swap_container(files):
 
         process.wait()
 
-        os.replace(file, f"{base_name}.mkv")
-        print(f"{file} Converted and replaced...")
+        print(f"{file} Converted...")
 
 
 if __name__ == "__main__":
