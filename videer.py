@@ -141,8 +141,6 @@ class Application(tk.Frame):
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
-
-
                 self.replace_file(rename_from=self.filename,
                                   input_name=input_name)
 
@@ -155,14 +153,17 @@ class Application(tk.Frame):
 
         playsound("done.mp3")
 
-    def runfx(self):
-
+    def create_info_box(self):
         self.top = tk.Toplevel()
         self.top.title("Queue Info")
+        self.top.resizable(False, False)
+
         info_box = st.ScrolledText(self.top, width=100)
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
-
+        return info_box
+    def run_cmd(self):
+        info_box = self.create_info_box()
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
 
@@ -314,7 +315,7 @@ class Application(tk.Frame):
 
         self.replace_button.grid(row=20, column=1, sticky='w', pady=5, padx=5)
 
-        self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.runfx())
+        self.run = tk.Button(self, text="Run", fg="green", command=lambda: self.run_cmd())
         self.run.grid(row=21, column=1, sticky='WE', padx=5)
 
         self.stop = tk.Button(self, text="Stop", fg="red", command=lambda: self.stop_process(True))
@@ -327,6 +328,8 @@ class Application(tk.Frame):
 if __name__ == "__main__":
     root = tk.Tk()
     root.wm_title("videer")
+    root.resizable(False, False)
+
     # operations = Operations()
 
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
