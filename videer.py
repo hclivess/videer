@@ -83,7 +83,13 @@ class Application(tk.Frame):
         command.append(f'-c:a {self.audio_codec_var.get()}')
         command.append(f'-b:a {self.abr.get()}k')
         command.append(f'-c:s copy')
-        command.append('-metadata description="Made with Videer https://github.com/hclivess/videer"')
+        command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
+        command.append(f'-metadata description="'
+                       f'Video Codec: {self.codec_var.get()}, '
+                       f'Preset: {self.preset_get(self.speed.get())}, '
+                       f'CRF: {self.crf.get()}, '
+                       f'Audio Codec: {self.audio_codec_var.get()}, '
+                       f'Audio Bitrate: {self.abr.get()}k"')
         command.append('-movflags')
         command.append('+faststart')
         command.append('-bf 2')
@@ -97,16 +103,17 @@ class Application(tk.Frame):
     def queue(self, files, info_box):
 
         for file in enumerate(files):
+            input_name = file[1]
             """automatically ends on Popen termination"""
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
-                                    f"{file[1].split('/')[-1]}\n"
+                                    f"{input_name.split('/')[-1]}\n"
                             )
             info_box.configure(state='disabled')
 
-            command_line = self.assemble(file[1])
+            command_line = self.assemble(input_name)
 
-            rootLogger.info(f"Processing {file[1]}")
+            rootLogger.info(f"Processing {input_name}")
             process = subprocess.Popen(command_line)
             # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             # stdout, stderr = process.communicate()
@@ -120,13 +127,13 @@ class Application(tk.Frame):
                 info_box.configure(state='normal')
                 if return_code == 0:
                     """error code can be None, force numeric check"""
-                    info_box.insert(tk.END, f"Finished {file[1].split('/')[-1]}: "
+                    info_box.insert(tk.END, f"Finished {input_name.split('/')[-1]}: "
                                             f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Finished {file[1]}")
+                    rootLogger.info(f"Finished {input_name}")
                 else:
-                    info_box.insert(tk.END, f"Error with {file[1].split('/')[-1]}: "
+                    info_box.insert(tk.END, f"Error with {input_name.split('/')[-1]}: "
                                             f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Error with {file[1]}")
+                    rootLogger.info(f"Error with {input_name}")
 
                     if os.path.exists(self.filename):
                         os.rename(self.filename, f"{self.filename}.error")
@@ -134,9 +141,10 @@ class Application(tk.Frame):
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
-                rootLogger.info("Replacing original file as requested")
+
+
                 self.replace_file(rename_from=self.filename,
-                                  original_name=file[1])
+                                  input_name=input_name)
 
             self.pid = None
 
@@ -199,12 +207,18 @@ class Application(tk.Frame):
         config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
-    def replace_file(self, rename_from, original_name):
-        original_name_no_ext = os.path.splitext(original_name)[0]
-        new_name_ext = f"{original_name_no_ext}.mkv"
-        os.replace(rename_from, new_name_ext)
-        if original_name != new_name_ext:
-            os.remove(original_name)
+    def replace_file(self, rename_from, input_name):
+
+        input_name_no_ext = os.path.splitext(input_name)[0]
+        new_name_ext = f"{input_name_no_ext}.mkv"
+
+        if os.path.exists(new_name_ext) and input_name != new_name_ext:
+            rootLogger.info("File already exists, not replacing")
+        else:
+            rootLogger.info("Replacing original file as requested")
+            os.replace(rename_from, new_name_ext)
+            if input_name != new_name_ext:
+                os.remove(input_name)
 
     def create_widgets(self):
 

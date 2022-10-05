@@ -1,1 +1,0 @@
-ffmpeg -i %1 -q:v 1 -vcodec rawvideo -acodec pcm_s16le -y %1.avi
