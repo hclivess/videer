@@ -268,9 +268,11 @@ class Application(tk.Frame):
         self.codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
         self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.codec_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
+        self.codec_button = tk.Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.codec_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL, label="Encoding Speed")
-        self.speed.grid(row=9, column=1, sticky='WE', pady=5, padx=5)
+        self.speed.grid(row=10, column=1, sticky='WE', pady=5, padx=5)
         self.speed.set(3)
 
         self.infile_value = tk.StringVar()
