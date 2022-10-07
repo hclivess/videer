@@ -32,6 +32,12 @@ class CreateAvs():
 
             if app.use_ffms2_var.get():
                 avsfile.write(f'FFmpegSource2("{infile}", vtrack = -1, atrack = -1)')
+                avsfile.write('\n')
+                avsfile.write(f'A = FFAudioSource("{infile}")')
+                avsfile.write('\n')
+                avsfile.write(f'V = FFVideoSource("{infile}")')
+                avsfile.write('\n')
+                avsfile.write('AudioDub(V, A)')
             else:
                 avsfile.write(f'AVISource("{infile}", audio=true)')
             avsfile.write('\n')
