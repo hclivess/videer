@@ -66,6 +66,7 @@ class Application(tk.Frame):
         self.pid = None
         self.filename = None
         self.tempfile = None
+        self.original_fn = None
 
     def assemble(self, file):
         command = []
@@ -124,7 +125,9 @@ class Application(tk.Frame):
         """automatically ends on Popen termination"""
 
         for file in enumerate(files):
+
             input_name = file[1]
+            self.original_fn = input_name
 
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
@@ -158,7 +161,7 @@ class Application(tk.Frame):
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 self.replace_file(rename_from=self.filename,
-                                  input_name=input_name)
+                                  rename_to=self.original_fn)
 
             elif self.tempfile:
                 os.remove(self.tempfile)
@@ -232,18 +235,18 @@ class Application(tk.Frame):
         config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
-    def replace_file(self, rename_from, input_name):
+    def replace_file(self, rename_from, rename_to):
 
-        input_name_no_ext = os.path.splitext(input_name)[0]
+        input_name_no_ext = os.path.splitext(rename_to)[0]
         new_name_ext = f"{input_name_no_ext}.mkv"
 
-        if os.path.exists(new_name_ext) and input_name != new_name_ext:
+        if os.path.exists(new_name_ext) and rename_to != new_name_ext:
             rootLogger.info("File already exists, not replacing")
         else:
             rootLogger.info("Replacing original file as requested")
             os.replace(rename_from, new_name_ext)
-            if input_name != new_name_ext:
-                os.remove(input_name)
+            if rename_to != new_name_ext:
+                os.remove(rename_to)
 
     def create_widgets(self):
 
