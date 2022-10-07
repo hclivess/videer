@@ -261,14 +261,14 @@ class Application(tk.Frame):
 
         self.use_ffms2_var = tk.BooleanVar()
         self.use_ffms2_var.set(False)
-        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (no frameserver, 1 audio stream by default)",
+        self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
                                                variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
         self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
         self.transcode_raw_var = tk.BooleanVar()
         self.transcode_raw_var.set(False)
-        self.transcode_raw_button = tk.Checkbutton(self, text="Raw Transcode (compatibility helper)",
+        self.transcode_raw_button = tk.Checkbutton(self, text="Raw transcode first",
                                                    variable=self.transcode_raw_var)
         self.transcode_raw_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
 
