@@ -103,7 +103,7 @@ class Application(tk.Frame):
 
     def transcode(self, file):
         no_ext = os.path.splitext(file)[0]
-        temp_raw = f'ffmpeg.exe -i {file} -c:v rawvideo -hide_banner {no_ext}_temp.avi -y'
+        temp_raw = f'ffmpeg.exe -i "{file}" -c:v rawvideo -hide_banner {no_ext}_temp.avi -y'
         self.open_process(temp_raw)
         return_code = self.open_process(temp_raw)
         self.tempfile = f"{no_ext}_temp.avi"
