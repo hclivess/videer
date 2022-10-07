@@ -65,6 +65,7 @@ class Application(tk.Frame):
         self.file_queue = []
         self.pid = None
         self.filename = None
+        self.tempfile = None
 
     def assemble(self, file):
         command = []
@@ -100,28 +101,42 @@ class Application(tk.Frame):
         command.append(f'{self.extras_value.get()}')
         return " ".join(command)
 
+    def transcode(self, file):
+        temp_raw = f'ffmpeg.exe -i {file} -hide_banner {file}.avi -y'
+        self.open_process(temp_raw)
+        return_code = self.open_process(temp_raw)
+        self.tempfile = f"{file}.avi"
+        return self.tempfile
+
+    def open_process(self, command_line):
+        process = subprocess.Popen(command_line)
+        # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        # stdout, stderr = process.communicate()
+        process.communicate()
+        return_code = process.returncode
+        self.pid = process.pid
+        rootLogger.info(f"Return code: {return_code}")
+        process.wait()
+        return return_code
+
     def queue(self, files, info_box):
+        """automatically ends on Popen termination"""
 
         for file in enumerate(files):
             input_name = file[1]
-            """automatically ends on Popen termination"""
+
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
                                     f"{input_name.split('/')[-1]}\n"
                             )
             info_box.configure(state='disabled')
+            rootLogger.info(f"Processing {input_name}")
+
+            if int(self.transcode_raw_var.get()) == 1:
+                input_name = self.transcode(input_name)
 
             command_line = self.assemble(input_name)
-
-            rootLogger.info(f"Processing {input_name}")
-            process = subprocess.Popen(command_line)
-            # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            # stdout, stderr = process.communicate()
-            process.communicate()
-            return_code = process.returncode
-            self.pid = process.pid
-            rootLogger.info(f"Return code: {return_code}")
-            process.wait()
+            return_code = self.open_process(command_line)
 
             if info_box:
                 info_box.configure(state='normal')
@@ -144,6 +159,13 @@ class Application(tk.Frame):
                 self.replace_file(rename_from=self.filename,
                                   input_name=input_name)
 
+            elif self.tempfile:
+                os.remove(self.tempfile)
+
+            ffindex = f"{input_name}.ffindex"
+            if os.path.exists(ffindex):
+                os.remove(ffindex)
+
             self.pid = None
 
         info_box.configure(state='normal')
@@ -162,6 +184,7 @@ class Application(tk.Frame):
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
         return info_box
+
     def run_cmd(self):
         info_box = self.create_info_box()
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
@@ -242,19 +265,25 @@ class Application(tk.Frame):
         self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
         self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
+        self.transcode_raw_var = tk.BooleanVar()
+        self.transcode_raw_var.set(False)
+        self.transcode_raw_button = tk.Checkbutton(self, text="Raw Transcode (compatibility helper)",
+                                                   variable=self.transcode_raw_var)
+        self.transcode_raw_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
+
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = tk.StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=3, column=0, sticky='', pady=5, padx=5)
+        self.audio_codec_label.grid(row=4, column=0, sticky='', pady=5, padx=5)
 
         self.audio_codec_button = tk.Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
                                                  value="libmp3lame")
-        self.audio_codec_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
+        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
 
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Video Codec: "
@@ -263,16 +292,16 @@ class Application(tk.Frame):
         self.codec_label.grid(row=6, column=0, sticky='', pady=5, padx=5)
 
         self.codec_button = tk.Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.codec_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
-        self.codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.codec_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
-        self.codec_button = tk.Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.codec_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
+        self.codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.codec_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
+        self.codec_button = tk.Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.codec_button.grid(row=11, column=1, sticky='w', pady=5, padx=5)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL, label="Encoding Speed")
-        self.speed.grid(row=10, column=1, sticky='WE', pady=5, padx=5)
+        self.speed.grid(row=12, column=1, sticky='WE', pady=5, padx=5)
         self.speed.set(3)
 
         self.infile_value = tk.StringVar()
