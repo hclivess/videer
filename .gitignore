@@ -3,3 +3,5 @@ parameters.avs
 *.exe
 *.7z
 .idea/
+*.xml
+*.iml
