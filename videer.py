@@ -91,6 +91,7 @@ class Application(tk.Frame):
         command.append(f'-c:a {self.audio_codec_var.get()}')
         command.append(f'-b:a {self.abr.get()}k')
         command.append(f'-c:s copy')
+        command.append(f'{self.extras_value.get()}')
         command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
         command.append(f'-metadata description="'
                        f'Video Codec: {self.codec_var.get()}, '
@@ -105,7 +106,6 @@ class Application(tk.Frame):
         command.append('+cgop')
         command.append('-pix_fmt yuv420p')
         command.append(f'-f matroska "{self.filename}"')
-        command.append(f'{self.extras_value.get()}')
         return " ".join(command)
 
     def transcode(self, file, transcode_video, transcode_audio, corrupt_x264_hack):
