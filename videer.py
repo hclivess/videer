@@ -63,12 +63,13 @@ class CreateAvs():
 class File:
     def __int__(self):
         self.number = 0
-        self.filename = None
-        self.basename = None
-        self.extras = None
-        self.extension = None
-        self.tempname = None
-        self.errorname = None
+        self.filename = None  # ..file.avi
+        self.basename = None  # ..file
+        self.extras = None  # .._x265_..
+        self.extension = None  # .mkv
+        self.tempname = None  # ..file.avi.temp.avi
+        self.errorname = None  # ..file.avi.error
+
 
 class Application(tk.Frame):
     def __init__(self, master=None):
