@@ -62,10 +62,13 @@ class CreateAvs():
 
 class File:
     def __int__(self):
+        self.number = 0
         self.filename = None
         self.basename = None
         self.extras = None
         self.extension = None
+        self.tempname = None
+        self.errorname = None
 
 class Application(tk.Frame):
     def __init__(self, master=None):
