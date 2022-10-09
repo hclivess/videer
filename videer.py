@@ -158,7 +158,7 @@ class Application(tk.Frame):
             if int(self.corrupt_var.get()) == 1:
                 corrupt_hack = "-bsf:v h264_mp4toannexb"
             else:
-                corrupt_hack = None
+                corrupt_hack = ""
 
             print(should_transcode_video, should_transcode_audio)
 
