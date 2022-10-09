@@ -60,6 +60,13 @@ class CreateAvs():
                 avsfile.write('\n')
 
 
+class File:
+    def __int__(self):
+        self.filename = None
+        self.basename = None
+        self.extras = None
+        self.extension = None
+
 class Application(tk.Frame):
     def __init__(self, master=None):
 
