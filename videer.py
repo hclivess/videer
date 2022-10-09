@@ -70,20 +70,18 @@ class Application(tk.Frame):
         self.create_widgets()
         self.file_queue = []
         self.pid = None
-        self.filename = None
+        self.output_file = None
         self.tempfile = None
-        self.original_fn = None
 
     def assemble(self, file):
-        command = []
-        command.append(f'ffmpeg.exe -hide_banner')
+        command = [f'ffmpeg.exe -hide_banner']
         if self.use_avisynth_var.get():
             command.append(f'-i "parameters.avs" -y')
             CreateAvs(infile=file)
         else:
             command.append(f'-i "{file}" -y')
 
-        self.filename = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mkv'
+        self.output_file = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mkv'
         command.append(f'-c:v {self.codec_var.get()}')
         command.append(f'-preset {self.preset_get(self.speed.get())}')
         command.append(f'-map 0:v -map 0:a -map 0:s?')
@@ -105,22 +103,23 @@ class Application(tk.Frame):
         command.append('-flags')
         command.append('+cgop')
         command.append('-pix_fmt yuv420p')
-        command.append(f'-f matroska "{self.filename}"')
+        command.append(f'-f matroska "{self.output_file}"')
         return " ".join(command)
 
     def transcode(self, file, transcode_video, transcode_audio, corrupt_x264_hack):
+
         no_ext = os.path.splitext(file)[0]
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{no_ext}_temp.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{no_ext}_temp.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{no_ext}_temp.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
 
         self.open_process(temp_transcode)
-        self.tempfile = f"{no_ext}_temp.avi"
+        self.tempfile = f"{no_ext}_transcoded.avi"
         return self.tempfile
 
     def open_process(self, command_line):
@@ -140,7 +139,6 @@ class Application(tk.Frame):
         for file in enumerate(files):
 
             input_name = file[1]
-            self.original_fn = input_name
 
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
@@ -159,8 +157,6 @@ class Application(tk.Frame):
                 corrupt_hack = "-bsf:v h264_mp4toannexb"
             else:
                 corrupt_hack = ""
-
-            print(should_transcode_video, should_transcode_audio)
 
             if should_transcode_video or should_transcode_audio:
                 input_name = self.transcode(input_name,
@@ -183,14 +179,14 @@ class Application(tk.Frame):
                                             f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Error with {input_name}")
 
-                    if os.path.exists(self.filename):
-                        os.rename(self.filename, f"{self.filename}.error")
+                    if os.path.exists(self.output_file):
+                        os.rename(self.output_file, f"{self.output_file}.error")
 
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
-                self.replace_file(rename_from=self.filename,
-                                  rename_to=self.original_fn)
+                self.replace_file(rename_from=self.output_file,
+                                  rename_to=input_name)
 
             if self.tempfile:
                 os.remove(self.tempfile)
@@ -313,7 +309,7 @@ class Application(tk.Frame):
         self.corrupt_var = tk.BooleanVar()
         self.corrupt_var.set(False)
         self.corrupt_var_button = tk.Checkbutton(self, text="Fix AVC (ts) corruption during raw transcode",
-                                                     variable=self.corrupt_var)
+                                                 variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
 
         self.audio_codec_label = tk.Label(self)
