@@ -110,9 +110,9 @@ class Application(tk.Frame):
 
     def transcode(self, file):
         no_ext = os.path.splitext(file)[0]
-        temp_raw = f'ffmpeg.exe -i "{file}" -c:v rawvideo -hide_banner "{no_ext}_temp.avi" -y'
-        self.open_process(temp_raw)
-        return_code = self.open_process(temp_raw)
+        temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{no_ext}_temp.avi" -y'
+        self.open_process(temp_transcode)
+        return_code = self.open_process(temp_transcode)
         self.tempfile = f"{no_ext}_temp.avi"
         return self.tempfile
 
@@ -169,7 +169,7 @@ class Application(tk.Frame):
                 self.replace_file(rename_from=self.filename,
                                   rename_to=self.original_fn)
 
-            elif self.tempfile:
+            if self.tempfile:
                 os.remove(self.tempfile)
 
             ffindex = f"{input_name}.ffindex"
