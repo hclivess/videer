@@ -151,10 +151,12 @@ class Application(tk.Frame):
 
             should_transcode_video = False
             should_transcode_audio = False
-            if self.transcode_video_var.get() == "1":
+            if int(self.transcode_video_var.get()) == 1:
                 should_transcode_video = True
-            if self.transcode_audio_var.get() == "1":
+            if int(self.transcode_audio_var.get()) == 1:
                 should_transcode_audio = True
+
+            print(should_transcode_video, should_transcode_audio)
 
             if should_transcode_video or should_transcode_audio:
                 input_name = self.transcode(input_name,
@@ -181,7 +183,7 @@ class Application(tk.Frame):
 
                 info_box.configure(state='disabled')
 
-            if self.replace_button_var.get() == "1" and return_code == 0:
+            if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 self.replace_file(rename_from=self.filename,
                                   rename_to=self.original_fn)
 
