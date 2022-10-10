@@ -57,7 +57,7 @@ class FileHandler:
         self.errorname = f"{self.filename}.error"  # ..file.avi.error
         self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
         self.displayname = self.filename.split('/')[-1]  # file.avi
-        self.outputname = f"{self.filename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
+        self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
 
 
 class CreateAvs:
