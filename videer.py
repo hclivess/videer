@@ -11,8 +11,19 @@ import psutil
 from playsound import playsound
 import os
 
+class FileHandler:
+    def __init__(self, file):
+        self.number = file[0]
+        self.filename = file[1]  # ..file.avi
+        self.basename = os.path.splitext(self.filename)[0]  # ..file
+        self.extras = None  # .._x265_..
+        self.extension = ".mkv"  # .mkv
+        self.tempname = None  # ..file.avi.temp.avi
+        self.errorname = f"{self.filename}.error"  # ..file.avi.error
+        self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
+        self.displayname = self.filename.split('/')[-1]  # file.avi
 
-class CreateAvs():
+class CreateAvs:
     def __init__(self, infile):
         with open("parameters.avs", "w") as avsfile:
             avsfile.write('Loadplugin("plugins/masktools2.dll")')
@@ -60,15 +71,7 @@ class CreateAvs():
                 avsfile.write('\n')
 
 
-class File:
-    def __int__(self):
-        self.number = 0
-        self.filename = None  # ..file.avi
-        self.basename = None  # ..file
-        self.extras = None  # .._x265_..
-        self.extension = None  # .mkv
-        self.tempname = None  # ..file.avi.temp.avi
-        self.errorname = None  # ..file.avi.error
+
 
 
 class Application(tk.Frame):
@@ -149,14 +152,14 @@ class Application(tk.Frame):
 
         for file in enumerate(files):
 
-            input_name = file[1]
+            fileobj = FileHandler(file=file)
 
             info_box.configure(state='normal')
-            info_box.insert(tk.END, f"Processing {file[0] + 1}/{len(files)}: "
-                                    f"{input_name.split('/')[-1]}\n"
+            info_box.insert(tk.END, f"Processing {fileobj.number + 1}/{len(files)}: "
+                                    f"{fileobj.displayname}\n"
                             )
             info_box.configure(state='disabled')
-            rootLogger.info(f"Processing {input_name}")
+            rootLogger.info(f"Processing {fileobj.displayname}")
 
             should_transcode_video = False
             should_transcode_audio = False
@@ -170,41 +173,40 @@ class Application(tk.Frame):
                 corrupt_hack = ""
 
             if should_transcode_video or should_transcode_audio:
-                input_name = self.transcode(input_name,
+                fileobj.filename = self.transcode(fileobj.filename,
                                             transcode_video=should_transcode_video,
                                             transcode_audio=should_transcode_audio,
-                                            corrupt_x264_hack=corrupt_hack)
+                                            corrupt_x264_hack=corrupt_hack) #fix
 
-            command_line = self.assemble(input_name)
+            command_line = self.assemble(fileobj.filename)
             return_code = self.open_process(command_line)
 
             if info_box:
                 info_box.configure(state='normal')
                 if return_code == 0:
                     """error code can be None, force numeric check"""
-                    info_box.insert(tk.END, f"Finished {input_name.split('/')[-1]}: "
-                                            f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Finished {input_name}")
+                    info_box.insert(tk.END, f"Finished {fileobj.displayname}: "
+                                            f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
+                    rootLogger.info(f"Finished {fileobj.displayname}")
                 else:
-                    info_box.insert(tk.END, f"Error with {input_name.split('/')[-1]}: "
-                                            f"{int((file[0] + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Error with {input_name}")
+                    info_box.insert(tk.END, f"Error with {fileobj.displayname}: "
+                                            f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
+                    rootLogger.info(f"Error with {fileobj.displayname}")
 
                     if os.path.exists(self.output_file):
-                        os.rename(self.output_file, f"{self.output_file}.error")
+                        os.rename(self.output_file, fileobj.errorname)
 
                 info_box.configure(state='disabled')
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 self.replace_file(rename_from=self.output_file,
-                                  rename_to=input_name)
+                                  rename_to=fileobj.filename)
 
             if self.tempfile:
                 os.remove(self.tempfile)
 
-            ffindex = f"{input_name}.ffindex"
-            if os.path.exists(ffindex):
-                os.remove(ffindex)
+            if os.path.exists(fileobj.ffindex):
+                os.remove(fileobj.ffindex)
 
             self.pid = None
 
