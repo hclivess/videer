@@ -11,6 +11,40 @@ import psutil
 from playsound import playsound
 import os
 
+
+def assemble(input, output, app_gui):
+    command = [f'ffmpeg.exe -hide_banner']
+    if app_gui.use_avisynth_var.get():
+        command.append(f'-i "parameters.avs" -y')
+        CreateAvs(infile=input)
+    else:
+        command.append(f'-i "{input}" -y')
+
+    command.append(f'-c:v {app_gui.codec_var.get()}')
+    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get()))}')
+    command.append(f'-map 0:v -map 0:a -map 0:s?')
+    command.append(f'-crf {app_gui.crf.get()}')
+    command.append(f'-c:a {app_gui.audio_codec_var.get()}')
+    command.append(f'-b:a {app_gui.abr.get()}k')
+    command.append(f'-c:s copy')
+    command.append(f'{app_gui.extras_value.get()}')
+    command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
+    command.append(f'-metadata description="'
+                   f'Video Codec: {app_gui.codec_var.get()}, '
+                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get()))}, '
+                   f'CRF: {app_gui.crf.get()}, '
+                   f'Audio Codec: {app_gui.audio_codec_var.get()}, '
+                   f'Audio Bitrate: {app_gui.abr.get()}k"')
+    command.append('-movflags')
+    command.append('+faststart')
+    command.append('-bf 2')
+    command.append('-flags')
+    command.append('+cgop')
+    command.append('-pix_fmt yuv420p')
+    command.append(f'-f matroska "{output}"')
+    return " ".join(command)
+
+
 class FileHandler:
     def __init__(self, file):
         self.number = file[0]
@@ -18,10 +52,13 @@ class FileHandler:
         self.basename = os.path.splitext(self.filename)[0]  # ..file
         self.extras = None  # .._x265_..
         self.extension = ".mkv"  # .mkv
-        self.tempname = None  # ..file.avi.temp.avi
+        self.tempname = f"{self.basename}.temp.avi"  # ..file.temp.avi
+        #self.transcodemame = f"{self.tempname}{self.extension}"  # ..file.temp.avi.mkv
         self.errorname = f"{self.filename}.error"  # ..file.avi.error
         self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
         self.displayname = self.filename.split('/')[-1]  # file.avi
+        self.outputname = f"{self.filename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
+
 
 class CreateAvs:
     def __init__(self, infile):
@@ -71,9 +108,6 @@ class CreateAvs:
                 avsfile.write('\n')
 
 
-
-
-
 class Application(tk.Frame):
     def __init__(self, master=None):
 
@@ -84,57 +118,21 @@ class Application(tk.Frame):
         self.create_widgets()
         self.file_queue = []
         self.pid = None
-        self.output_file = None
         self.tempfile = None
-
-    def assemble(self, file):
-        command = [f'ffmpeg.exe -hide_banner']
-        if self.use_avisynth_var.get():
-            command.append(f'-i "parameters.avs" -y')
-            CreateAvs(infile=file)
-        else:
-            command.append(f'-i "{file}" -y')
-
-        self.output_file = f'{file}_{self.crf.get()}{self.codec_var.get()}_{self.audio_codec_var.get()}{self.abr.get()}.mkv'
-        command.append(f'-c:v {self.codec_var.get()}')
-        command.append(f'-preset {self.preset_get(self.speed.get())}')
-        command.append(f'-map 0:v -map 0:a -map 0:s?')
-        command.append(f'-crf {self.crf.get()}')
-        command.append(f'-c:a {self.audio_codec_var.get()}')
-        command.append(f'-b:a {self.abr.get()}k')
-        command.append(f'-c:s copy')
-        command.append(f'{self.extras_value.get()}')
-        command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
-        command.append(f'-metadata description="'
-                       f'Video Codec: {self.codec_var.get()}, '
-                       f'Preset: {self.preset_get(self.speed.get())}, '
-                       f'CRF: {self.crf.get()}, '
-                       f'Audio Codec: {self.audio_codec_var.get()}, '
-                       f'Audio Bitrate: {self.abr.get()}k"')
-        command.append('-movflags')
-        command.append('+faststart')
-        command.append('-bf 2')
-        command.append('-flags')
-        command.append('+cgop')
-        command.append('-pix_fmt yuv420p')
-        command.append(f'-f matroska "{self.output_file}"')
-        return " ".join(command)
+        self.should_transcode = False
 
     def transcode(self, file, transcode_video, transcode_audio, corrupt_x264_hack):
 
-        no_ext = os.path.splitext(file)[0]
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{no_ext}_transcoded.avi" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
 
         self.open_process(temp_transcode)
-        self.tempfile = f"{no_ext}_transcoded.avi"
-        return self.tempfile
 
     def open_process(self, command_line):
         process = subprocess.Popen(command_line)
@@ -154,6 +152,8 @@ class Application(tk.Frame):
 
             fileobj = FileHandler(file=file)
 
+
+
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {fileobj.number + 1}/{len(files)}: "
                                     f"{fileobj.displayname}\n"
@@ -167,18 +167,23 @@ class Application(tk.Frame):
                 should_transcode_video = True
             if int(self.transcode_audio_var.get()) == 1:
                 should_transcode_audio = True
+            if should_transcode_video or should_transcode_audio:
+                self.should_transcode = True
             if int(self.corrupt_var.get()) == 1:
                 corrupt_hack = "-bsf:v h264_mp4toannexb"
             else:
                 corrupt_hack = ""
 
-            if should_transcode_video or should_transcode_audio:
-                fileobj.filename = self.transcode(fileobj.filename,
-                                            transcode_video=should_transcode_video,
-                                            transcode_audio=should_transcode_audio,
-                                            corrupt_x264_hack=corrupt_hack) #fix
+            if self.should_transcode:
+                self.transcode(fileobj,
+                               transcode_video=should_transcode_video,
+                               transcode_audio=should_transcode_audio,
+                               corrupt_x264_hack=corrupt_hack)
+                command_line = assemble(fileobj.tempname, fileobj.outputname, self)
 
-            command_line = self.assemble(fileobj.filename)
+            else:
+                command_line = assemble(fileobj.filename, fileobj.outputname, self)
+                
             return_code = self.open_process(command_line)
 
             if info_box:
@@ -193,17 +198,21 @@ class Application(tk.Frame):
                                             f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Error with {fileobj.displayname}")
 
-                    if os.path.exists(self.output_file):
-                        os.rename(self.output_file, fileobj.errorname)
+                    if os.path.exists(fileobj.outputname):
+                        os.rename(fileobj.outputname, fileobj.errorname)
 
                 info_box.configure(state='disabled')
 
+            if self.should_transcode and return_code == 0:
+                self.replace_file(rename_from=fileobj.tempname,
+                                  rename_to=fileobj.outputname)
+
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
-                self.replace_file(rename_from=self.output_file,
+                self.replace_file(rename_from=fileobj.outputname,
                                   rename_to=fileobj.filename)
 
-            if self.tempfile:
-                os.remove(self.tempfile)
+            if os.path.exists(fileobj.tempname):
+                os.remove(fileobj.tempname)
 
             if os.path.exists(fileobj.ffindex):
                 os.remove(fileobj.ffindex)
