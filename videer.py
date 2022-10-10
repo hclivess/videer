@@ -12,7 +12,7 @@ from playsound import playsound
 import os
 
 
-def assemble(input, output, app_gui):
+def assemble(input, output, app_gui, transcode_source):
     command = [f'ffmpeg.exe -hide_banner']
     if app_gui.use_avisynth_var.get():
         command.append(f'-i "parameters.avs" -y')
@@ -27,6 +27,10 @@ def assemble(input, output, app_gui):
     command.append(f'-c:a {app_gui.audio_codec_var.get()}')
     command.append(f'-b:a {app_gui.abr.get()}k')
     command.append(f'-c:s copy')
+
+    if int(app_gui.corrupt_var.get()) == 1 and not transcode_source:
+        command.append("-bsf:v h264_mp4toannexb")
+
     command.append(f'{app_gui.extras_value.get()}')
     command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
     command.append(f'-metadata description="'
@@ -121,16 +125,16 @@ class Application(tk.Frame):
         self.tempfile = None
         self.should_transcode = False
 
-    def transcode(self, file, transcode_video, transcode_audio, corrupt_x264_hack):
+    def transcode(self, file, transcode_video, transcode_audio):
 
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium {corrupt_x264_hack} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
 
         self.open_process(temp_transcode)
 
@@ -152,8 +156,6 @@ class Application(tk.Frame):
 
             fileobj = FileHandler(file=file)
 
-
-
             info_box.configure(state='normal')
             info_box.insert(tk.END, f"Processing {fileobj.number + 1}/{len(files)}: "
                                     f"{fileobj.displayname}\n"
@@ -169,20 +171,15 @@ class Application(tk.Frame):
                 should_transcode_audio = True
             if should_transcode_video or should_transcode_audio:
                 self.should_transcode = True
-            if int(self.corrupt_var.get()) == 1:
-                corrupt_hack = "-bsf:v h264_mp4toannexb"
-            else:
-                corrupt_hack = ""
 
             if self.should_transcode:
                 self.transcode(fileobj,
                                transcode_video=should_transcode_video,
-                               transcode_audio=should_transcode_audio,
-                               corrupt_x264_hack=corrupt_hack)
-                command_line = assemble(fileobj.tempname, fileobj.outputname, self)
+                               transcode_audio=should_transcode_audio)
+                command_line = assemble(fileobj.tempname, fileobj.outputname, self, True)
 
             else:
-                command_line = assemble(fileobj.filename, fileobj.outputname, self)
+                command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
                 
             return_code = self.open_process(command_line)
 
@@ -202,10 +199,6 @@ class Application(tk.Frame):
                         os.rename(fileobj.outputname, fileobj.errorname)
 
                 info_box.configure(state='disabled')
-
-            if self.should_transcode and return_code == 0:
-                self.replace_file(rename_from=fileobj.tempname,
-                                  rename_to=fileobj.outputname)
 
             if int(self.replace_button_var.get()) == 1 and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
