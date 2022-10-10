@@ -60,6 +60,7 @@ class FileHandler:
         #self.transcodemame = f"{self.tempname}{self.extension}"  # ..file.temp.avi.mkv
         self.errorname = f"{self.filename}.error"  # ..file.avi.error
         self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
+        self.tempffindex = f"{self.tempname}.ffindex"  # ..file.avi.ffindex
         self.displayname = self.filename.split('/')[-1]  # file.avi
         self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
 
@@ -209,6 +210,9 @@ class Application(tk.Frame):
 
             if os.path.exists(fileobj.ffindex):
                 os.remove(fileobj.ffindex)
+
+            if os.path.exists(fileobj.tempffindex):
+                os.remove(fileobj.tempffindex)
 
             self.pid = None
 
