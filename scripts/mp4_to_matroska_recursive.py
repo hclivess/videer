@@ -22,7 +22,7 @@ def swap_container(files):
         print(f"Base: {base_name}")
         print(f"Extension: {extension}")
         print(f"RC: {return_code}")
-        if return_code == 0:
+        if return_code == 1:
             os.rename(file, f"{file}.error")
 
         process.wait()
