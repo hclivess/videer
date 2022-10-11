@@ -57,7 +57,7 @@ class FileHandler:
         self.extras = None  # .._x265_..
         self.extension = ".mkv"  # .mkv
         self.tempname = f"{self.basename}.temp.avi"  # ..file.temp.avi
-        #self.transcodemame = f"{self.tempname}{self.extension}"  # ..file.temp.avi.mkv
+        # self.transcodemame = f"{self.tempname}{self.extension}"  # ..file.temp.avi.mkv
         self.errorname = f"{self.filename}.error"  # ..file.avi.error
         self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
         self.tempffindex = f"{self.tempname}.ffindex"  # ..file.avi.ffindex
@@ -117,6 +117,7 @@ class CreateAvs:
                 avsfile.write('DoubleWeave().SelectOdd()')
                 avsfile.write('QTGMC(InputType=2)')
                 avsfile.write('\n')
+
 
 class Application(tk.Frame):
     def __init__(self, master=None):
@@ -186,7 +187,7 @@ class Application(tk.Frame):
 
             else:
                 command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
-                
+
             return_code = self.open_process(command_line)
 
             if info_box:
@@ -250,13 +251,26 @@ class Application(tk.Frame):
             self.file_queue.append(file)
         var.set(self.file_queue)
 
-    def set_avisynth_true(self, click):
-        if not self.deinterlace_var.get():
+    def on_set_avisynth(self, click):
+        """warning, reversed because it takes state at the time of clicking"""
+        if not self.deinterlace_var.get() and not self.use_avisynth_var.get():
             self.use_avisynth_var.set(True)
+        else:
+            self.use_avisynth_var.set(False)
+    def on_set_deinterlace(self, click):
+        """warning, reversed because it takes state at the time of clicking"""
+        if not self.use_avisynth_var.get():
+            self.use_avisynth_var.set(False)
 
-    def set_deinterlace_false(self, click):
-        if self.use_avisynth_var.get():
+    def on_set_ttf(self, click):
+        """warning, reversed because it takes state at the time of clicking"""
+        if not self.tff_var.get() and not self.deinterlace_var.get():
+            self.deinterlace_var.set(True)
+            self.use_avisynth_var.set(True)
+        else:
             self.deinterlace_var.set(False)
+            self.use_avisynth_var.set(False)
+
 
     def exit(self):
         self.stop_process()
@@ -302,25 +316,26 @@ class Application(tk.Frame):
         self.deinterlace_var = tk.BooleanVar()
         self.deinterlace_var.set(False)
         self.deinterlace_button = tk.Checkbutton(self, text="Deinterlace", variable=self.deinterlace_var)
-        self.deinterlace_button.bind("<Button-1>", self.set_avisynth_true)
+        self.deinterlace_button.bind("<Button-1>", self.on_set_avisynth)
         self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
 
         self.tff_var = tk.BooleanVar()
         self.tff_var.set(False)
         self.tff_button = tk.Checkbutton(self, text="Top Field First", variable=self.tff_var)
+        self.tff_button.bind("<Button-1>", self.on_set_ttf)
         self.tff_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
 
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
         self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth+", variable=self.use_avisynth_var)
-        self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
+        self.use_avisynth_button.bind("<Button-1>", self.on_set_deinterlace)
         self.use_avisynth_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
         self.use_ffms2_var = tk.BooleanVar()
         self.use_ffms2_var.set(False)
         self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
                                                variable=self.use_ffms2_var)
-        self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
+        self.use_ffms2_button.bind("<Button-1>", self.on_set_avisynth)
         self.use_ffms2_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
 
         self.transcode_video_var = tk.BooleanVar()
