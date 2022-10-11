@@ -108,10 +108,15 @@ class CreateAvs:
                 avsfile.write(app.avisynth_extras.get("1.0", tk.END))
                 avsfile.write('\n')
 
-            if app.deinterlace_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(app.speed.get())}")')
+            if app.deinterlace_var.get() and not app.tff_var.get():
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}")')
                 avsfile.write('\n')
 
+            elif app.deinterlace_var.get() and app.tff_var.get():
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}")')
+                avsfile.write('DoubleWeave().SelectOdd()')
+                avsfile.write('QTGMC(InputType=2)')
+                avsfile.write('\n')
 
 class Application(tk.Frame):
     def __init__(self, master=None):
@@ -300,68 +305,73 @@ class Application(tk.Frame):
         self.deinterlace_button.bind("<Button-1>", self.set_avisynth_true)
         self.deinterlace_button.grid(row=0, column=1, sticky='w', pady=5, padx=5)
 
+        self.tff_var = tk.BooleanVar()
+        self.tff_var.set(False)
+        self.tff_button = tk.Checkbutton(self, text="Top Field First", variable=self.tff_var)
+        self.tff_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+
         self.use_avisynth_var = tk.BooleanVar()
         self.use_avisynth_var.set(False)
         self.use_avisynth_button = tk.Checkbutton(self, text="Use AviSynth+", variable=self.use_avisynth_var)
         self.use_avisynth_button.bind("<Button-1>", self.set_deinterlace_false)
-        self.use_avisynth_button.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+        self.use_avisynth_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
 
         self.use_ffms2_var = tk.BooleanVar()
         self.use_ffms2_var.set(False)
         self.use_ffms2_button = tk.Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
                                                variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.set_avisynth_true)
-        self.use_ffms2_button.grid(row=2, column=1, sticky='w', pady=5, padx=5)
+        self.use_ffms2_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
 
         self.transcode_video_var = tk.BooleanVar()
         self.transcode_video_var.set(False)
         self.transcode_video_button = tk.Checkbutton(self, text="Raw transcode video first",
                                                      variable=self.transcode_video_var)
-        self.transcode_video_button.grid(row=3, column=1, sticky='w', pady=5, padx=5)
+        self.transcode_video_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
 
         self.transcode_audio_var = tk.BooleanVar()
         self.transcode_audio_var.set(False)
         self.transcode_audio_button = tk.Checkbutton(self, text="Raw transcode audio first",
                                                      variable=self.transcode_audio_var)
-        self.transcode_audio_button.grid(row=4, column=1, sticky='w', pady=5, padx=5)
+        self.transcode_audio_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
 
         self.corrupt_var = tk.BooleanVar()
         self.corrupt_var.set(False)
         self.corrupt_var_button = tk.Checkbutton(self, text="Fix AVC (ts) corruption during raw transcode",
                                                  variable=self.corrupt_var)
-        self.corrupt_var_button.grid(row=5, column=1, sticky='w', pady=5, padx=5)
+        self.corrupt_var_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
 
         self.audio_codec_label = tk.Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = tk.StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=6, column=0, sticky='', pady=5, padx=5)
+        self.audio_codec_label.grid(row=7, column=0, sticky='', pady=5, padx=5)
 
         self.audio_codec_button = tk.Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
                                                  value="libmp3lame")
-        self.audio_codec_button.grid(row=6, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=7, column=1, sticky='w', pady=5, padx=5)
-        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button = tk.Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=8, column=1, sticky='w', pady=5, padx=5)
+        self.audio_codec_button = tk.Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
         self.audio_codec_button = tk.Radiobutton(self, text="PCM32 (raw)", variable=self.audio_codec_var,
                                                  value="pcm_s32le")
-        self.audio_codec_button.grid(row=9, column=1, sticky='w', pady=5, padx=5)
+        self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
 
         self.codec_label = tk.Label(self)
         self.codec_label["text"] = "Video Codec: "
         self.codec_var = tk.StringVar()
         self.codec_var.set("libx265")
-        self.codec_label.grid(row=10, column=0, sticky='', pady=5, padx=5)
+        self.codec_label.grid(row=11, column=0, sticky='', pady=5, padx=5)
 
         self.video_codec_button = tk.Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.video_codec_button.grid(row=10, column=1, sticky='w', pady=5, padx=5)
-        self.video_codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=11, column=1, sticky='w', pady=5, padx=5)
-        self.video_codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button = tk.Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=12, column=1, sticky='w', pady=5, padx=5)
-        self.video_codec_button = tk.Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button = tk.Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.video_codec_button.grid(row=13, column=1, sticky='w', pady=5, padx=5)
+        self.video_codec_button = tk.Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button.grid(row=14, column=1, sticky='w', pady=5, padx=5)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=tk.HORIZONTAL, label="Encoding Speed")
         self.speed.grid(row=15, column=1, sticky='WE', pady=5, padx=5)
