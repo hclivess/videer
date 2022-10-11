@@ -99,8 +99,6 @@ class CreateAvs:
             avsfile.write('\n')
             avsfile.write('ConvertToYV24(matrix="rec709")')
             avsfile.write('\n')
-            avsfile.write(f'EdiThreads={multiprocessing.cpu_count()}')
-            avsfile.write('\n')
             avsfile.write(f'Prefetch({multiprocessing.cpu_count()})')
             avsfile.write('\n')
 
@@ -109,11 +107,11 @@ class CreateAvs:
                 avsfile.write('\n')
 
             if app.deinterlace_var.get() and not app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}")')
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}"), EdiThreads={multiprocessing.cpu_count()}')
                 avsfile.write('\n')
 
             elif app.deinterlace_var.get() and app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}")')
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}"), EdiThreads={multiprocessing.cpu_count()}')
                 avsfile.write('DoubleWeave().SelectOdd()')
                 avsfile.write('QTGMC(InputType=2)')
                 avsfile.write('\n')
@@ -137,11 +135,11 @@ class Application(tk.Frame):
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset medium -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
 
         self.open_process(temp_transcode)
 
