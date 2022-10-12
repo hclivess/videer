@@ -218,7 +218,10 @@ class Application(tk.Frame):
         info_box.configure(state='disabled')
         rootLogger.info("Queue finished")
 
-        playsound("done.mp3")
+        try:
+            playsound("done.mp3")
+        except Exception as e:
+            print("Failed to play sound")
 
     def create_info_box(self):
         self.top = tk.Toplevel()
