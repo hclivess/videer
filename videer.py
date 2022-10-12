@@ -11,7 +11,6 @@ import psutil
 from playsound import playsound
 import os
 
-
 def assemble(input, output, app_gui, transcode_source):
     command = [f'ffmpeg.exe -hide_banner']
     if app_gui.use_avisynth_var.get():
@@ -85,12 +84,6 @@ class CreateAvs:
 
             if app.use_ffms2_var.get():
                 avsfile.write(f'FFmpegSource2("{infile}", vtrack = -1, atrack = -1)')
-                avsfile.write('\n')
-                avsfile.write(f'A = FFAudioSource("{infile}")')
-                avsfile.write('\n')
-                avsfile.write(f'V = FFVideoSource("{infile}")')
-                avsfile.write('\n')
-                avsfile.write('AudioDub(V, A)')
             else:
                 avsfile.write(f'AVISource("{infile}", audio=true)')
             avsfile.write('\n')
@@ -107,11 +100,11 @@ class CreateAvs:
                 avsfile.write('\n')
 
             if app.deinterlace_var.get() and not app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}"), EdiThreads={multiprocessing.cpu_count()}')
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                 avsfile.write('\n')
 
             elif app.deinterlace_var.get() and app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}"), EdiThreads={multiprocessing.cpu_count()}')
+                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                 avsfile.write('DoubleWeave().SelectOdd()')
                 avsfile.write('QTGMC(InputType=2)')
                 avsfile.write('\n')
@@ -317,9 +310,11 @@ class Application(tk.Frame):
             rootLogger.info("File already exists, not replacing")
         else:
             rootLogger.info("Replacing original file as requested")
-            os.replace(rename_from, new_name_ext)
+            if os.path.exists(new_name_ext):
+                os.rename(new_name_ext, f"{new_name_ext}.old")
+            os.rename(rename_from, new_name_ext)
             if rename_to != new_name_ext:
-                os.remove(rename_to)
+                os.rename(rename_to, f"{new_name_ext}.old")
 
     def create_widgets(self):
 
