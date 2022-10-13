@@ -466,7 +466,7 @@ class Application(Frame):
 
 if __name__ == "__main__":
     root = Tk()
-
+    root.iconbitmap("icon.ico")
     style = Style()
     style.configure('W.TButton',
                     font=('calibri', 10, 'bold'),
