@@ -372,7 +372,7 @@ class Application(Frame):
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=7, column=0, sticky='', pady=0, padx=0)
+        self.audio_codec_label.grid(row=7, column=0, sticky='SE', pady=0, padx=0)
 
         self.audio_codec_button = Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
                                                  value="libmp3lame")
@@ -389,7 +389,7 @@ class Application(Frame):
         self.codec_label["text"] = "Video Codec: "
         self.codec_var = StringVar()
         self.codec_var.set("libx265")
-        self.codec_label.grid(row=11, column=0, sticky='', pady=0, padx=0)
+        self.codec_label.grid(row=11, column=0, sticky='SE', pady=0, padx=0)
 
         self.video_codec_button = Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
         self.video_codec_button.grid(row=11, column=1, sticky='w', pady=0, padx=0)
@@ -402,7 +402,7 @@ class Application(Frame):
 
         self.speed_label = Label(self)
         self.speed_label["text"] = "Encoding Speed: "
-        self.speed_label.grid(row=15, column=0, sticky='S', pady=0, padx=0)
+        self.speed_label.grid(row=15, column=0, sticky='SE', pady=0, padx=0)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=HORIZONTAL, sliderrelief=FLAT)
         self.speed.grid(row=15, column=1, sticky='WE', pady=0, padx=0)
@@ -413,21 +413,21 @@ class Application(Frame):
 
         self.infile_button = Button(self, text="Input File(s):",
                                        command=lambda: self.select_file(self.infile_value))
-        self.infile_button.grid(row=20, column=0, sticky='WE', padx=0, pady=(5))
+        self.infile_button.grid(row=20, column=0, sticky='SE', padx=0, pady=(5))
 
         self.infile = Entry(self, textvariable=self.infile_value, width=70)
         self.infile.grid(row=20, column=1, sticky='W', padx=0)
 
         self.crf_label = Label(self)
-        self.crf_label["text"] = "Encoding Speed: "
-        self.crf_label.grid(row=21, column=0, sticky='S', pady=0, padx=0)
+        self.crf_label["text"] = "CRF: "
+        self.crf_label.grid(row=21, column=0, sticky='SE', pady=0, padx=0)
         self.crf = tk.Scale(self, from_=0, to=51, orient=HORIZONTAL, sliderrelief=FLAT)
         self.crf.grid(row=21, column=1, sticky='WE', pady=0, padx=0)
         self.crf.set(23)
 
         self.abr_label = Label(self)
         self.abr_label["text"] = "Audio ABR: "
-        self.abr_label.grid(row=22, column=0, sticky='s', pady=0, padx=0)
+        self.abr_label.grid(row=22, column=0, sticky='SE', pady=0, padx=0)
 
         self.abr = tk.Scale(self, resolution=16, from_=0, to=384, orient=HORIZONTAL, sliderrelief=FLAT)
         self.abr.grid(row=22, column=1, sticky='WE', pady=0, padx=0)
@@ -435,7 +435,7 @@ class Application(Frame):
 
         self.extras_label = Label(self)
         self.extras_label["text"] = "FFmpeg Extras: "
-        self.extras_label.grid(row=23, column=0, sticky='', padx=0)
+        self.extras_label.grid(row=23, column=0, sticky='SE', padx=0)
         self.extras_value = StringVar()
         self.extras_value.set("")
         self.extras = Entry(self, textvariable=self.extras_value, width=70)
@@ -443,7 +443,7 @@ class Application(Frame):
 
         self.avisynth_extras_label = Label(self)
         self.avisynth_extras_label["text"] = "AviSynth+ Extras: "
-        self.avisynth_extras_label.grid(row=24, column=0, sticky='', padx=0)
+        self.avisynth_extras_label.grid(row=24, column=0, sticky='SE', padx=0)
         self.avisynth_extras = Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=24, column=1, sticky='WE', pady=0, padx=0)
 
@@ -452,7 +452,7 @@ class Application(Frame):
         self.replace_button = Checkbutton(self, text="Replace Original File(s)",
                                              variable=self.replace_button_var)
 
-        self.replace_button.grid(row=25, column=1, sticky='w', pady=0, padx=0)
+        self.replace_button.grid(row=25, column=1, sticky='SE', pady=0, padx=0)
 
         self.run = Button(self, text="Run", style='W.TButton', command=lambda: self.run_cmd())
         self.run.grid(row=0, column=2, sticky='WE', padx=0)
