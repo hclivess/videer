@@ -39,12 +39,14 @@ def deframe(files):
             print(f"Base: {base_name}")
             print(f"Extension: {extension}")
             print(f"RC: {return_code}")
+
+            process.wait()
+
             if return_code == 1:
                 os.rename(file, f"{file}.error")
             else:
-                os.replace(f"{base_name}.temp.mkv", f"{base_name}.mkv")
-
-            process.wait()
+                os.rename(file, f"{file}.old")
+                os.rename(f"{base_name}.temp.mkv", f"{base_name}.mkv")
 
             print(f"{file} Converted...")
         else:
