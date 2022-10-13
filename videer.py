@@ -442,7 +442,7 @@ class Application(Frame):
         self.extras.grid(row=23, column=1, sticky='W', pady=0, padx=0)
 
         self.avisynth_extras_label = Label(self)
-        self.avisynth_extras_label["text"] = "AviSynth Extras: "
+        self.avisynth_extras_label["text"] = "AviSynth+ Extras: "
         self.avisynth_extras_label.grid(row=24, column=0, sticky='', padx=0)
         self.avisynth_extras = Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=24, column=1, sticky='WE', pady=0, padx=0)
