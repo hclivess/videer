@@ -123,9 +123,9 @@ class Application(Frame):
         self.grid()
         self.create_widgets()
         self.file_queue = []
-        self.pid = None
         self.tempfile = None
         self.should_transcode = False
+        self.process = None
 
     def transcode(self, file, transcode_video, transcode_audio):
 
@@ -141,14 +141,14 @@ class Application(Frame):
         self.open_process(temp_transcode)
 
     def open_process(self, command_line):
-        process = subprocess.Popen(command_line)
+        rootLogger.info("Process starting")
+        self.process = subprocess.Popen(command_line)
         # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         # stdout, stderr = process.communicate()
-        process.communicate()
-        return_code = process.returncode
-        self.pid = process.pid
+        outs, errs = self.process.communicate()
+        return_code = self.process.returncode
         rootLogger.info(f"Return code: {return_code}")
-        process.wait()
+        self.process.wait()
         return return_code
 
     def queue(self, files, info_box):
@@ -215,8 +215,6 @@ class Application(Frame):
             if os.path.exists(fileobj.tempffindex):
                 os.remove(fileobj.tempffindex)
 
-            self.pid = None
-
         info_box.configure(state='normal')
         info_box.insert(END, "Queue finished")
         info_box.configure(state='disabled')
@@ -232,7 +230,7 @@ class Application(Frame):
         self.top.title("Queue Info")
         self.top.resizable(False, False)
 
-        info_box = st.ScrolledText(self.top, width=100)
+        info_box = st.ScrolledText(self.top, width=100, font=('calibri', 10, 'bold'))
         info_box.grid(row=0, pady=0)
         info_box.configure(state='disabled')
         return info_box
@@ -287,15 +285,11 @@ class Application(Frame):
         self.master.destroy()
 
     def stop_process(self, announce=False):
-        if self.pid:
-            output = f"Process {self.pid} Terminated"
-            process = psutil.Process(self.pid)
-            for proc in process.children(recursive=True):
-                proc.kill()
-            process.kill()
-            self.pid = None
+        if self.process:
+            output = f"Process terminated"
+            self.process.kill()
         else:
-            output = f"No relevant process found"
+            output = f"No process assigned"
 
         if announce:
             messagebox.showinfo(title="Info", message=output)
@@ -368,7 +362,7 @@ class Application(Frame):
                                                  variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=6, column=1, sticky='w', pady=0, padx=0)
 
-        self.audio_codec_label = Label(self, style="BW.TLabel")
+        self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = StringVar()
         self.audio_codec_var.set("aac")
