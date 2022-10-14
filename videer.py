@@ -17,7 +17,7 @@ import os
 
 
 def assemble(input, output, app_gui, transcode_source):
-    command = [f'ffmpeg.exe -hide_banner']
+    command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
     if app_gui.use_avisynth_var.get():
         command.append(f'-i "parameters.avs" -y')
         CreateAvs(infile=input)
@@ -136,11 +136,11 @@ class Application(Frame):
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
 
         self.open_process(temp_transcode)
 
@@ -207,7 +207,7 @@ class Application(Frame):
                     rootLogger.info(f"Error with {fileobj.displayname}")
 
                     if os.path.exists(fileobj.outputname):
-                        os.rename(fileobj.outputname, fileobj.errorname)
+                        os.replace(fileobj.outputname, fileobj.errorname)
 
                 info_box.configure(state='disabled')
 
