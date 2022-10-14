@@ -15,6 +15,7 @@ import psutil
 from playsound import playsound
 import os
 
+
 def assemble(input, output, app_gui, transcode_source):
     command = [f'ffmpeg.exe -hide_banner']
     if app_gui.use_avisynth_var.get():
@@ -104,11 +105,13 @@ class CreateAvs:
                 avsfile.write('\n')
 
             if app.deinterlace_var.get() and not app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
+                avsfile.write(
+                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                 avsfile.write('\n')
 
             elif app.deinterlace_var.get() and app.tff_var.get():
-                avsfile.write(f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
+                avsfile.write(
+                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                 avsfile.write('DoubleWeave().SelectOdd()')
                 avsfile.write('QTGMC(InputType=2)')
                 avsfile.write('\n')
@@ -119,6 +122,7 @@ class Application(Frame):
 
         super().__init__(master)
         self.master = master
+        self.top = None
 
         self.grid()
         self.create_widgets()
@@ -142,13 +146,18 @@ class Application(Frame):
 
     def open_process(self, command_line):
         rootLogger.info("Process starting")
-        self.process = subprocess.Popen(command_line)
-        # process = subprocess.Popen(command_line, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        # stdout, stderr = process.communicate()
-        outs, errs = self.process.communicate()
-        return_code = self.process.returncode
+
+        with subprocess.Popen(command_line,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT,
+                              universal_newlines=True) as self.process:
+
+            for line in self.process.stdout:
+                print(line, end='')
+
+        return_code = self.process.wait()
+
         rootLogger.info(f"Return code: {return_code}")
-        self.process.wait()
         return return_code
 
     def queue(self, files, info_box):
@@ -160,7 +169,7 @@ class Application(Frame):
 
             info_box.configure(state='normal')
             info_box.insert(END, f"Processing {fileobj.number + 1}/{len(files)}: "
-                                    f"{fileobj.displayname}\n"
+                                 f"{fileobj.displayname}\n"
                             )
             info_box.configure(state='disabled')
             rootLogger.info(f"Processing {fileobj.displayname}")
@@ -190,11 +199,11 @@ class Application(Frame):
                 if return_code == 0:
                     """error code can be None, force numeric check"""
                     info_box.insert(END, f"Finished {fileobj.displayname}: "
-                                            f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
+                                         f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Finished {fileobj.displayname}")
                 else:
                     info_box.insert(END, f"Error with {fileobj.displayname}: "
-                                            f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
+                                         f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
                     rootLogger.info(f"Error with {fileobj.displayname}")
 
                     if os.path.exists(fileobj.outputname):
@@ -253,6 +262,7 @@ class Application(Frame):
             self.tff_var.set(False)
             self.use_ffms2_var.set(False)
             self.deinterlace_var.set(False)
+
     def on_set_deinterlace(self, click):
         """warning, reversed because it takes state at the time of clicking"""
         if not self.deinterlace_var.get() and not self.use_avisynth_var.get():
@@ -340,26 +350,26 @@ class Application(Frame):
         self.use_ffms2_var = BooleanVar()
         self.use_ffms2_var.set(False)
         self.use_ffms2_button = Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
-                                               variable=self.use_ffms2_var)
+                                            variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.on_set_ffms)
         self.use_ffms2_button.grid(row=3, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_video_var = BooleanVar()
         self.transcode_video_var.set(False)
         self.transcode_video_button = Checkbutton(self, text="Raw transcode video first",
-                                                     variable=self.transcode_video_var)
+                                                  variable=self.transcode_video_var)
         self.transcode_video_button.grid(row=4, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_audio_var = BooleanVar()
         self.transcode_audio_var.set(False)
         self.transcode_audio_button = Checkbutton(self, text="Raw transcode audio first",
-                                                     variable=self.transcode_audio_var)
+                                                  variable=self.transcode_audio_var)
         self.transcode_audio_button.grid(row=5, column=1, sticky='w', pady=0, padx=0)
 
         self.corrupt_var = BooleanVar()
         self.corrupt_var.set(False)
         self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption during raw transcode",
-                                                 variable=self.corrupt_var)
+                                              variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=6, column=1, sticky='w', pady=0, padx=0)
 
         self.audio_codec_label = Label(self)
@@ -369,14 +379,14 @@ class Application(Frame):
         self.audio_codec_label.grid(row=7, column=0, sticky='SE', pady=0, padx=0)
 
         self.audio_codec_button = Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
-                                                 value="libmp3lame")
+                                              value="libmp3lame")
         self.audio_codec_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
         self.audio_codec_button = Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
         self.audio_codec_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
         self.audio_codec_button = Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
         self.audio_codec_button.grid(row=9, column=1, sticky='w', pady=0, padx=0)
         self.audio_codec_button = Radiobutton(self, text="PCM32 (raw)", variable=self.audio_codec_var,
-                                                 value="pcm_s32le")
+                                              value="pcm_s32le")
         self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=0, padx=0)
 
         self.codec_label = Label(self)
@@ -406,7 +416,7 @@ class Application(Frame):
         self.infile_value.set("c:/test.avi")
 
         self.infile_button = Button(self, text="Input File(s):",
-                                       command=lambda: self.select_file(self.infile_value))
+                                    command=lambda: self.select_file(self.infile_value))
         self.infile_button.grid(row=20, column=0, sticky='SE', padx=0, pady=(5))
 
         self.infile = Entry(self, textvariable=self.infile_value, width=70)
@@ -444,7 +454,7 @@ class Application(Frame):
         self.replace_button_var = BooleanVar()
         self.replace_button_var.set(False)
         self.replace_button = Checkbutton(self, text="Replace Original File(s)",
-                                             variable=self.replace_button_var)
+                                          variable=self.replace_button_var)
 
         self.replace_button.grid(row=25, column=1, sticky='SE', pady=0, padx=0)
 
