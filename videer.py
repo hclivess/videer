@@ -207,21 +207,20 @@ class Application(Frame):
             return_code = self.open_process(command_line)
 
             if info_box:
-                info_box.configure(state='normal')
+
                 if return_code == 0:
                     """error code can be None, force numeric check"""
-                    info_box.insert(END, f"Finished {fileobj.displayname}: "
-                                         f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Finished {fileobj.displayname}")
+                    self.info_box_insert(info_box=info_box,
+                                         message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                         log_message=f"Finished {fileobj.displayname}")
                 else:
-                    info_box.insert(END, f"Error with {fileobj.displayname}: "
-                                         f"{int((fileobj.number + 1) / (len(files)) * 100)}% \n")
-                    rootLogger.info(f"Error with {fileobj.displayname}")
+                    self.info_box_insert(info_box=info_box,
+                                         message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                         log_message=f"Error with {fileobj.displayname}")
 
                     if os.path.exists(fileobj.outputname):
                         os.replace(fileobj.outputname, fileobj.errorname)
 
-                info_box.configure(state='disabled')
 
             if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
@@ -236,15 +235,9 @@ class Application(Frame):
             if os.path.exists(fileobj.tempffindex):
                 os.remove(fileobj.tempffindex)
 
-        info_box.configure(state='normal')
-        info_box.insert(END, "Queue finished")
-        info_box.configure(state='disabled')
-        rootLogger.info("Queue finished")
-
-        try:
-            playsound("done.mp3")
-        except Exception as e:
-            print("Failed to play sound")
+        self.info_box_insert(info_box=info_box,
+                             message="Queue finished",
+                             log_message="Queue finished")
 
     def create_info_box(self):
         self.top = Toplevel()
