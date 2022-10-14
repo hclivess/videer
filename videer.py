@@ -67,6 +67,7 @@ class FileHandler:
         self.tempffindex = f"{self.tempname}.ffindex"  # ..file.avi.ffindex
         self.displayname = self.filename.split('/')[-1]  # file.avi
         self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
+        self.dir = os.path.dirname(os.path.realpath(self.filename))
 
 
 class CreateAvs:
@@ -130,7 +131,7 @@ class Application(Frame):
         self.tempfile = None
         self.should_transcode = False
         self.process = None
-        self.dir = None
+        self.workdir = None
 
     def transcode(self, file, transcode_video, transcode_audio):
 
@@ -174,11 +175,11 @@ class Application(Frame):
 
             fileobj = FileHandler(file=file)
 
-            if self.dir != os.getcwd():
-                self.dir = os.getcwd()
+            if self.workdir != fileobj.dir:
+                self.workdir = fileobj.dir
                 self.info_box_insert(info_box=info_box,
-                                     message=f"Switching directory to: {self.dir}",
-                                     log_message=f"Switching directory to: {self.dir}")
+                                     message=f"Switching directory to: {self.workdir}",
+                                     log_message=f"Switching directory to: {self.workdir}")
 
 
             self.info_box_insert(info_box=info_box,
@@ -222,7 +223,7 @@ class Application(Frame):
 
                 info_box.configure(state='disabled')
 
-            if int(self.replace_button_var.get()) == 1 and return_code == 0:
+            if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
                                   rename_to=fileobj.filename)
 
