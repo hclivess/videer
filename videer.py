@@ -130,6 +130,7 @@ class Application(Frame):
         self.tempfile = None
         self.should_transcode = False
         self.process = None
+        self.dir = None
 
     def transcode(self, file, transcode_video, transcode_audio):
 
@@ -160,6 +161,12 @@ class Application(Frame):
         rootLogger.info(f"Return code: {return_code}")
         return return_code
 
+    def info_box_insert(self, info_box, message, log_message):
+        info_box.configure(state='normal')
+        info_box.insert(END, f"{message}\n")
+        info_box.configure(state='disabled')
+        rootLogger.info(f"Processing {log_message}")
+
     def queue(self, files, info_box):
         """automatically ends on Popen termination"""
 
@@ -167,18 +174,22 @@ class Application(Frame):
 
             fileobj = FileHandler(file=file)
 
-            info_box.configure(state='normal')
-            info_box.insert(END, f"Processing {fileobj.number + 1}/{len(files)}: "
-                                 f"{fileobj.displayname}\n"
-                            )
-            info_box.configure(state='disabled')
-            rootLogger.info(f"Processing {fileobj.displayname}")
+            if self.dir != os.getcwd():
+                self.dir = os.getcwd()
+                self.info_box_insert(info_box=info_box,
+                                     message=f"Switching directory to: {self.dir}",
+                                     log_message=f"Switching directory to: {self.dir}")
+
+
+            self.info_box_insert(info_box=info_box,
+                                 message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
+                                 log_message=f"Processing {fileobj.displayname}")
 
             should_transcode_video = False
             should_transcode_audio = False
-            if int(self.transcode_video_var.get()) == 1:
+            if self.transcode_video_var.get():
                 should_transcode_video = True
-            if int(self.transcode_audio_var.get()) == 1:
+            if self.transcode_audio_var.get():
                 should_transcode_audio = True
             if should_transcode_video or should_transcode_audio:
                 self.should_transcode = True
