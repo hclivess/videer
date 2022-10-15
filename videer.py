@@ -122,7 +122,7 @@ def info_box_insert(info_box, message, log_message=None, logger=None):
     info_box.configure(state='disabled')
 
     if logger:
-        logger.info(f"Processing {log_message}")
+        logger.info(log_message")
 
 
 class Application(Frame):
