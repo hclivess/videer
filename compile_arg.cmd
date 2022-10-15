@@ -1,1 +1,1 @@
-python -m nuitka --follow-imports %1
+python -m nuitka --follow-imports %1 --windows-icon-from-ico=icon.ico

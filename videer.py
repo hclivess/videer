@@ -2,7 +2,6 @@ import threading
 from tkinter import *
 from tkinter.ttk import *
 
-from ttkwidgets import ScaleEntry
 import tkinter as tk
 
 import tkinter.messagebox as messagebox
@@ -11,8 +10,6 @@ import tkinter.scrolledtext as st
 import logging.handlers
 import subprocess
 import multiprocessing
-import psutil
-from playsound import playsound
 import os
 
 
@@ -61,13 +58,13 @@ class FileHandler:
         self.extras = None  # .._x265_..
         self.extension = ".mkv"  # .mkv
         self.tempname = f"{self.basename}.temp.avi"  # ..file.temp.avi
-        # self.transcodemame = f"{self.tempname}{self.extension}"  # ..file.temp.avi.mkv
         self.errorname = f"{self.filename}.error"  # ..file.avi.error
         self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
         self.tempffindex = f"{self.tempname}.ffindex"  # ..file.avi.ffindex
         self.displayname = self.filename.split('/')[-1]  # file.avi
         self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
         self.dir = os.path.dirname(os.path.realpath(self.filename))
+        self.ffmpeg_errors = []
 
 
 class CreateAvs:
@@ -133,20 +130,20 @@ class Application(Frame):
         self.process = None
         self.workdir = None
 
-    def transcode(self, file, transcode_video, transcode_audio):
+    def transcode(self, fileobj, transcode_video, transcode_audio):
 
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy -hide_banner "{fileobj.tempname}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a copy -c:v rawvideo -c:s copy -hide_banner "{fileobj.tempname}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{file.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{file.tempname}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy -hide_banner "{fileobj.tempname}" -y'
 
-        self.open_process(temp_transcode)
+        self.open_process(temp_transcode, fileobj)
 
-    def open_process(self, command_line):
+    def open_process(self, command_line, fileobj):
         rootLogger.info("Process starting")
 
         with subprocess.Popen(command_line,
@@ -154,8 +151,12 @@ class Application(Frame):
                               stderr=subprocess.STDOUT,
                               universal_newlines=True) as self.process:
 
+            errors = ["error", "invalid"]
             for line in self.process.stdout:
                 print(line, end='')
+                for error in errors:
+                    if error in line.lower():
+                        fileobj.ffmpeg_errors.append(line.strip())
 
         return_code = self.process.wait()
 
@@ -171,16 +172,15 @@ class Application(Frame):
     def queue(self, files, info_box):
         """automatically ends on Popen termination"""
 
-        for file in enumerate(files):
+        for f in enumerate(files):
 
-            fileobj = FileHandler(file=file)
+            fileobj = FileHandler(file=f)
 
             if self.workdir != fileobj.dir:
                 self.workdir = fileobj.dir
                 self.info_box_insert(info_box=info_box,
                                      message=f"Switching directory to: {self.workdir}",
                                      log_message=f"Switching directory to: {self.workdir}")
-
 
             self.info_box_insert(info_box=info_box,
                                  message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
@@ -204,7 +204,7 @@ class Application(Frame):
             else:
                 command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
 
-            return_code = self.open_process(command_line)
+            return_code = self.open_process(command_line, fileobj)
 
             if info_box:
 
@@ -217,10 +217,12 @@ class Application(Frame):
                     self.info_box_insert(info_box=info_box,
                                          message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
                                          log_message=f"Error with {fileobj.displayname}")
+                    self.info_box_insert(info_box=info_box,
+                                         message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
+                                         log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors))
 
                     if os.path.exists(fileobj.outputname):
                         os.replace(fileobj.outputname, fileobj.errorname)
-
 
             if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
