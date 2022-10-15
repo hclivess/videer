@@ -65,6 +65,7 @@ class FileHandler:
         self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
         self.dir = os.path.dirname(os.path.realpath(self.filename))
         self.ffmpeg_errors = []
+        self.log = get_logger(self.filename)
 
 
 class CreateAvs:
@@ -115,6 +116,15 @@ class CreateAvs:
                 avsfile.write('\n')
 
 
+def info_box_insert(info_box, message, log_message=None, logger=None):
+    info_box.configure(state='normal')
+    info_box.insert(END, f"{message}\n")
+    info_box.configure(state='disabled')
+
+    if logger:
+        logger.info(f"Processing {log_message}")
+
+
 class Application(Frame):
     def __init__(self, master=None):
 
@@ -144,7 +154,7 @@ class Application(Frame):
         self.open_process(temp_transcode, fileobj)
 
     def open_process(self, command_line, fileobj):
-        rootLogger.info("Process starting")
+        fileobj.log.info("Process starting")
 
         with subprocess.Popen(command_line,
                               stdout=subprocess.PIPE,
@@ -160,14 +170,8 @@ class Application(Frame):
 
         return_code = self.process.wait()
 
-        rootLogger.info(f"Return code: {return_code}")
+        fileobj.log.info(f"Return code: {return_code}")
         return return_code
-
-    def info_box_insert(self, info_box, message, log_message):
-        info_box.configure(state='normal')
-        info_box.insert(END, f"{message}\n")
-        info_box.configure(state='disabled')
-        rootLogger.info(f"Processing {log_message}")
 
     def queue(self, files, info_box):
         """automatically ends on Popen termination"""
@@ -178,13 +182,15 @@ class Application(Frame):
 
             if self.workdir != fileobj.dir:
                 self.workdir = fileobj.dir
-                self.info_box_insert(info_box=info_box,
-                                     message=f"Switching directory to: {self.workdir}",
-                                     log_message=f"Switching directory to: {self.workdir}")
+                info_box_insert(info_box=info_box,
+                                message=f"Switching directory to: {self.workdir}",
+                                log_message=f"Switching directory to: {self.workdir}",
+                                logger=fileobj.log)
 
-            self.info_box_insert(info_box=info_box,
-                                 message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
-                                 log_message=f"Processing {fileobj.displayname}")
+            info_box_insert(info_box=info_box,
+                            message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
+                            log_message=f"Processing {fileobj.displayname}",
+                            logger=fileobj.log)
 
             should_transcode_video = False
             should_transcode_audio = False
@@ -210,19 +216,23 @@ class Application(Frame):
 
                 if return_code == 0:
                     """error code can be None, force numeric check"""
-                    self.info_box_insert(info_box=info_box,
-                                         message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
-                                         log_message=f"Finished {fileobj.displayname}")
+                    info_box_insert(info_box=info_box,
+                                    message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                    log_message=f"Finished {fileobj.displayname}",
+                                    logger=fileobj.log)
                 else:
-                    self.info_box_insert(info_box=info_box,
-                                         message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
-                                         log_message=f"Error with {fileobj.displayname}")
-                    self.info_box_insert(info_box=info_box,
-                                         message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
-                                         log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors))
+                    info_box_insert(info_box=info_box,
+                                    message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                    log_message=f"Error with {fileobj.displayname}",
+                                    logger=fileobj.log)
 
                     if os.path.exists(fileobj.outputname):
                         os.replace(fileobj.outputname, fileobj.errorname)
+
+                info_box_insert(info_box=info_box,
+                                message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
+                                log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
+                                logger=fileobj.log)
 
             if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
@@ -237,9 +247,8 @@ class Application(Frame):
             if os.path.exists(fileobj.tempffindex):
                 os.remove(fileobj.tempffindex)
 
-        self.info_box_insert(info_box=info_box,
-                             message="Queue finished",
-                             log_message="Queue finished")
+        info_box_insert(info_box=info_box,
+                        message="Queue finished")
 
     def create_info_box(self):
         self.top = Toplevel()
@@ -475,6 +484,19 @@ class Application(Frame):
         self.quit.grid(row=2, column=2, sticky='WE', padx=0, pady=(0, 5))
 
 
+def get_logger(filename):
+    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+    rootLogger = logging.getLogger()
+    rootLogger.setLevel(logging.INFO)
+    fileHandler = logging.FileHandler(f"{filename}.log")
+    fileHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(fileHandler)
+    consoleHandler = logging.StreamHandler()
+    consoleHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(consoleHandler)
+    return rootLogger
+
+
 if __name__ == "__main__":
     root = Tk()
     root.iconbitmap("icon.ico")
@@ -487,16 +509,6 @@ if __name__ == "__main__":
     root.resizable(False, False)
 
     # operations = Operations()
-
-    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
-    rootLogger = logging.getLogger()
-    rootLogger.setLevel(logging.INFO)
-    fileHandler = logging.FileHandler(f"log.log")
-    fileHandler.setFormatter(logFormatter)
-    rootLogger.addHandler(fileHandler)
-    consoleHandler = logging.StreamHandler()
-    consoleHandler.setFormatter(logFormatter)
-    rootLogger.addHandler(consoleHandler)
 
     app = Application(master=root)
     app.mainloop()
