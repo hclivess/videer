@@ -237,7 +237,8 @@ class Application(Frame):
 
             if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
-                                  rename_to=fileobj.filename)
+                                  rename_to=fileobj.filename,
+                                  log=fileobj.log)
 
             if os.path.exists(fileobj.tempname):
                 os.remove(fileobj.tempname)
@@ -329,15 +330,15 @@ class Application(Frame):
         config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
-    def replace_file(self, rename_from, rename_to):
+    def replace_file(self, rename_from, rename_to, log):
 
         input_name_no_ext = os.path.splitext(rename_to)[0]
         new_name_ext = f"{input_name_no_ext}.mkv"
 
         if os.path.exists(new_name_ext) and rename_to != new_name_ext:
-            rootLogger.info("File already exists, not replacing")
+            log("File already exists, not replacing")
         else:
-            rootLogger.info("Replacing original file as requested")
+            log("Replacing original file as requested")
             if os.path.exists(new_name_ext):
                 os.rename(new_name_ext, f"{new_name_ext}.old")
             os.rename(rename_from, new_name_ext)
@@ -483,7 +484,6 @@ class Application(Frame):
 
         self.quit = Button(self, text="Quit", style='W.TButton', command=self.exit)
         self.quit.grid(row=2, column=2, sticky='WE', padx=0, pady=(0, 5))
-
 
 def get_logger(filename):
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
