@@ -229,10 +229,11 @@ class Application(Frame):
                     if os.path.exists(fileobj.outputname):
                         os.replace(fileobj.outputname, fileobj.errorname)
 
-                info_box_insert(info_box=info_box,
-                                message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
-                                log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
-                                logger=fileobj.log)
+                if fileobj.ffmpeg_errors:
+                    info_box_insert(info_box=info_box,
+                                    message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
+                                    log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
+                                    logger=fileobj.log)
 
             if self.replace_button_var.get() and return_code == 0:
                 self.replace_file(rename_from=fileobj.outputname,
