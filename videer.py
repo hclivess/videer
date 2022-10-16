@@ -66,6 +66,8 @@ class FileHandler:
         self.dir = os.path.dirname(os.path.realpath(self.filename))
         self.ffmpeg_errors = []
         self.log = get_logger(self.filename)
+
+
 class CreateAvs:
     def __init__(self, infile):
         with open("parameters.avs", "w") as avsfile:
@@ -114,10 +116,15 @@ class CreateAvs:
                     avsfile.write(
                         f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                     avsfile.write('\n')
+
+
 def info_box_insert(info_box, message, log_message=None, logger=None):
-    info_box.configure(state='normal')
-    info_box.insert(END, f"{message}\n")
-    info_box.configure(state='disabled')
+    try:
+        info_box.configure(state='normal')
+        info_box.insert(END, f"{message}\n")
+        info_box.configure(state='disabled')
+    except Exception as e:
+        print(f"Info window closed: {e}")
 
     if logger:
         logger.info(log_message)
@@ -177,63 +184,61 @@ class Application(Frame):
         for f in enumerate(files):
             fileobj = FileHandler(file=f)
 
-            if self.workdir != fileobj.dir:
+            if self.workdir != fileobj.dir and not self.should_stop:
                 self.workdir = fileobj.dir
                 info_box_insert(info_box=info_box,
                                 message=f"Switching directory to: {self.workdir}",
                                 log_message=f"Switching directory to: {self.workdir}",
                                 logger=fileobj.log)
 
-            info_box_insert(info_box=info_box,
-                            message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
-                            log_message=f"Processing {fileobj.displayname}",
-                            logger=fileobj.log)
-
-            should_transcode_video = False
-            should_transcode_audio = False
-            if self.transcode_video_var.get():
-                should_transcode_video = True
-            if self.transcode_audio_var.get():
-                should_transcode_audio = True
-            if should_transcode_video or should_transcode_audio:
-                self.should_transcode = True
-
-            if self.should_transcode and not self.should_stop:
-                self.transcode(fileobj,
-                               transcode_video=should_transcode_video,
-                               transcode_audio=should_transcode_audio)
-                command_line = assemble(fileobj.tempname, fileobj.outputname, self, True)
-
-            else:
-                command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
-
             if not self.should_stop:
+                info_box_insert(info_box=info_box,
+                                message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
+                                log_message=f"Processing {fileobj.displayname}",
+                                logger=fileobj.log)
+
+                should_transcode_video = False
+                should_transcode_audio = False
+                if self.transcode_video_var.get():
+                    should_transcode_video = True
+                if self.transcode_audio_var.get():
+                    should_transcode_audio = True
+                if should_transcode_video or should_transcode_audio:
+                    self.should_transcode = True
+
+                if self.should_transcode and not self.should_stop:
+                    self.transcode(fileobj,
+                                   transcode_video=should_transcode_video,
+                                   transcode_audio=should_transcode_audio)
+                    command_line = assemble(fileobj.tempname, fileobj.outputname, self, True)
+
+                else:
+                    command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
+
                 return_code = self.open_process(command_line, fileobj)
             else:
                 return_code = 1
 
-            if info_box:
+            if return_code == 0 and not self.should_stop:
+                """error code can be None, force numeric check"""
+                info_box_insert(info_box=info_box,
+                                message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                log_message=f"Finished {fileobj.displayname}",
+                                logger=fileobj.log)
+            elif not self.should_stop:
+                info_box_insert(info_box=info_box,
+                                message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
+                                log_message=f"Error with {fileobj.displayname}",
+                                logger=fileobj.log)
 
-                if return_code == 0 and not self.should_stop:
-                    """error code can be None, force numeric check"""
-                    info_box_insert(info_box=info_box,
-                                    message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
-                                    log_message=f"Finished {fileobj.displayname}",
-                                    logger=fileobj.log)
-                else:
-                    info_box_insert(info_box=info_box,
-                                    message=f"Error with {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
-                                    log_message=f"Error with {fileobj.displayname}",
-                                    logger=fileobj.log)
+                if os.path.exists(fileobj.outputname) and not self.should_stop:
+                    os.replace(fileobj.outputname, fileobj.errorname)
 
-                    if os.path.exists(fileobj.outputname) and not self.should_stop:
-                        os.replace(fileobj.outputname, fileobj.errorname)
-
-                if fileobj.ffmpeg_errors:
-                    info_box_insert(info_box=info_box,
-                                    message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
-                                    log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
-                                    logger=fileobj.log)
+            if fileobj.ffmpeg_errors:
+                info_box_insert(info_box=info_box,
+                                message="Errors:\n" + '\n'.join(fileobj.ffmpeg_errors),
+                                log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
+                                logger=fileobj.log)
 
             if self.replace_button_var.get() and return_code == 0 and not self.should_stop:
                 self.replace_file(rename_from=fileobj.outputname,
@@ -249,8 +254,17 @@ class Application(Frame):
             if os.path.exists(fileobj.tempffindex) and not self.should_stop:
                 os.remove(fileobj.tempffindex)
 
-        info_box_insert(info_box=info_box,
-                        message="Queue finished")
+            handlers = fileobj.log.handlers[:]
+            for handler in handlers:
+                fileobj.log.removeHandler(handler)
+                handler.close()
+
+        if self.should_stop:
+            info_box_insert(info_box=info_box,
+                            message="Queue stopped")
+        else:
+            info_box_insert(info_box=info_box,
+                            message="Queue finished")
 
         self.should_stop = False
 
@@ -299,12 +313,12 @@ class Application(Frame):
         if not self.tff_var.get() and not self.deinterlace_var.get():
             self.deinterlace_var.set(True)
             self.use_avisynth_var.set(True)
+
     def on_set_reduce(self, click):
         """warning, reversed because it takes state at the time of clicking"""
         if not self.reduce_fps_var.get() and not self.deinterlace_var.get():
             self.deinterlace_var.set(True)
             self.use_avisynth_var.set(True)
-
 
     def on_set_ffms(self, click):
         """warning, reversed because it takes state at the time of clicking"""
@@ -364,7 +378,7 @@ class Application(Frame):
         self.tff_button = Checkbutton(self, text="Top Field First", variable=self.tff_var)
         self.tff_button.bind("<Button-1>", self.on_set_ttf)
         self.tff_button.grid(row=1, column=1, sticky='w', pady=0, padx=0)
-        
+
         self.reduce_fps_var = BooleanVar()
         self.reduce_fps_var.set(False)
         self.reduce_fps_button = Checkbutton(self, text="Reduce Frames", variable=self.reduce_fps_var)
@@ -496,6 +510,7 @@ class Application(Frame):
 
         self.quit = Button(self, text="Quit", style='W.TButton', command=self.exit)
         self.quit.grid(row=2, column=2, sticky='WE', padx=0, pady=(0, 5))
+
 
 def get_logger(filename):
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
