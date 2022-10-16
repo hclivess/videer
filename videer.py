@@ -252,6 +252,8 @@ class Application(Frame):
         info_box_insert(info_box=info_box,
                         message="Queue finished")
 
+        self.should_stop = False
+
     def create_info_box(self):
         self.top = Toplevel()
         self.top.title("Queue Info")
