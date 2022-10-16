@@ -11,6 +11,12 @@ import logging.handlers
 import subprocess
 import multiprocessing
 import os
+import re
+
+
+def multiple_replace(string, rep_dict):
+    pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
+    return pattern.sub(lambda x: rep_dict[x.group(0)], string)
 
 
 def assemble(input, output, app_gui, transcode_source):
@@ -169,6 +175,16 @@ class Application(Frame):
             errors = ["error", "invalid"]
             for line in self.process.stdout:
                 print(line, end='')
+                self.status_var.set(multiple_replace(line,
+                                                     {"       ": " ",
+                                                      "    ": " ",
+                                                      "time=": "",
+                                                      "bitrate=  ": "br:",
+                                                      "speed": "rate",
+                                                      "size=": "",
+                                                      "frame": "f",
+                                                      "=": ":",
+                                                      "\n": ""}))
                 for error in errors:
                     if error in line.lower():
                         fileobj.ffmpeg_errors.append(line.strip())
@@ -495,12 +511,21 @@ class Application(Frame):
         self.avisynth_extras = Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=24, column=1, sticky='WE', pady=0, padx=0)
 
+        self.progress_label = Label(self)
+        self.progress_label["text"] = f"Progress: "
+        self.progress_label.grid(row=25, column=0, sticky='NE', padx=0)
+
+        self.status_var = StringVar()
+        self.status_var.set("Idle...")
+        self.status_bar = Label(self, textvariable=self.status_var, width=70)
+        self.status_bar.grid(row=25, column=1, columnspan=5, sticky='W', pady=0, padx=0)
+
         self.replace_button_var = BooleanVar()
         self.replace_button_var.set(False)
         self.replace_button = Checkbutton(self, text="Replace Original File(s)",
                                           variable=self.replace_button_var)
 
-        self.replace_button.grid(row=25, column=1, sticky='SE', pady=0, padx=0)
+        self.replace_button.grid(row=26, column=1, sticky='SE', pady=0, padx=0)
 
         self.run = Button(self, text="Run", style='W.TButton', command=lambda: self.run_cmd())
         self.run.grid(row=0, column=2, sticky='WE', padx=0)
