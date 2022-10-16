@@ -103,16 +103,18 @@ class CreateAvs:
                 avsfile.write(app.avisynth_extras.get("1.0", END))
                 avsfile.write('\n')
 
-            if app.deinterlace_var.get():
-                avsfile.write(
-                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
-                avsfile.write('\n')
-
             if app.tff_var.get():
                 avsfile.write('AssumeTFF()')
                 avsfile.write('\n')
 
+            if app.reduce_fps_var.get():
+                avsfile.write('SelectEven()')
+                avsfile.write('\n')
 
+            if app.deinterlace_var.get():
+                avsfile.write(
+                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
+                avsfile.write('\n')
 def info_box_insert(info_box, message, log_message=None, logger=None):
     info_box.configure(state='normal')
     info_box.insert(END, f"{message}\n")
@@ -294,9 +296,12 @@ class Application(Frame):
         if not self.tff_var.get() and not self.deinterlace_var.get():
             self.deinterlace_var.set(True)
             self.use_avisynth_var.set(True)
-        elif self.tff_var.get() and self.deinterlace_var.get() and not self.use_ffms2_var.get():
-            self.deinterlace_var.set(False)
-            self.use_avisynth_var.set(False)
+    def on_set_reduce(self, click):
+        """warning, reversed because it takes state at the time of clicking"""
+        if not self.reduce_fps_var.get() and not self.deinterlace_var.get():
+            self.deinterlace_var.set(True)
+            self.use_avisynth_var.set(True)
+
 
     def on_set_ffms(self, click):
         """warning, reversed because it takes state at the time of clicking"""
@@ -355,54 +360,60 @@ class Application(Frame):
         self.tff_button = Checkbutton(self, text="Top Field First", variable=self.tff_var)
         self.tff_button.bind("<Button-1>", self.on_set_ttf)
         self.tff_button.grid(row=1, column=1, sticky='w', pady=0, padx=0)
+        
+        self.reduce_fps_var = BooleanVar()
+        self.reduce_fps_var.set(False)
+        self.reduce_fps_button = Checkbutton(self, text="Reduce Frames", variable=self.reduce_fps_var)
+        self.reduce_fps_button.bind("<Button-1>", self.on_set_reduce)
+        self.reduce_fps_button.grid(row=2, column=1, sticky='w', pady=0, padx=0)
 
         self.use_avisynth_var = BooleanVar()
         self.use_avisynth_var.set(False)
         self.use_avisynth_button = Checkbutton(self, text="Use AviSynth+", variable=self.use_avisynth_var)
         self.use_avisynth_button.bind("<Button-1>", self.on_set_avisynth)
-        self.use_avisynth_button.grid(row=2, column=1, sticky='w', pady=0, padx=0)
+        self.use_avisynth_button.grid(row=3, column=1, sticky='w', pady=0, padx=0)
 
         self.use_ffms2_var = BooleanVar()
         self.use_ffms2_var.set(False)
         self.use_ffms2_button = Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
                                             variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.on_set_ffms)
-        self.use_ffms2_button.grid(row=3, column=1, sticky='w', pady=0, padx=0)
+        self.use_ffms2_button.grid(row=4, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_video_var = BooleanVar()
         self.transcode_video_var.set(False)
         self.transcode_video_button = Checkbutton(self, text="Raw transcode video first",
                                                   variable=self.transcode_video_var)
-        self.transcode_video_button.grid(row=4, column=1, sticky='w', pady=0, padx=0)
+        self.transcode_video_button.grid(row=5, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_audio_var = BooleanVar()
         self.transcode_audio_var.set(False)
         self.transcode_audio_button = Checkbutton(self, text="Raw transcode audio first",
                                                   variable=self.transcode_audio_var)
-        self.transcode_audio_button.grid(row=5, column=1, sticky='w', pady=0, padx=0)
+        self.transcode_audio_button.grid(row=6, column=1, sticky='w', pady=0, padx=0)
 
         self.corrupt_var = BooleanVar()
         self.corrupt_var.set(False)
         self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption during raw transcode",
                                               variable=self.corrupt_var)
-        self.corrupt_var_button.grid(row=6, column=1, sticky='w', pady=0, padx=0)
+        self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
         self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=7, column=0, sticky='SE', pady=0, padx=0)
+        self.audio_codec_label.grid(row=8, column=0, sticky='SE', pady=0, padx=0)
 
         self.audio_codec_button = Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
                                               value="libmp3lame")
-        self.audio_codec_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
-        self.audio_codec_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
         self.audio_codec_button.grid(row=9, column=1, sticky='w', pady=0, padx=0)
+        self.audio_codec_button = Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
+        self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=0, padx=0)
+        self.audio_codec_button = Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
+        self.audio_codec_button.grid(row=11, column=1, sticky='w', pady=0, padx=0)
         self.audio_codec_button = Radiobutton(self, text="PCM32 (raw)", variable=self.audio_codec_var,
                                               value="pcm_s32le")
-        self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=0, padx=0)
+        self.audio_codec_button.grid(row=12, column=1, sticky='w', pady=0, padx=0)
 
         self.codec_label = Label(self)
         self.codec_label["text"] = "Video Codec: "
@@ -411,20 +422,20 @@ class Application(Frame):
         self.codec_label.grid(row=11, column=0, sticky='SE', pady=0, padx=0)
 
         self.video_codec_button = Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.video_codec_button.grid(row=11, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=12, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=13, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
         self.video_codec_button.grid(row=14, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button.grid(row=15, column=1, sticky='w', pady=0, padx=0)
 
         self.speed_label = Label(self)
         self.speed_label["text"] = "Encoding Speed: "
-        self.speed_label.grid(row=15, column=0, sticky='SE', pady=0, padx=0)
+        self.speed_label.grid(row=16, column=0, sticky='SE', pady=0, padx=0)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=HORIZONTAL, sliderrelief=FLAT)
-        self.speed.grid(row=15, column=1, sticky='WE', pady=0, padx=0)
+        self.speed.grid(row=16, column=1, sticky='WE', pady=0, padx=0)
         self.speed.set(3)
 
         self.infile_value = StringVar()
