@@ -496,6 +496,7 @@ class Application(Frame):
 def get_logger(filename):
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
     rootLogger = logging.getLogger()
+    rootLogger.propagate = False
     rootLogger.setLevel(logging.INFO)
     fileHandler = logging.FileHandler(f"{filename}.log")
     fileHandler.setFormatter(logFormatter)
