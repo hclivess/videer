@@ -6,7 +6,7 @@ Videer integrates `QTGMC`, which provides much smoother results than ffmpeg's `y
 FFmpeg is a superior command line video encoding tool. Videer serves as a GUI for it.
 
 ## Notice
-If you want to deinterlace AVC (x264) video, running Videer with `raw transcode first` and `ffms2` on is optimal.
+If you want to deinterlace AVC (x264) video of a `matroska` file, running Videer with `raw transcode first` and `ffms2` on is optimal.
 
 ## New features:
 - Multithreading using `SetFilterMTMode`
