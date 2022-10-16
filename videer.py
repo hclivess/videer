@@ -66,8 +66,6 @@ class FileHandler:
         self.dir = os.path.dirname(os.path.realpath(self.filename))
         self.ffmpeg_errors = []
         self.log = get_logger(self.filename)
-
-
 class CreateAvs:
     def __init__(self, infile):
         with open("parameters.avs", "w") as avsfile:
@@ -107,14 +105,15 @@ class CreateAvs:
                 avsfile.write('AssumeTFF()')
                 avsfile.write('\n')
 
-            if app.reduce_fps_var.get():
-                avsfile.write('SelectEven()')
-                avsfile.write('\n')
-
             if app.deinterlace_var.get():
-                avsfile.write(
-                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
-                avsfile.write('\n')
+                if app.reduce_fps_var.get():
+                    avsfile.write(
+                        f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", FPSDivisor=2, EdiThreads={multiprocessing.cpu_count()})')
+                    avsfile.write('\n')
+                else:
+                    avsfile.write(
+                        f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
+                    avsfile.write('\n')
 def info_box_insert(info_box, message, log_message=None, logger=None):
     info_box.configure(state='normal')
     info_box.insert(END, f"{message}\n")
@@ -138,9 +137,9 @@ class Application(Frame):
         self.should_transcode = False
         self.process = None
         self.workdir = None
+        self.should_stop = False
 
     def transcode(self, fileobj, transcode_video, transcode_audio):
-
         temp_transcode = None
 
         if transcode_video and transcode_audio:
@@ -176,7 +175,6 @@ class Application(Frame):
         """automatically ends on Popen termination"""
 
         for f in enumerate(files):
-
             fileobj = FileHandler(file=f)
 
             if self.workdir != fileobj.dir:
@@ -200,7 +198,7 @@ class Application(Frame):
             if should_transcode_video or should_transcode_audio:
                 self.should_transcode = True
 
-            if self.should_transcode:
+            if self.should_transcode and not self.should_stop:
                 self.transcode(fileobj,
                                transcode_video=should_transcode_video,
                                transcode_audio=should_transcode_audio)
@@ -209,11 +207,14 @@ class Application(Frame):
             else:
                 command_line = assemble(fileobj.filename, fileobj.outputname, self, False)
 
-            return_code = self.open_process(command_line, fileobj)
+            if not self.should_stop:
+                return_code = self.open_process(command_line, fileobj)
+            else:
+                return_code = 1
 
             if info_box:
 
-                if return_code == 0:
+                if return_code == 0 and not self.should_stop:
                     """error code can be None, force numeric check"""
                     info_box_insert(info_box=info_box,
                                     message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
@@ -225,7 +226,7 @@ class Application(Frame):
                                     log_message=f"Error with {fileobj.displayname}",
                                     logger=fileobj.log)
 
-                    if os.path.exists(fileobj.outputname):
+                    if os.path.exists(fileobj.outputname) and not self.should_stop:
                         os.replace(fileobj.outputname, fileobj.errorname)
 
                 if fileobj.ffmpeg_errors:
@@ -234,18 +235,18 @@ class Application(Frame):
                                     log_message="Errors:\n " + '\n'.join(fileobj.ffmpeg_errors),
                                     logger=fileobj.log)
 
-            if self.replace_button_var.get() and return_code == 0:
+            if self.replace_button_var.get() and return_code == 0 and not self.should_stop:
                 self.replace_file(rename_from=fileobj.outputname,
                                   rename_to=fileobj.filename,
                                   log=fileobj.log)
 
-            if os.path.exists(fileobj.tempname):
+            if os.path.exists(fileobj.tempname) and not self.should_stop:
                 os.remove(fileobj.tempname)
 
-            if os.path.exists(fileobj.ffindex):
+            if os.path.exists(fileobj.ffindex) and not self.should_stop:
                 os.remove(fileobj.ffindex)
 
-            if os.path.exists(fileobj.tempffindex):
+            if os.path.exists(fileobj.tempffindex) and not self.should_stop:
                 os.remove(fileobj.tempffindex)
 
         info_box_insert(info_box=info_box,
@@ -315,6 +316,7 @@ class Application(Frame):
         self.master.destroy()
 
     def stop_process(self, announce=False):
+        self.should_stop = True
         if self.process:
             output = f"Process terminated"
             self.process.kill()
