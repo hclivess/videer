@@ -338,9 +338,9 @@ class Application(Frame):
         new_name_ext = f"{input_name_no_ext}.mkv"
 
         if os.path.exists(new_name_ext) and rename_to != new_name_ext:
-            log("File already exists, not replacing")
+            log.info("File already exists, not replacing")
         else:
-            log("Replacing original file as requested")
+            log.info("Replacing original file as requested")
             if os.path.exists(new_name_ext):
                 os.rename(new_name_ext, f"{new_name_ext}.old")
             os.rename(rename_from, new_name_ext)
