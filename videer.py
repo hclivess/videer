@@ -103,16 +103,13 @@ class CreateAvs:
                 avsfile.write(app.avisynth_extras.get("1.0", END))
                 avsfile.write('\n')
 
-            if app.deinterlace_var.get() and not app.tff_var.get():
+            if app.deinterlace_var.get():
                 avsfile.write(
                     f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
                 avsfile.write('\n')
 
-            elif app.deinterlace_var.get() and app.tff_var.get():
-                avsfile.write(
-                    f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
-                avsfile.write('DoubleWeave().SelectOdd()')
-                avsfile.write('QTGMC(InputType=2)')
+            if app.tff_var.get():
+                avsfile.write('AssumeTFF()')
                 avsfile.write('\n')
 
 
