@@ -1,7 +1,7 @@
 import threading
 from tkinter import *
 from tkinter.ttk import *
-
+import time
 import tkinter as tk
 
 import tkinter.messagebox as messagebox
@@ -28,7 +28,7 @@ def assemble_final(fileobj, app_gui):
         command.append(f'-i "{fileobj.filename}" -y')
 
     if app_gui.should_stabilize:
-        command.append(fr"-vf vidstabtransform=smoothing=30:zoom=5:input='{fileobj.trf}'")
+        command.append(f"-vf vidstabtransform=smoothing=30:zoom=5:input='transforms.trf'")
 
     command.append(f'-c:v {app_gui.codec_var.get()}')
     command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get()))}')
@@ -76,8 +76,7 @@ class FileHandler:
         self.ffmpeg_errors = []
         self.log = get_logger(self.filename)
         self.avsfile = f"{self.basename}.avs"
-        self.trf = f"{self.basename}.trf".replace('/', '\\\\').replace(":", "\:")
-        print(self.trf)
+        #self.trf = f"{self.dir}\\{time.time_ns()}.trf".replace("\\", "\\\\").replace(":", "\:")
 
 
 class CreateAvs:
@@ -246,7 +245,7 @@ class Application(Frame):
                     """prepares transforms file"""
                     fileobj.log.info("Preparing transforms file for stabilization")
                     self.open_process(
-                        fr"ffmpeg -i {fileobj.filename} -vf vidstabdetect=shakiness=7:result='{fileobj.trf}' -f null -",
+                        f'ffmpeg -i "{fileobj.filename}" -vf vidstabdetect=shakiness=7 -f null -',
                         fileobj=fileobj)
 
                 final_cmd = assemble_final(fileobj, self)
@@ -292,9 +291,6 @@ class Application(Frame):
 
             if os.path.exists(fileobj.avsfile) and not self.should_stop:
                 os.remove(fileobj.avsfile)
-
-            if os.path.exists(fileobj.trf) and not self.should_stop:
-                os.remove(fileobj.trf)
 
             handlers = fileobj.log.handlers[:]
             for handler in handlers:
@@ -460,7 +456,7 @@ class Application(Frame):
 
         self.stabilize_var = BooleanVar()
         self.stabilize_var.set(False)
-        self.stabilize_var_button = Checkbutton(self, text="Stabilize",
+        self.stabilize_var_button = Checkbutton(self, text="Stabilize (one global instance)",
                                                 variable=self.stabilize_var)
         self.stabilize_var_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
