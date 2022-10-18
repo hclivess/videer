@@ -1,5 +1,5 @@
 # videer
-FFmpeg batch GUI with AviSynth support for **deinterlacing** and profile configuration that can be used in **frameserving** ([link](https://github.com/satishsampath/frame-server)). Created as a replacement for inflexible batch files that do not allow multiple encodings at the same time easily.
+FFmpeg batch GUI with AviSynth support for **deinterlacing** and profile configuration that can be used in [**frameserving**](https://github.com/satishsampath/frame-server). Created as a replacement for inflexible batch files that do not allow multiple encodings at the same time easily.
 Videer integrates `QTGMC`, which provides much smoother results than ffmpeg's `yadif`, [see for yourself](https://www.youtube.com/watch?v=jE47A57T5FA). `QTGMC` is the best deinterlacer in existence.
 
 ## Why
