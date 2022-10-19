@@ -451,7 +451,7 @@ class Application(Frame):
 
         self.corrupt_var = BooleanVar()
         self.corrupt_var.set(False)
-        self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption during raw transcode",
+        self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption",
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
