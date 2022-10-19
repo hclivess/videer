@@ -22,7 +22,7 @@ def multiple_replace(string, rep_dict):
 def assemble_final(fileobj, app_gui):
     command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
     if app_gui.use_avisynth_var.get():
-        command.append(f'-i {fileobj.avsfile} -y')
+        command.append(f'-i "{fileobj.avsfile}" -y')
         CreateAvs(fileobj=fileobj)
     else:
         command.append(f'-i "{fileobj.filename}" -y')
@@ -82,25 +82,25 @@ class FileHandler:
 class CreateAvs:
     def __init__(self, fileobj):
         with open(fileobj.avsfile, "w") as avsfile:
-            avsfile.write('Loadplugin("plugins/masktools2.dll")')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/masktools2.dll")')
             avsfile.write('\n')
-            avsfile.write('Loadplugin("plugins/mvtools2.dll")')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/mvtools2.dll")')
             avsfile.write('\n')
-            avsfile.write('Loadplugin("plugins/nnedi3.dll")')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/nnedi3.dll")')
             avsfile.write('\n')
-            avsfile.write('Loadplugin("plugins/ffms2.dll")')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/ffms2.dll")')
             avsfile.write('\n')
-            avsfile.write('Loadplugin("plugins/RgTools.dll")')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/RgTools.dll")')
             avsfile.write('\n')
-            avsfile.write('Import("plugins/QTGMC.avsi")')
+            avsfile.write(f'Import("{app.path}/plugins/QTGMC.avsi")')
             avsfile.write('\n')
-            avsfile.write('Import("plugins/Zs_RF_Shared.avsi")')
+            avsfile.write(f'Import("{app.path}/plugins/Zs_RF_Shared.avsi")')
             avsfile.write('\n')
 
             if app.use_ffms2_var.get():
-                avsfile.write(f'FFmpegSource2("{fileobj.avsfile}", vtrack = -1, atrack = -1)')
+                avsfile.write(f'FFmpegSource2("{fileobj.filename}", vtrack = -1, atrack = -1)')
             else:
-                avsfile.write(f'AVISource("{fileobj.avsfile}", audio=true)')
+                avsfile.write(f'AVISource("{fileobj.filename}", audio=true)')
             avsfile.write('\n')
 
             avsfile.write('SetFilterMTMode("FFVideoSource", 3)')
@@ -157,6 +157,7 @@ class Application(Frame):
         self.process = None
         self.workdir = None
         self.should_stop = False
+        self.path = os.getcwd()
 
     def transcode(self, fileobj, transcode_video, transcode_audio):
         fileobj.log.info("Transcode process started")
@@ -172,7 +173,7 @@ class Application(Frame):
         self.open_process(temp_transcode, fileobj)
 
     def open_process(self, command_line, fileobj):
-        fileobj.log.info("Executing command")
+        fileobj.log.info(f"Executing command {command_line}")
 
         with subprocess.Popen(command_line,
                               stdout=subprocess.PIPE,
