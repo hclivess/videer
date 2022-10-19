@@ -56,6 +56,7 @@ def assemble_final(fileobj, app_gui):
     command.append('+cgop')
     command.append('-pix_fmt yuv420p')
     command.append(f'-f matroska "{fileobj.outputname}"')
+    command.append('-y')
     return " ".join(command)
 
 
@@ -182,7 +183,8 @@ class Application(Frame):
 
             errors = ["error", "invalid"]
             for line in self.process.stdout:
-                print(line, end='')
+                #print(line, end='')
+                fileobj.log.info(line.strip())
                 self.status_var.set(multiple_replace(line,
                                                      {"       ": " ",
                                                       "    ": " ",
