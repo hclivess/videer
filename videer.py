@@ -210,6 +210,9 @@ class Application(Frame):
         """automatically ends on Popen termination"""
 
         for f in enumerate(files):
+            if self.should_stop:
+                return
+
             fileobj = File(file=f)
 
             if not self.should_stop:
@@ -304,12 +307,7 @@ class Application(Frame):
                 fileobj.log.removeHandler(handler)
                 handler.close()
 
-        if self.should_stop:
-            info_box_insert(info_box=info_box,
-                            message="Queue stopped")
-        else:
-            info_box_insert(info_box=info_box,
-                            message="Queue finished")
+
 
         self.should_stop = False
 
@@ -325,8 +323,16 @@ class Application(Frame):
 
     def run_cmd(self):
         info_box = self.create_info_box()
+
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
+
+        if self.should_stop:
+            info_box_insert(info_box=info_box,
+                            message="Queue stopped")
+        else:
+            info_box_insert(info_box=info_box,
+                            message="Queue finished")
 
     def select_file(self, var):
         files = fd.askopenfilename(multiple=True, initialdir="", title="Select file")
