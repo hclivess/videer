@@ -60,7 +60,7 @@ def assemble_final(fileobj, app_gui):
     return " ".join(command)
 
 
-class FileHandler:
+class File:
     def __init__(self, file):
         self.number = file[0]
         self.filename = file[1]  # ..file.avi
@@ -75,9 +75,11 @@ class FileHandler:
         self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
         self.dir = os.path.dirname(os.path.realpath(self.filename))
         self.ffmpeg_errors = []
-        self.log = get_logger(self.filename)
         self.avsfile = f"{self.basename}.avs"
         #self.trf = f"{self.dir}\\{time.time_ns()}.trf".replace("\\", "\\\\").replace(":", "\:")
+
+    def create_logger(self):
+        self.log = get_logger(self.filename)
 
 
 class CreateAvs:
@@ -208,16 +210,18 @@ class Application(Frame):
         """automatically ends on Popen termination"""
 
         for f in enumerate(files):
-            fileobj = FileHandler(file=f)
-
-            if self.workdir != fileobj.dir and not self.should_stop:
-                self.workdir = fileobj.dir
-                info_box_insert(info_box=info_box,
-                                message=f"Switching directory to: {self.workdir}",
-                                log_message=f"Switching directory to: {self.workdir}",
-                                logger=fileobj.log)
+            fileobj = File(file=f)
 
             if not self.should_stop:
+                fileobj.create_logger()
+
+                if self.workdir != fileobj.dir:
+                    self.workdir = fileobj.dir
+                    info_box_insert(info_box=info_box,
+                                    message=f"Switching directory to: {self.workdir}",
+                                    log_message=f"Switching directory to: {self.workdir}",
+                                    logger=fileobj.log)
+
                 info_box_insert(info_box=info_box,
                                 message=f"Processing {fileobj.number + 1}/{len(files)}: {fileobj.displayname}",
                                 log_message=f"Processing {fileobj.displayname}",
