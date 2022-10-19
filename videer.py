@@ -76,7 +76,7 @@ class File:
         self.dir = os.path.dirname(os.path.realpath(self.filename))
         self.ffmpeg_errors = []
         self.avsfile = f"{self.basename}.avs"
-        #self.trf = f"{self.dir}\\{time.time_ns()}.trf".replace("\\", "\\\\").replace(":", "\:")
+        # self.trf = f"{self.dir}\\{time.time_ns()}.trf".replace("\\", "\\\\").replace(":", "\:")
 
     def create_logger(self):
         self.log = get_logger(self.filename)
@@ -185,7 +185,7 @@ class Application(Frame):
 
             errors = ["error", "invalid"]
             for line in self.process.stdout:
-                #print(line, end='')
+                # print(line, end='')
                 fileobj.log.info(line.strip())
                 self.status_var.set(multiple_replace(line,
                                                      {"       ": " ",
@@ -309,8 +309,6 @@ class Application(Frame):
 
 
 
-        self.should_stop = False
-
     def create_info_box(self):
         self.top = Toplevel()
         self.top.title("Queue Info")
@@ -333,6 +331,8 @@ class Application(Frame):
         else:
             info_box_insert(info_box=info_box,
                             message="Queue finished")
+
+        self.should_stop = False
 
     def select_file(self, var):
         files = fd.askopenfilename(multiple=True, initialdir="", title="Select file")
