@@ -324,7 +324,6 @@ class Application(Frame):
 
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
-        file_thread.join()
 
         if self.should_stop:
             info_box_insert(info_box=info_box,
