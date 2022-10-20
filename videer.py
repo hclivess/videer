@@ -307,6 +307,15 @@ class Application(Frame):
                 fileobj.log.removeHandler(handler)
                 handler.close()
 
+        if self.should_stop:
+            info_box_insert(info_box=info_box,
+                            message="Queue stopped")
+        else:
+            info_box_insert(info_box=info_box,
+                            message="Queue finished")
+
+        self.should_stop = False
+
 
 
     def create_info_box(self):
@@ -325,14 +334,7 @@ class Application(Frame):
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
 
-        if self.should_stop:
-            info_box_insert(info_box=info_box,
-                            message="Queue stopped")
-        else:
-            info_box_insert(info_box=info_box,
-                            message="Queue finished")
 
-        self.should_stop = False
 
     def select_file(self, var):
         files = fd.askopenfilename(multiple=True, initialdir="", title="Select file")
