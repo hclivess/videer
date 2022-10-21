@@ -64,6 +64,7 @@ class File:
     def __init__(self, file):
         self.number = file[0]
         self.filename = file[1]  # ..file.avi
+        self.orig_name = self.filename
         self.basename = os.path.splitext(self.filename)[0]  # ..file
         self.extras = None  # .._x265_..
         self.extension = ".mkv"  # .mkv
@@ -288,7 +289,7 @@ class Application(Frame):
 
             if self.replace_button_var.get() and return_code == 0 and not self.should_stop:
                 self.replace_file(rename_from=fileobj.outputname,
-                                  rename_to=fileobj.filename,
+                                  rename_to=fileobj.orig_name,
                                   log=fileobj.log)
 
             if os.path.exists(fileobj.transcodename) and not self.should_stop:
