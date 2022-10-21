@@ -211,6 +211,7 @@ class Application(Frame):
 
         for f in enumerate(files):
             if self.should_stop:
+                self.should_stop = False
                 return
 
             fileobj = File(file=f)
