@@ -31,7 +31,7 @@ def assemble_final(fileobj, app_gui):
         command.append(f"-vf vidstabtransform=smoothing=30:zoom=5:input='transforms.trf'")
 
     command.append(f'-c:v {app_gui.codec_var.get()}')
-    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get()))}')
+    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}')
     command.append(f'-map 0:v -map 0:a? -map 0:s?')
     command.append(f'-crf {app_gui.crf.get()}')
     command.append(f'-c:a {app_gui.audio_codec_var.get()}')
@@ -45,7 +45,7 @@ def assemble_final(fileobj, app_gui):
     command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
     command.append(f'-metadata description="'
                    f'Video Codec: {app_gui.codec_var.get()}, '
-                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get()))}, '
+                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}, '
                    f'CRF: {app_gui.crf.get()}, '
                    f'Audio Codec: {app_gui.audio_codec_var.get()}, '
                    f'Audio Bitrate: {app_gui.abr.get()}k"')
@@ -168,11 +168,11 @@ class Application(Frame):
         temp_transcode = None
 
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a? -map 0:s? -c:a copy -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a copy -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get()))} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy "{fileobj.transcodename}" -y'
 
         self.open_process(temp_transcode, fileobj)
 
@@ -402,7 +402,7 @@ class Application(Frame):
 
     def preset_get(self, number: int):
 
-        config_dict = {0: "veryslow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
+        config_dict = {0: "very slow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
     def replace_file(self, rename_from, rename_to, log):
