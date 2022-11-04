@@ -409,7 +409,7 @@ class Application(Frame):
 
         log.info(f"Replacing {rename_to} with {rename_from} file as requested")
         if os.path.exists(rename_from):
-            os.rename(rename_from, f"{rename_from}.old")
+            os.rename(rename_to, f"{rename_to}.old")
         os.rename(rename_from, rename_to)
 
 
