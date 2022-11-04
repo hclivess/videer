@@ -407,16 +407,10 @@ class Application(Frame):
 
     def replace_file(self, rename_from, rename_to, log):
 
-        #input_name_no_ext = os.path.splitext(rename_to)[0]
-        #new_name_ext = f"{input_name_no_ext}.mkv"
-
-        if os.path.exists(rename_to) and rename_from != rename_to:
-            log.info("File already exists, not replacing")
-        else:
-            log.info("Replacing original file as requested")
-            if os.path.exists(rename_from):
-                os.rename(rename_from, f"{rename_from}.old")
-            os.rename(rename_from, rename_to)
+        log.info(f"Replacing {rename_to} with {rename_from} file as requested")
+        if os.path.exists(rename_from):
+            os.rename(rename_from, f"{rename_from}.old")
+        os.rename(rename_from, rename_to)
 
 
     def create_widgets(self):
