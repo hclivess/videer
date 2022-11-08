@@ -21,14 +21,14 @@ def multiple_replace(string, rep_dict):
 
 def assemble_final(fileobj, app_gui):
     command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
+    if app_gui.should_accelerate:
+        command.append(f"-hwaccel cuda")
+
     if app_gui.use_avisynth_var.get():
         command.append(f'-i "{fileobj.avsfile}" -y')
         CreateAvs(fileobj=fileobj)
     else:
         command.append(f'-i "{fileobj.filename}" -y')
-
-    if app_gui.should_stabilize:
-        command.append(f"-vf vidstabtransform=smoothing=30:zoom=5:input='transforms.trf'")
 
     command.append(f'-c:v {app_gui.codec_var.get()}')
     command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}')
@@ -157,7 +157,7 @@ class Application(Frame):
         self.file_queue = []
         self.tempfile = None
         self.should_transcode = False
-        self.should_stabilize = False
+        self.should_accelerate = False
         self.process = None
         self.workdir = None
         self.should_stop = False
@@ -235,8 +235,8 @@ class Application(Frame):
                 should_transcode_video = False
                 should_transcode_audio = False
 
-                if self.stabilize_var.get():
-                    self.should_stabilize = True
+                if self.cuda_var.get():
+                    self.should_accelerate = True
                 if self.transcode_video_var.get():
                     should_transcode_video = True
                 if self.transcode_audio_var.get():
@@ -252,13 +252,6 @@ class Application(Frame):
                 if self.should_transcode:
                     """use transcoded file as source"""
                     fileobj.filename = fileobj.transcodename
-
-                if self.should_stabilize:
-                    """prepares transforms file"""
-                    fileobj.log.info("Preparing transforms file for stabilization")
-                    self.open_process(
-                        f'ffmpeg -i "{fileobj.filename}" -vf vidstabdetect=shakiness=7 -f null -',
-                        fileobj=fileobj)
 
                 final_cmd = assemble_final(fileobj, self)
                 return_code = self.open_process(final_cmd, fileobj)  # final go
@@ -464,11 +457,11 @@ class Application(Frame):
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
-        self.stabilize_var = BooleanVar()
-        self.stabilize_var.set(False)
-        self.stabilize_var_button = Checkbutton(self, text="Stabilize (one global instance)",
-                                                variable=self.stabilize_var)
-        self.stabilize_var_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
+        self.cuda_var = BooleanVar()
+        self.cuda_var.set(False)
+        self.cuda_var_button = Checkbutton(self, text="nVidia CUDA acceleration",
+                                                variable=self.cuda_var)
+        self.cuda_var_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
         self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
