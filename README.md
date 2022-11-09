@@ -13,6 +13,7 @@ If you want to deinterlace AVC (x264) video of a `matroska` file, running Videer
 - AviSynth+
 - 64bit Implementation
 - Matroska format as it is the only one to support `pgssub`
+- CUDA GPU acceleration support
 
 ## Requirements:
 - [FFmpeg](https://ffmpeg.org/) (in system path)
