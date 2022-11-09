@@ -21,8 +21,9 @@ def multiple_replace(string, rep_dict):
 
 def assemble_final(fileobj, app_gui):
     command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
-    if app_gui.should_accelerate:
-        command.append(f"-hwaccel cuda")
+
+    if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
+        command.append("-hwaccel cuda")
 
     if app_gui.use_avisynth_var.get():
         command.append(f'-i "{fileobj.avsfile}" -y')
@@ -30,7 +31,6 @@ def assemble_final(fileobj, app_gui):
     else:
         command.append(f'-i "{fileobj.filename}" -y')
 
-    command.append(f'-c:v {app_gui.codec_var.get()}')
     command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}')
     command.append(f'-map 0:v -map 0:a? -map 0:s?')
     command.append(f'-crf {app_gui.crf.get()}')
@@ -157,7 +157,6 @@ class Application(Frame):
         self.file_queue = []
         self.tempfile = None
         self.should_transcode = False
-        self.should_accelerate = False
         self.process = None
         self.workdir = None
         self.should_stop = False
@@ -235,8 +234,6 @@ class Application(Frame):
                 should_transcode_video = False
                 should_transcode_audio = False
 
-                if self.cuda_var.get():
-                    self.should_accelerate = True
                 if self.transcode_video_var.get():
                     should_transcode_video = True
                 if self.transcode_audio_var.get():
@@ -457,12 +454,6 @@ class Application(Frame):
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
-        self.cuda_var = BooleanVar()
-        self.cuda_var.set(False)
-        self.cuda_var_button = Checkbutton(self, text="nVidia CUDA acceleration",
-                                                variable=self.cuda_var)
-        self.cuda_var_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
-
         self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
         self.audio_codec_var = StringVar()
@@ -490,17 +481,21 @@ class Application(Frame):
         self.video_codec_button.grid(row=13, column=1, sticky='w', pady=0, padx=0)
         self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=14, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button = Radiobutton(self, text="CUDA h264", variable=self.codec_var, value="h264_nvenc")
         self.video_codec_button.grid(row=15, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button = Radiobutton(self, text="CUDA HEVC", variable=self.codec_var, value="hevc_nvenc")
         self.video_codec_button.grid(row=16, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button.grid(row=17, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button.grid(row=18, column=1, sticky='w', pady=0, padx=0)
 
         self.speed_label = Label(self)
         self.speed_label["text"] = "Encoding Speed: "
-        self.speed_label.grid(row=17, column=0, sticky='SE', pady=0, padx=0)
+        self.speed_label.grid(row=19, column=0, sticky='SE', pady=0, padx=0)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=HORIZONTAL, sliderrelief=FLAT)
-        self.speed.grid(row=17, column=1, sticky='WE', pady=0, padx=0)
+        self.speed.grid(row=19, column=1, sticky='WE', pady=0, padx=0)
         self.speed.set(3)
 
         self.infile_value = StringVar()
