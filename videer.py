@@ -33,9 +33,20 @@ def assemble_final(fileobj, app_gui):
 
     command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}')
     command.append(f'-map 0:v -map 0:a? -map 0:s?')
-    command.append(f'-crf {app_gui.crf.get()}')
-    command.append(f'-c:a {app_gui.audio_codec_var.get()}')
-    command.append(f'-b:a {app_gui.abr.get()}k')
+
+
+    if app_gui.codec_var.get() == "copy":
+        command.append(f'-c:v copy')
+    else:
+        command.append(f'-c:v {app_gui.codec_var.get()}')
+        command.append(f'-crf {app_gui.crf.get()}')
+
+    if app_gui.audio_codec_var.get() == "copy":
+        command.append(f'-c:a copy')
+    else:
+        command.append(f'-c:a {app_gui.audio_codec_var.get()}')
+        command.append(f'-b:a {app_gui.abr.get()}k')
+
     command.append(f'-c:s copy')
 
     if app_gui.corrupt_var.get():
@@ -467,35 +478,39 @@ class Application(Frame):
         self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=0, padx=0)
         self.audio_codec_button = Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
         self.audio_codec_button.grid(row=11, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="PCM32 (raw)", variable=self.audio_codec_var,
+        self.audio_codec_button = Radiobutton(self, text="PCM32 (Raw)", variable=self.audio_codec_var,
                                               value="pcm_s32le")
         self.audio_codec_button.grid(row=12, column=1, sticky='w', pady=0, padx=0)
+        self.audio_codec_button = Radiobutton(self, text="Copy", variable=self.audio_codec_var, value="copy")
+        self.audio_codec_button.grid(row=13, column=1, sticky='w', pady=0, padx=0)
 
         self.codec_label = Label(self)
         self.codec_label["text"] = "Video Codec: "
         self.codec_var = StringVar()
         self.codec_var.set("libx265")
-        self.codec_label.grid(row=12, column=0, sticky='SE', pady=0, padx=0)
+        self.codec_label.grid(row=15, column=0, sticky='SE', pady=0, padx=0)
 
         self.video_codec_button = Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.video_codec_button.grid(row=13, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
-        self.video_codec_button.grid(row=14, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="CUDA h264", variable=self.codec_var, value="h264_nvenc")
         self.video_codec_button.grid(row=15, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="CUDA HEVC", variable=self.codec_var, value="hevc_nvenc")
+        self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
         self.video_codec_button.grid(row=16, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button = Radiobutton(self, text="CUDA h264", variable=self.codec_var, value="h264_nvenc")
         self.video_codec_button.grid(row=17, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button = Radiobutton(self, text="CUDA HEVC", variable=self.codec_var, value="hevc_nvenc")
         self.video_codec_button.grid(row=18, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button.grid(row=19, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="Raw", variable=self.codec_var, value="rawvideo")
+        self.video_codec_button.grid(row=20, column=1, sticky='w', pady=0, padx=0)
+        self.video_codec_button = Radiobutton(self, text="Copy", variable=self.codec_var, value="copy")
+        self.video_codec_button.grid(row=21, column=1, sticky='w', pady=0, padx=0)
 
         self.speed_label = Label(self)
         self.speed_label["text"] = "Encoding Speed: "
-        self.speed_label.grid(row=19, column=0, sticky='SE', pady=0, padx=0)
+        self.speed_label.grid(row=22, column=0, sticky='SE', pady=0, padx=0)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=HORIZONTAL, sliderrelief=FLAT)
-        self.speed.grid(row=19, column=1, sticky='WE', pady=0, padx=0)
+        self.speed.grid(row=22, column=1, sticky='WE', pady=0, padx=0)
         self.speed.set(3)
 
         self.infile_value = StringVar()
@@ -503,55 +518,55 @@ class Application(Frame):
 
         self.infile_button = Button(self, text="Input File(s):",
                                     command=lambda: self.select_file(self.infile_value))
-        self.infile_button.grid(row=20, column=0, sticky='SE', padx=0, pady=(5))
+        self.infile_button.grid(row=24, column=0, sticky='SE', padx=0, pady=(5))
 
         self.infile = Entry(self, textvariable=self.infile_value, width=70)
-        self.infile.grid(row=20, column=1, sticky='W', padx=0)
+        self.infile.grid(row=24, column=1, sticky='W', padx=0)
 
         self.crf_label = Label(self)
         self.crf_label["text"] = "CRF: "
-        self.crf_label.grid(row=21, column=0, sticky='SE', pady=0, padx=0)
+        self.crf_label.grid(row=25, column=0, sticky='SE', pady=0, padx=0)
         self.crf = tk.Scale(self, from_=0, to=51, orient=HORIZONTAL, sliderrelief=FLAT)
-        self.crf.grid(row=21, column=1, sticky='WE', pady=0, padx=0)
+        self.crf.grid(row=25, column=1, sticky='WE', pady=0, padx=0)
         self.crf.set(23)
 
         self.abr_label = Label(self)
         self.abr_label["text"] = "Audio ABR: "
-        self.abr_label.grid(row=22, column=0, sticky='SE', pady=0, padx=0)
+        self.abr_label.grid(row=26, column=0, sticky='SE', pady=0, padx=0)
 
         self.abr = tk.Scale(self, resolution=16, from_=0, to=384, orient=HORIZONTAL, sliderrelief=FLAT)
-        self.abr.grid(row=22, column=1, sticky='WE', pady=0, padx=0)
+        self.abr.grid(row=26, column=1, sticky='WE', pady=0, padx=0)
         self.abr.set(256)
 
         self.extras_label = Label(self)
         self.extras_label["text"] = "FFmpeg Extras: "
-        self.extras_label.grid(row=23, column=0, sticky='SE', padx=0)
+        self.extras_label.grid(row=27, column=0, sticky='SE', padx=0)
         self.extras_value = StringVar()
         self.extras_value.set("")
         self.extras = Entry(self, textvariable=self.extras_value, width=70)
-        self.extras.grid(row=23, column=1, sticky='W', pady=0, padx=0)
+        self.extras.grid(row=27, column=1, sticky='W', pady=0, padx=0)
 
         self.avisynth_extras_label = Label(self)
         self.avisynth_extras_label["text"] = "AviSynth+ Extras: "
-        self.avisynth_extras_label.grid(row=24, column=0, sticky='SE', padx=0)
+        self.avisynth_extras_label.grid(row=28, column=0, sticky='SE', padx=0)
         self.avisynth_extras = Text(self, height=2, width=30)
-        self.avisynth_extras.grid(row=24, column=1, sticky='WE', pady=0, padx=0)
+        self.avisynth_extras.grid(row=28, column=1, sticky='WE', pady=0, padx=0)
 
         self.progress_label = Label(self)
         self.progress_label["text"] = f"Progress: "
-        self.progress_label.grid(row=25, column=0, sticky='NE', padx=0)
+        self.progress_label.grid(row=29, column=0, sticky='NE', padx=0)
 
         self.status_var = StringVar()
         self.status_var.set("Idle...")
         self.status_bar = Label(self, textvariable=self.status_var, width=70)
-        self.status_bar.grid(row=25, column=1, columnspan=5, sticky='W', pady=0, padx=0)
+        self.status_bar.grid(row=29, column=1, columnspan=5, sticky='W', pady=0, padx=0)
 
         self.replace_button_var = BooleanVar()
         self.replace_button_var.set(False)
         self.replace_button = Checkbutton(self, text="Replace Original File(s)",
                                           variable=self.replace_button_var)
 
-        self.replace_button.grid(row=26, column=1, sticky='SE', pady=0, padx=0)
+        self.replace_button.grid(row=30, column=1, sticky='SE', pady=0, padx=0)
 
         self.run = Button(self, text="Run", style='W.TButton', command=lambda: self.run_cmd())
         self.run.grid(row=0, column=2, sticky='WE', padx=0)
