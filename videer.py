@@ -192,7 +192,8 @@ class Application(Frame):
         with subprocess.Popen(command_line,
                               stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT,
-                              universal_newlines=True) as self.process:
+                              universal_newlines=True,
+                              encoding="utf8") as self.process:
 
             errors = ["error", "invalid"]
             for line in self.process.stdout:
