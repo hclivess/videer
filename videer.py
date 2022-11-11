@@ -37,15 +37,24 @@ def assemble_final(fileobj, app_gui):
 
     if app_gui.codec_var.get() == "copy":
         command.append(f'-c:v copy')
+        v_codec_desc = "copy"
+        crf_desc = "copy"
     else:
         command.append(f'-c:v {app_gui.codec_var.get()}')
         command.append(f'-crf {app_gui.crf.get()}')
+        v_codec_desc = app_gui.codec_var.get()
+        crf_desc = app_gui.crf.get()
 
     if app_gui.audio_codec_var.get() == "copy":
         command.append(f'-c:a copy')
+        abr_desc = "copy"
+        a_codec_desc = "copy"
+
     else:
         command.append(f'-c:a {app_gui.audio_codec_var.get()}')
         command.append(f'-b:a {app_gui.abr.get()}k')
+        abr_desc = f"{app_gui.abr.get()}k"
+        a_codec_desc = app_gui.audio_codec_var.get()
 
     command.append(f'-c:s copy')
 
@@ -55,11 +64,11 @@ def assemble_final(fileobj, app_gui):
     command.append(f'{app_gui.extras_value.get()}')
     command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
     command.append(f'-metadata description="'
-                   f'Video Codec: {app_gui.codec_var.get()}, '
-                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}, '
-                   f'CRF: {app_gui.crf.get()}, '
-                   f'Audio Codec: {app_gui.audio_codec_var.get()}, '
-                   f'Audio Bitrate: {app_gui.abr.get()}k"')
+                   f'Video Codec: {v_codec_desc}, '
+                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")}, '
+                   f'CRF: {crf_desc}, '
+                   f'Audio Codec: {a_codec_desc}, '
+                   f'Audio Bitrate: {abr_desc}"')
     command.append('-movflags')
     command.append('+faststart')
     command.append('-bf 2')
