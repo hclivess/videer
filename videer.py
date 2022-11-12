@@ -41,7 +41,12 @@ def assemble_final(fileobj, app_gui):
         crf_desc = "copy"
     else:
         command.append(f'-c:v {app_gui.codec_var.get()}')
-        command.append(f'-crf {app_gui.crf.get()}')
+
+        if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
+            command.append(f'-cq {app_gui.crf.get()}')
+        else:
+            command.append(f'-crf {app_gui.crf.get()}')
+
         v_codec_desc = app_gui.codec_var.get()
         crf_desc = app_gui.crf.get()
 
