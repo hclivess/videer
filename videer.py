@@ -22,11 +22,6 @@ def multiple_replace(string, rep_dict):
 def assemble_final(fileobj, app_gui):
     command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
 
-    if app_gui.surround71_var.get():
-        command.append('--channel_layout "7.1"')
-    elif app_gui.surround51_var.get():
-        command.append('--channel_layout "5.1"')
-
     if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
         command.append("-hwaccel cuda")
 
@@ -36,9 +31,13 @@ def assemble_final(fileobj, app_gui):
     else:
         command.append(f'-i "{fileobj.filename}" -y')
 
-    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ","")}')
-    command.append(f'-map 0:v -map 0:a? -map 0:s?')
+    if app_gui.surround71_var.get():
+        command.append('-channel_layout "7.1"')
+    elif app_gui.surround51_var.get():
+        command.append('-channel_layout "5.1"')
 
+    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")}')
+    command.append(f'-map 0:v -map 0:a? -map 0:s?')
 
     if app_gui.codec_var.get() == "copy":
         command.append(f'-c:v copy')
@@ -495,14 +494,14 @@ class Application(Frame):
 
         self.surround51_var = BooleanVar()
         self.surround51_var.set(False)
-        self.surround51_button = Checkbutton(self, text="5.1 Audio",
+        self.surround51_button = Checkbutton(self, text="5.1 Audio (DTS)",
                                              variable=self.surround51_var)
         self.surround51_button.bind("<Button-1>", self.on_set_51)
         self.surround51_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
         self.surround71_var = BooleanVar()
         self.surround71_var.set(False)
-        self.surround71_button = Checkbutton(self, text="7.1 Audio",
+        self.surround71_button = Checkbutton(self, text="7.1 Audio (Atmos)",
                                              variable=self.surround71_var)
         self.surround71_button.bind("<Button-1>", self.on_set_71)
         self.surround71_button.grid(row=8, column=1, sticky='w', pady=0, padx=100)
@@ -576,7 +575,7 @@ class Application(Frame):
         self.abr_label["text"] = "Audio ABR: "
         self.abr_label.grid(row=26, column=0, sticky='SE', pady=0, padx=0)
 
-        self.abr = tk.Scale(self, resolution=16, from_=0, to=384, orient=HORIZONTAL, sliderrelief=FLAT)
+        self.abr = tk.Scale(self, resolution=16, from_=0, to=512, orient=HORIZONTAL, sliderrelief=FLAT)
         self.abr.grid(row=26, column=1, sticky='WE', pady=0, padx=0)
         self.abr.set(256)
 
