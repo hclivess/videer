@@ -22,6 +22,11 @@ def multiple_replace(string, rep_dict):
 def assemble_final(fileobj, app_gui):
     command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
 
+    if app_gui.surround71_var.get():
+        command.append('--channel_layout "7.1"')
+    elif app_gui.surround51_var.get():
+        command.append('--channel_layout "5.1"')
+
     if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
         command.append("-hwaccel cuda")
 
@@ -368,6 +373,14 @@ class Application(Frame):
             self.use_ffms2_var.set(False)
             self.deinterlace_var.set(False)
 
+    def on_set_51(self, click):
+        if self.surround71_var.get():
+            self.surround71_var.set(False)
+
+    def on_set_71(self, click):
+        if self.surround51_var.get():
+            self.surround51_var.set(False)
+
     def on_set_deinterlace(self, click):
         """warning, reversed because it takes state at the time of clicking"""
         if not self.deinterlace_var.get() and not self.use_avisynth_var.get():
@@ -479,6 +492,20 @@ class Application(Frame):
         self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption",
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
+
+        self.surround51_var = BooleanVar()
+        self.surround51_var.set(False)
+        self.surround51_button = Checkbutton(self, text="5.1 Audio",
+                                             variable=self.surround51_var)
+        self.surround51_button.bind("<Button-1>", self.on_set_51)
+        self.surround51_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
+
+        self.surround71_var = BooleanVar()
+        self.surround71_var.set(False)
+        self.surround71_button = Checkbutton(self, text="7.1 Audio",
+                                             variable=self.surround71_var)
+        self.surround71_button.bind("<Button-1>", self.on_set_71)
+        self.surround71_button.grid(row=8, column=1, sticky='w', pady=0, padx=100)
 
         self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
