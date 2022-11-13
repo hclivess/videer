@@ -31,13 +31,11 @@ def assemble_final(fileobj, app_gui):
     else:
         command.append(f'-i "{fileobj.filename}" -y')
 
-    if app_gui.surround71_var.get():
-        command.append('-channel_layout "7.1"')
-    elif app_gui.surround51_var.get():
-        command.append('-channel_layout "5.1"')
-
     command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")}')
     command.append(f'-map 0:v -map 0:a? -map 0:s?')
+
+    if app_gui.stereo_var.get():
+        command.append('-ac 2')
 
     if app_gui.codec_var.get() == "copy":
         command.append(f'-c:v copy')
@@ -371,15 +369,6 @@ class Application(Frame):
             self.tff_var.set(False)
             self.use_ffms2_var.set(False)
             self.deinterlace_var.set(False)
-
-    def on_set_51(self, click):
-        if self.surround71_var.get():
-            self.surround71_var.set(False)
-
-    def on_set_71(self, click):
-        if self.surround51_var.get():
-            self.surround51_var.set(False)
-
     def on_set_deinterlace(self, click):
         """warning, reversed because it takes state at the time of clicking"""
         if not self.deinterlace_var.get() and not self.use_avisynth_var.get():
@@ -492,19 +481,11 @@ class Application(Frame):
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
-        self.surround51_var = BooleanVar()
-        self.surround51_var.set(False)
-        self.surround51_button = Checkbutton(self, text="5.1 Audio (DTS)",
-                                             variable=self.surround51_var)
-        self.surround51_button.bind("<Button-1>", self.on_set_51)
-        self.surround51_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
-
-        self.surround71_var = BooleanVar()
-        self.surround71_var.set(False)
-        self.surround71_button = Checkbutton(self, text="7.1 Audio (Atmos)",
-                                             variable=self.surround71_var)
-        self.surround71_button.bind("<Button-1>", self.on_set_71)
-        self.surround71_button.grid(row=8, column=1, sticky='w', pady=0, padx=100)
+        self.stereo_var = BooleanVar()
+        self.stereo_var.set(False)
+        self.stereo_button = Checkbutton(self, text="Reduce to stereo",
+                                         variable=self.stereo_var)
+        self.stereo_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
         self.audio_codec_label = Label(self)
         self.audio_codec_label["text"] = "Audio Codec: "
