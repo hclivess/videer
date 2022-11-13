@@ -458,32 +458,32 @@ class Application(Frame):
 
         self.use_ffms2_var = BooleanVar()
         self.use_ffms2_var.set(False)
-        self.use_ffms2_button = Checkbutton(self, text="Use ffms2 (no frameserver, 1 stream)",
+        self.use_ffms2_button = Checkbutton(self, text="Use ffms2 (No Frameserver, 1 Stream)",
                                             variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.on_set_ffms)
         self.use_ffms2_button.grid(row=4, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_video_var = BooleanVar()
         self.transcode_video_var.set(False)
-        self.transcode_video_button = Checkbutton(self, text="Raw transcode video first",
+        self.transcode_video_button = Checkbutton(self, text="Raw Transcode Video First",
                                                   variable=self.transcode_video_var)
         self.transcode_video_button.grid(row=5, column=1, sticky='w', pady=0, padx=0)
 
         self.transcode_audio_var = BooleanVar()
         self.transcode_audio_var.set(False)
-        self.transcode_audio_button = Checkbutton(self, text="Raw transcode audio first",
+        self.transcode_audio_button = Checkbutton(self, text="Raw Transcode Audio First",
                                                   variable=self.transcode_audio_var)
         self.transcode_audio_button.grid(row=6, column=1, sticky='w', pady=0, padx=0)
 
         self.corrupt_var = BooleanVar()
         self.corrupt_var.set(False)
-        self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) corruption",
+        self.corrupt_var_button = Checkbutton(self, text="Fix AVC (ts) Corruption",
                                               variable=self.corrupt_var)
         self.corrupt_var_button.grid(row=7, column=1, sticky='w', pady=0, padx=0)
 
         self.stereo_var = BooleanVar()
         self.stereo_var.set(False)
-        self.stereo_button = Checkbutton(self, text="Reduce to stereo",
+        self.stereo_button = Checkbutton(self, text="Reduce to Stereo",
                                          variable=self.stereo_var)
         self.stereo_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
