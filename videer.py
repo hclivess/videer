@@ -520,7 +520,7 @@ class Application(Frame):
         self.video_codec_button.grid(row=17, column=1, sticky='w', pady=0, padx=0)
         self.video_codec_button = Radiobutton(self, text="CUDA HEVC (CQ)", variable=self.codec_var, value="hevc_nvenc")
         self.video_codec_button.grid(row=18, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="V9", variable=self.codec_var, value="libvpx-vp9")
+        self.video_codec_button = Radiobutton(self, text="ProRes", variable=self.codec_var, value="prores_ks")
         self.video_codec_button.grid(row=19, column=1, sticky='w', pady=0, padx=0)
         self.video_codec_button = Radiobutton(self, text="Raw", variable=self.codec_var, value="rawvideo")
         self.video_codec_button.grid(row=20, column=1, sticky='w', pady=0, padx=0)
