@@ -483,7 +483,7 @@ class Application(Frame):
 
         self.stereo_var = BooleanVar()
         self.stereo_var.set(False)
-        self.stereo_button = Checkbutton(self, text="Reduce to Stereo",
+        self.stereo_button = Checkbutton(self, text="Reduce to Stereo (be careful)",
                                          variable=self.stereo_var)
         self.stereo_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 

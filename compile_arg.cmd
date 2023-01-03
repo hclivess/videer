@@ -1,1 +1,1 @@
-python -m nuitka --follow-imports %1 --windows-icon-from-ico=icon.ico
+python -m nuitka --standalone %1 --windows-icon-from-ico=icon.ico --enable-plugin=tk-inter
