@@ -123,6 +123,8 @@ class CreateAvs:
             avsfile.write('\n')
             avsfile.write(f'Loadplugin("{app.path}/plugins/RgTools.dll")')
             avsfile.write('\n')
+            avsfile.write(f'Loadplugin("{app.path}/plugins/LSMASHSource.dll")')
+            avsfile.write('\n')
             avsfile.write(f'Import("{app.path}/plugins/QTGMC.avsi")')
             avsfile.write('\n')
             avsfile.write(f'Import("{app.path}/plugins/Zs_RF_Shared.avsi")')
@@ -321,6 +323,7 @@ class Application(Frame):
 
             if os.path.exists(fileobj.avsfile) and not self.should_stop:
                 os.remove(fileobj.avsfile)
+                pass
 
             handlers = fileobj.log.handlers[:]
             for handler in handlers:
