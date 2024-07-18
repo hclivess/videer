@@ -1,9 +1,7 @@
 import threading
 from tkinter import *
 from tkinter.ttk import *
-import time
 import tkinter as tk
-
 import tkinter.messagebox as messagebox
 import tkinter.filedialog as fd
 import tkinter.scrolledtext as st
@@ -12,106 +10,118 @@ import subprocess
 import multiprocessing
 import os
 import re
-
+from collections import defaultdict
+from functools import partial
 
 def multiple_replace(string, rep_dict):
     pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
     return pattern.sub(lambda x: rep_dict[x.group(0)], string)
 
-
 def assemble_final(fileobj, app_gui):
-    command = [f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
+    command = ['ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
 
     if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
         command.append("-hwaccel cuda")
 
-    if app_gui.use_avisynth_var.get():
-        command.append(f'-i "{fileobj.avsfile}" -y')
-        CreateAvs(fileobj=fileobj)
-    else:
-        command.append(f'-i "{fileobj.filename}" -y')
+    input_file = f'-i "{fileobj.avsfile}"' if app_gui.use_avisynth_var.get() else f'-i "{fileobj.filename}"'
+    command.append(f'{input_file} -y')
 
-    command.append(f'-preset {app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")}')
-    command.append(f'-map 0:v -map 0:a? -map 0:s?')
+    preset = app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")
+    command.append(f'-preset {preset}')
+
+    command.extend(['-map 0:v', '-map 0:a?', '-map 0:s?'])
 
     if app_gui.stereo_var.get():
         command.append('-ac 2')
 
     if app_gui.codec_var.get() == "copy":
-        command.append(f'-c:v copy')
+        command.append('-c:v copy')
         v_codec_desc = "copy"
         crf_desc = "copy"
     else:
         command.append(f'-c:v {app_gui.codec_var.get()}')
-
-        if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"]:
-            command.append(f'-cq {app_gui.crf.get()}')
-        else:
-            command.append(f'-crf {app_gui.crf.get()}')
-
+        crf_option = '-cq' if app_gui.codec_var.get() in ["hevc_nvenc", "h264_nvenc"] else '-crf'
+        command.append(f'{crf_option} {app_gui.crf.get()}')
         v_codec_desc = app_gui.codec_var.get()
         crf_desc = app_gui.crf.get()
 
     if app_gui.audio_codec_var.get() == "copy":
-        command.append(f'-c:a copy')
+        command.append('-c:a copy')
         abr_desc = "copy"
         a_codec_desc = "copy"
-
     else:
-        command.append(f'-c:a {app_gui.audio_codec_var.get()}')
-        command.append(f'-b:a {app_gui.abr.get()}k')
+        command.extend([f'-c:a {app_gui.audio_codec_var.get()}', f'-b:a {app_gui.abr.get()}k'])
         abr_desc = f"{app_gui.abr.get()}k"
         a_codec_desc = app_gui.audio_codec_var.get()
 
-    command.append(f'-c:s copy')
+    command.append('-c:s copy')
 
     if app_gui.corrupt_var.get():
         command.append("-bsf:v h264_mp4toannexb")
 
-    command.append(f'{app_gui.extras_value.get()}')
-    command.append('-metadata comment="Made with Videer https://github.com/hclivess/videer"')
-    command.append(f'-metadata description="'
-                   f'Video Codec: {v_codec_desc}, '
-                   f'Preset: {app_gui.preset_get(int(app_gui.speed.get())).replace(" ", "")}, '
-                   f'CRF: {crf_desc}, '
-                   f'Audio Codec: {a_codec_desc}, '
-                   f'Audio Bitrate: {abr_desc}"')
-    command.append('-movflags')
-    command.append('+faststart')
-    command.append('-bf 2')
-    command.append('-flags')
-    command.append('+cgop')
-    command.append('-pix_fmt yuv420p')
-    command.append(f'-f matroska "{fileobj.outputname}"')
-    command.append('-y')
+    command.extend([
+        app_gui.extras_value.get(),
+        '-metadata comment="Made with Videer https://github.com/hclivess/videer"',
+        f'-metadata description="Video Codec: {v_codec_desc}, Preset: {preset}, CRF: {crf_desc}, Audio Codec: {a_codec_desc}, Audio Bitrate: {abr_desc}"',
+        '-movflags +faststart',
+        '-bf 2',
+        '-flags +cgop',
+        '-pix_fmt yuv420p',
+        f'-f matroska "{fileobj.outputname}"',
+        '-y'
+    ])
+
     return " ".join(command)
 
-
 class File:
-    def __init__(self, file):
-        self.number = file[0]
-        self.filename = file[1]  # ..file.avi
-        self.orig_name = self.filename
-        self.basename = os.path.splitext(self.filename)[0]  # ..file
-        self.extras = None  # .._x265_..
-        self.extension = ".mkv"  # .mkv
-        self.transcodename = f"{self.basename}.trans.avi"  # ..file.temp.avi
-        self.errorname = f"{self.filename}.error"  # ..file.avi.error
-        self.ffindex = f"{self.filename}.ffindex"  # ..file.avi.ffindex
-        self.tempffindex = f"{self.transcodename}.ffindex"  # ..file.avi.ffindex
-        self.displayname = self.filename.split('/')[-1]  # file.avi
-        self.outputname = f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
-        self.dir = os.path.dirname(os.path.realpath(self.filename))
+    def __init__(self, number, filename):
+        self.number = number
+        self.filename = filename
+        self.basename = os.path.splitext(self.filename)[0]
+        self.extension = ".mkv"
         self.ffmpeg_errors = []
-        self.avsfile = f"{self.basename}.avs"
-        # self.trf = f"{self.dir}\\{time.time_ns()}.trf".replace("\\", "\\\\").replace(":", "\:")
+
+    @property
+    def orig_name(self):
+        return self.filename
+
+    @property
+    def transcodename(self):
+        return f"{self.basename}.trans.avi"
+
+    @property
+    def errorname(self):
+        return f"{self.filename}.error"
+
+    @property
+    def ffindex(self):
+        return f"{self.filename}.ffindex"
+
+    @property
+    def tempffindex(self):
+        return f"{self.transcodename}.ffindex"
+
+    @property
+    def displayname(self):
+        return os.path.basename(self.filename)
+
+    @property
+    def outputname(self):
+        return f"{self.basename}_{app.crf.get()}{app.codec_var.get()}_{app.audio_codec_var.get()}{app.abr.get()}{self.extension}"
+
+    @property
+    def dir(self):
+        return os.path.dirname(os.path.realpath(self.filename))
+
+    @property
+    def avsfile(self):
+        return f"{self.basename}.avs"
 
     def create_logger(self):
         self.log = get_logger(self.filename)
 
-
 class CreateAvs:
-    def __init__(self, fileobj):
+    def __init__(self, fileobj, app):
         with open(fileobj.avsfile, "w") as avsfile:
             plugins = [
                 "masktools2.dll", "mvtools2.dll", "nnedi3.dll",
@@ -145,7 +155,6 @@ class CreateAvs:
                 fps_divisor = ', FPSDivisor=2' if app.reduce_fps_var.get() else ''
                 avsfile.write(f'QTGMC(Preset="{preset}"{fps_divisor}, EdiThreads={multiprocessing.cpu_count()})\n')
 
-
 def info_box_insert(info_box, message, log_message=None, logger=None):
     try:
         info_box.configure(state='normal')
@@ -157,10 +166,8 @@ def info_box_insert(info_box, message, log_message=None, logger=None):
     if logger:
         logger.info(log_message)
 
-
 class Application(Frame):
     def __init__(self, master=None):
-
         super().__init__(master)
         self.master = master
         self.top = None
@@ -179,12 +186,15 @@ class Application(Frame):
         fileobj.log.info("Transcode process started")
         temp_transcode = None
 
+        preset = self.preset_get(int(self.speed.get())).replace(" ", "")
+        base_command = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {preset} -map 0:v -map 0:a? -map 0:s?'
+
         if transcode_video and transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'{base_command} -c:a pcm_s32le -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
         elif transcode_video and not transcode_audio:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a copy -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'{base_command} -c:a copy -c:v rawvideo -c:s copy "{fileobj.transcodename}" -y'
         elif transcode_audio and not transcode_video:
-            temp_transcode = f'ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner -i "{fileobj.filename}" -preset {self.preset_get(int(self.speed.get())).replace(" ","")} -map 0:v -map 0:a? -map 0:s? -c:a pcm_s32le -c:v copy -c:s copy "{fileobj.transcodename}" -y'
+            temp_transcode = f'{base_command} -c:a pcm_s32le -c:v copy -c:s copy "{fileobj.transcodename}" -y'
 
         self.open_process(temp_transcode, fileobj)
 
@@ -199,7 +209,6 @@ class Application(Frame):
 
             errors = ["error", "invalid"]
             for line in self.process.stdout:
-                # print(line, end='')
                 fileobj.log.info(line.strip())
                 self.status_var.set(multiple_replace(line,
                                                      {"       ": " ",
@@ -211,9 +220,8 @@ class Application(Frame):
                                                       "frame": "f",
                                                       "=": ":",
                                                       "\n": ""}))
-                for error in errors:
-                    if error in line.lower():
-                        fileobj.ffmpeg_errors.append(line.strip())
+                if any(error in line.lower() for error in errors):
+                    fileobj.ffmpeg_errors.append(line.strip())
 
         return_code = self.process.wait()
 
@@ -221,14 +229,12 @@ class Application(Frame):
         return return_code
 
     def queue(self, files, info_box):
-        """automatically ends on Popen termination"""
-
-        for f in enumerate(files):
+        for i, f in enumerate(files):
             if self.should_stop:
                 self.should_stop = False
                 return
 
-            fileobj = File(file=f)
+            fileobj = File(number=i, filename=f)
 
             if not self.should_stop:
                 fileobj.create_logger()
@@ -245,15 +251,9 @@ class Application(Frame):
                                 log_message=f"Processing {fileobj.displayname}",
                                 logger=fileobj.log)
 
-                should_transcode_video = False
-                should_transcode_audio = False
-
-                if self.transcode_video_var.get():
-                    should_transcode_video = True
-                if self.transcode_audio_var.get():
-                    should_transcode_audio = True
-                if should_transcode_video or should_transcode_audio:
-                    self.should_transcode = True
+                should_transcode_video = self.transcode_video_var.get()
+                should_transcode_audio = self.transcode_audio_var.get()
+                self.should_transcode = should_transcode_video or should_transcode_audio
 
                 if self.should_transcode and not self.should_stop:
                     self.transcode(fileobj,
@@ -261,17 +261,18 @@ class Application(Frame):
                                    transcode_audio=should_transcode_audio)
 
                 if self.should_transcode:
-                    """use transcoded file as source"""
                     fileobj.filename = fileobj.transcodename
 
+                if self.use_avisynth_var.get() and not self.should_stop:
+                    CreateAvs(fileobj, self)
+
                 final_cmd = assemble_final(fileobj, self)
-                return_code = self.open_process(final_cmd, fileobj)  # final go
+                return_code = self.open_process(final_cmd, fileobj)
 
             else:
                 return_code = 1
 
             if return_code == 0 and not self.should_stop:
-                """error code can be None, force numeric check"""
                 info_box_insert(info_box=info_box,
                                 message=f"Finished {fileobj.displayname}: {int((fileobj.number + 1) / (len(files)) * 100)}%",
                                 log_message=f"Finished {fileobj.displayname}",
@@ -296,18 +297,9 @@ class Application(Frame):
                                   rename_to=fileobj.orig_name,
                                   log=fileobj.log)
 
-            if os.path.exists(fileobj.transcodename) and not self.should_stop:
-                os.remove(fileobj.transcodename)
-
-            if os.path.exists(fileobj.ffindex) and not self.should_stop:
-                os.remove(fileobj.ffindex)
-
-            if os.path.exists(fileobj.tempffindex) and not self.should_stop:
-                os.remove(fileobj.tempffindex)
-
-            if os.path.exists(fileobj.avsfile) and not self.should_stop:
-                os.remove(fileobj.avsfile)
-                pass
+            for file in [fileobj.transcodename, fileobj.ffindex, fileobj.tempffindex, fileobj.avsfile]:
+                if os.path.exists(file) and not self.should_stop:
+                    os.remove(file)
 
             handlers = fileobj.log.handlers[:]
             for handler in handlers:
@@ -323,8 +315,6 @@ class Application(Frame):
 
         self.should_stop = False
 
-
-
     def create_info_box(self):
         self.top = Toplevel()
         self.top.title("Queue Info")
@@ -337,30 +327,23 @@ class Application(Frame):
 
     def run_cmd(self):
         info_box = self.create_info_box()
-
         file_thread = threading.Thread(target=self.queue, args=(self.file_queue, info_box,))
         file_thread.start()
 
-
-
     def select_file(self, var):
         files = fd.askopenfilename(multiple=True, initialdir="", title="Select file")
-        del self.file_queue[:]
-        for file in files:
-            self.file_queue.append(file)
+        self.file_queue = list(files)
         var.set(self.file_queue)
 
     def on_set_avisynth(self, click):
-        """warning, reversed because it takes state at the time of clicking"""
         if self.use_avisynth_var.get():
             self.tff_var.set(False)
             self.use_ffms2_var.set(False)
             self.deinterlace_var.set(False)
+
     def on_set_deinterlace(self, click):
-        """warning, reversed because it takes state at the time of clicking"""
         if not self.deinterlace_var.get() and not self.use_avisynth_var.get():
             self.use_avisynth_var.set(True)
-
         elif self.deinterlace_var.get() and self.use_avisynth_var.get() and not self.use_ffms2_var.get():
             self.reduce_fps_var.set(False)
             self.tff_var.set(False)
@@ -368,19 +351,16 @@ class Application(Frame):
             self.tff_var.set(False)
 
     def on_set_ttf(self, click):
-        """warning, reversed because it takes state at the time of clicking"""
         if not self.tff_var.get() and not self.deinterlace_var.get():
             self.deinterlace_var.set(True)
             self.use_avisynth_var.set(True)
 
     def on_set_reduce(self, click):
-        """warning, reversed because it takes state at the time of clicking"""
         if not self.reduce_fps_var.get() and not self.deinterlace_var.get():
             self.deinterlace_var.set(True)
             self.use_avisynth_var.set(True)
 
     def on_set_ffms(self, click):
-        """warning, reversed because it takes state at the time of clicking"""
         if not self.use_avisynth_var.get():
             self.use_avisynth_var.set(True)
         elif self.use_avisynth_var.get() and not self.deinterlace_var.get():
@@ -393,10 +373,10 @@ class Application(Frame):
     def stop_process(self, announce=False):
         self.should_stop = True
         if self.process:
-            output = f"Process terminated"
+            output = "Process terminated"
             self.process.kill()
         else:
-            output = f"No process assigned"
+            output = "No process assigned"
 
         if announce:
             messagebox.showinfo(title="Info", message=output)
@@ -405,20 +385,16 @@ class Application(Frame):
             self.top.destroy()
 
     def preset_get(self, number: int):
-
         config_dict = {0: "very slow", 1: "slower", 2: "slow", 3: "medium", 4: "faster", 5: "fast", 6: "ultrafast"}
         return config_dict.get(number)
 
     def replace_file(self, rename_from, rename_to, log):
-
         log.info(f"Replacing {rename_to} with {rename_from} file as requested")
         if os.path.exists(rename_from):
             os.rename(rename_to, f"{rename_to}.old")
         os.rename(rename_from, rename_to)
 
-
     def create_widgets(self):
-
         self.deinterlace_var = BooleanVar()
         self.deinterlace_var.set(False)
         self.deinterlace_button = Checkbutton(self, text="Deinterlace", variable=self.deinterlace_var)
@@ -474,48 +450,30 @@ class Application(Frame):
                                          variable=self.stereo_var)
         self.stereo_button.grid(row=8, column=1, sticky='w', pady=0, padx=0)
 
-        self.audio_codec_label = Label(self)
-        self.audio_codec_label["text"] = "Audio Codec: "
+        self.audio_codec_label = Label(self, text="Audio Codec: ")
+        self.audio_codec_label.grid(row=9, column=0, sticky='SE', pady=0, padx=0)
         self.audio_codec_var = StringVar()
         self.audio_codec_var.set("aac")
-        self.audio_codec_label.grid(row=9, column=0, sticky='SE', pady=0, padx=0)
 
-        self.audio_codec_button = Radiobutton(self, text="LAME MP3", variable=self.audio_codec_var,
-                                              value="libmp3lame")
-        self.audio_codec_button.grid(row=9, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="AAC", variable=self.audio_codec_var, value="aac")
-        self.audio_codec_button.grid(row=10, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="Opus", variable=self.audio_codec_var, value="libopus")
-        self.audio_codec_button.grid(row=11, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="PCM32 (Raw)", variable=self.audio_codec_var,
-                                              value="pcm_s32le")
-        self.audio_codec_button.grid(row=12, column=1, sticky='w', pady=0, padx=0)
-        self.audio_codec_button = Radiobutton(self, text="Copy", variable=self.audio_codec_var, value="copy")
-        self.audio_codec_button.grid(row=13, column=1, sticky='w', pady=0, padx=0)
+        audio_codecs = [("LAME MP3", "libmp3lame"), ("AAC", "aac"), ("Opus", "libopus"),
+                        ("PCM32 (Raw)", "pcm_s32le"), ("Copy", "copy")]
+        for i, (text, value) in enumerate(audio_codecs):
+            Radiobutton(self, text=text, variable=self.audio_codec_var, value=value).grid(row=9 + i, column=1,
+                                                                                          sticky='w', pady=0, padx=0)
 
-        self.codec_label = Label(self)
-        self.codec_label["text"] = "Video Codec: "
+        self.codec_label = Label(self, text="Video Codec: ")
+        self.codec_label.grid(row=15, column=0, sticky='SE', pady=0, padx=0)
         self.codec_var = StringVar()
         self.codec_var.set("libx265")
-        self.codec_label.grid(row=15, column=0, sticky='SE', pady=0, padx=0)
 
-        self.video_codec_button = Radiobutton(self, text="x264", variable=self.codec_var, value="libx264")
-        self.video_codec_button.grid(row=15, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="x265", variable=self.codec_var, value="libx265")
-        self.video_codec_button.grid(row=16, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="CUDA h264 (CQ)", variable=self.codec_var, value="h264_nvenc")
-        self.video_codec_button.grid(row=17, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="CUDA HEVC (CQ)", variable=self.codec_var, value="hevc_nvenc")
-        self.video_codec_button.grid(row=18, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="ProRes", variable=self.codec_var, value="prores_ks")
-        self.video_codec_button.grid(row=19, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="Raw", variable=self.codec_var, value="rawvideo")
-        self.video_codec_button.grid(row=20, column=1, sticky='w', pady=0, padx=0)
-        self.video_codec_button = Radiobutton(self, text="Copy", variable=self.codec_var, value="copy")
-        self.video_codec_button.grid(row=21, column=1, sticky='w', pady=0, padx=0)
+        video_codecs = [("x264", "libx264"), ("x265", "libx265"), ("CUDA h264 (CQ)", "h264_nvenc"),
+                        ("CUDA HEVC (CQ)", "hevc_nvenc"), ("ProRes", "prores_ks"), ("Raw", "rawvideo"),
+                        ("Copy", "copy")]
+        for i, (text, value) in enumerate(video_codecs):
+            Radiobutton(self, text=text, variable=self.codec_var, value=value).grid(row=15 + i, column=1, sticky='w',
+                                                                                    pady=0, padx=0)
 
-        self.speed_label = Label(self)
-        self.speed_label["text"] = "Encoding Speed: "
+        self.speed_label = Label(self, text="Encoding Speed: ")
         self.speed_label.grid(row=22, column=0, sticky='SE', pady=0, padx=0)
 
         self.speed = tk.Scale(self, from_=0, to=6, orient=HORIZONTAL, sliderrelief=FLAT)
@@ -525,44 +483,38 @@ class Application(Frame):
         self.infile_value = StringVar()
         self.infile_value.set("c:/test.avi")
 
-        self.infile_button = Button(self, text="Input File(s):",
-                                    command=lambda: self.select_file(self.infile_value))
+        self.infile_button = Button(self, text="Input File(s):", command=lambda: self.select_file(self.infile_value))
         self.infile_button.grid(row=24, column=0, sticky='SE', padx=0, pady=(5))
 
         self.infile = Entry(self, textvariable=self.infile_value, width=70)
         self.infile.grid(row=24, column=1, sticky='W', padx=0)
 
-        self.crf_label = Label(self)
-        self.crf_label["text"] = "CRF: "
+        self.crf_label = Label(self, text="CRF: ")
         self.crf_label.grid(row=25, column=0, sticky='SE', pady=0, padx=0)
         self.crf = tk.Scale(self, from_=0, to=51, orient=HORIZONTAL, sliderrelief=FLAT)
         self.crf.grid(row=25, column=1, sticky='WE', pady=0, padx=0)
         self.crf.set(23)
 
-        self.abr_label = Label(self)
-        self.abr_label["text"] = "Audio ABR: "
+        self.abr_label = Label(self, text="Audio ABR: ")
         self.abr_label.grid(row=26, column=0, sticky='SE', pady=0, padx=0)
 
         self.abr = tk.Scale(self, resolution=16, from_=0, to=512, orient=HORIZONTAL, sliderrelief=FLAT)
         self.abr.grid(row=26, column=1, sticky='WE', pady=0, padx=0)
         self.abr.set(256)
 
-        self.extras_label = Label(self)
-        self.extras_label["text"] = "FFmpeg Extras: "
+        self.extras_label = Label(self, text="FFmpeg Extras: ")
         self.extras_label.grid(row=27, column=0, sticky='SE', padx=0)
         self.extras_value = StringVar()
         self.extras_value.set("")
         self.extras = Entry(self, textvariable=self.extras_value, width=70)
         self.extras.grid(row=27, column=1, sticky='W', pady=0, padx=0)
 
-        self.avisynth_extras_label = Label(self)
-        self.avisynth_extras_label["text"] = "AviSynth+ Extras: "
+        self.avisynth_extras_label = Label(self, text="AviSynth+ Extras: ")
         self.avisynth_extras_label.grid(row=28, column=0, sticky='SE', padx=0)
         self.avisynth_extras = Text(self, height=2, width=30)
         self.avisynth_extras.grid(row=28, column=1, sticky='WE', pady=0, padx=0)
 
-        self.progress_label = Label(self)
-        self.progress_label["text"] = f"Progress: "
+        self.progress_label = Label(self, text="Progress: ")
         self.progress_label.grid(row=29, column=0, sticky='NE', padx=0)
 
         self.status_var = StringVar()
@@ -574,10 +526,9 @@ class Application(Frame):
         self.replace_button_var.set(False)
         self.replace_button = Checkbutton(self, text="Replace Original File(s)",
                                           variable=self.replace_button_var)
-
         self.replace_button.grid(row=30, column=1, sticky='SE', pady=0, padx=0)
 
-        self.run = Button(self, text="Run", style='W.TButton', command=lambda: self.run_cmd())
+        self.run = Button(self, text="Run", style='W.TButton', command=self.run_cmd)
         self.run.grid(row=0, column=2, sticky='WE', padx=0)
 
         self.stop = Button(self, text="Stop", style='W.TButton', command=lambda: self.stop_process(True))
@@ -611,8 +562,6 @@ if __name__ == "__main__":
 
     root.wm_title("videer")
     root.resizable(False, False)
-
-    # operations = Operations()
 
     app = Application(master=root)
     app.mainloop()
