@@ -113,53 +113,37 @@ class File:
 class CreateAvs:
     def __init__(self, fileobj):
         with open(fileobj.avsfile, "w") as avsfile:
-            avsfile.write(f'Loadplugin("{app.path}/plugins/masktools2.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Loadplugin("{app.path}/plugins/mvtools2.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Loadplugin("{app.path}/plugins/nnedi3.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Loadplugin("{app.path}/plugins/ffms2.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Loadplugin("{app.path}/plugins/RgTools.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Loadplugin("{app.path}/plugins/LSMASHSource.dll")')
-            avsfile.write('\n')
-            avsfile.write(f'Import("{app.path}/plugins/QTGMC.avsi")')
-            avsfile.write('\n')
-            avsfile.write(f'Import("{app.path}/plugins/Zs_RF_Shared.avsi")')
-            avsfile.write('\n')
+            plugins = [
+                "masktools2.dll", "mvtools2.dll", "nnedi3.dll",
+                "ffms2.dll", "RgTools.dll", "LSMASHSource.dll"
+            ]
+            imports = ["QTGMC.avsi", "Zs_RF_Shared.avsi"]
 
-            if app.use_ffms2_var.get():
-                avsfile.write(f'FFmpegSource2("{fileobj.filename}", vtrack = -1, atrack = -1)')
-            else:
-                avsfile.write(f'AVISource("{fileobj.filename}", audio=true)')
-            avsfile.write('\n')
+            for plugin in plugins:
+                avsfile.write(f'Loadplugin("{app.path}/plugins/{plugin}")\n')
 
-            avsfile.write('SetFilterMTMode("FFVideoSource", 3)')
-            avsfile.write('\n')
-            avsfile.write('ConvertToYV24(matrix="rec709")')
-            avsfile.write('\n')
-            avsfile.write(f'Prefetch({multiprocessing.cpu_count()})')
-            avsfile.write('\n')
+            for imp in imports:
+                avsfile.write(f'Import("{app.path}/plugins/{imp}")\n')
+
+            source = (f'FFmpegSource2("{fileobj.filename}", vtrack = -1, atrack = -1)'
+                      if app.use_ffms2_var.get() else
+                      f'AVISource("{fileobj.filename}", audio=true)')
+            avsfile.write(f'{source}\n')
+
+            avsfile.write('SetFilterMTMode("FFVideoSource", 3)\n')
+            avsfile.write('ConvertToYV24(matrix="rec709")\n')
+            avsfile.write(f'Prefetch({multiprocessing.cpu_count()})\n')
 
             if app.avisynth_extras.get("1.0", END).strip():
-                avsfile.write(app.avisynth_extras.get("1.0", END))
-                avsfile.write('\n')
+                avsfile.write(f'{app.avisynth_extras.get("1.0", END)}\n')
 
             if app.tff_var.get():
-                avsfile.write('AssumeTFF()')
-                avsfile.write('\n')
+                avsfile.write('AssumeTFF()\n')
 
             if app.deinterlace_var.get():
-                if app.reduce_fps_var.get():
-                    avsfile.write(
-                        f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", FPSDivisor=2, EdiThreads={multiprocessing.cpu_count()})')
-                    avsfile.write('\n')
-                else:
-                    avsfile.write(
-                        f'QTGMC(Preset="{app.preset_get(int(app.speed.get()))}", EdiThreads={multiprocessing.cpu_count()})')
-                    avsfile.write('\n')
+                preset = app.preset_get(int(app.speed.get()))
+                fps_divisor = ', FPSDivisor=2' if app.reduce_fps_var.get() else ''
+                avsfile.write(f'QTGMC(Preset="{preset}"{fps_divisor}, EdiThreads={multiprocessing.cpu_count()})\n')
 
 
 def info_box_insert(info_box, message, log_message=None, logger=None):
