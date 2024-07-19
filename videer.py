@@ -424,7 +424,7 @@ class Application(Frame):
         self.use_avisynth_button.grid(row=3, column=1, sticky='w', pady=0, padx=0)
 
         self.use_ffms2_var = BooleanVar()
-        self.use_ffms2_var.set(False)
+        self.use_ffms2_var.set(True)
         self.use_ffms2_button = Checkbutton(self, text="Use ffms2 (No Frameserver, 1 Stream)",
                                             variable=self.use_ffms2_var)
         self.use_ffms2_button.bind("<Button-1>", self.on_set_ffms)
