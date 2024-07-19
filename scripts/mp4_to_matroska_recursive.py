@@ -1,8 +1,7 @@
 import glob
-import subprocess
 import os
-import sys
-import re
+import subprocess
+
 
 def swap_container(files):
     if type(files) == str:

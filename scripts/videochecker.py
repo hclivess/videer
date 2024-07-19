@@ -1,7 +1,7 @@
-import subprocess
 import os
+import subprocess
 import sys
-import re
+
 
 def check_video(files):
     if type(files) == str:
@@ -41,8 +41,8 @@ def check_video(files):
         else:
             print("File OK.")
 
-
         process.wait()
+
 
 if __name__ == "__main__":
     files = sys.argv[1:]

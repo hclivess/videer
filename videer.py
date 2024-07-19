@@ -1,21 +1,21 @@
-import threading
-from tkinter import *
-from tkinter.ttk import *
-import tkinter as tk
-import tkinter.messagebox as messagebox
-import tkinter.filedialog as fd
-import tkinter.scrolledtext as st
 import logging.handlers
-import subprocess
 import multiprocessing
 import os
 import re
-from collections import defaultdict
-from functools import partial
+import subprocess
+import threading
+import tkinter as tk
+import tkinter.filedialog as fd
+import tkinter.messagebox as messagebox
+import tkinter.scrolledtext as st
+from tkinter import *
+from tkinter.ttk import *
+
 
 def multiple_replace(string, rep_dict):
     pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
     return pattern.sub(lambda x: rep_dict[x.group(0)], string)
+
 
 def assemble_final(fileobj, app_gui):
     command = ['ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
@@ -73,6 +73,7 @@ def assemble_final(fileobj, app_gui):
 
     return " ".join(command)
 
+
 class File:
     def __init__(self, number, filename):
         self.number = number
@@ -120,6 +121,7 @@ class File:
     def create_logger(self):
         self.log = get_logger(self.filename)
 
+
 class CreateAvs:
     def __init__(self, fileobj, app):
         with open(fileobj.avsfile, "w") as avsfile:
@@ -155,6 +157,7 @@ class CreateAvs:
                 fps_divisor = ', FPSDivisor=2' if app.reduce_fps_var.get() else ''
                 avsfile.write(f'QTGMC(Preset="{preset}"{fps_divisor}, EdiThreads={multiprocessing.cpu_count()})\n')
 
+
 def info_box_insert(info_box, message, log_message=None, logger=None):
     try:
         info_box.configure(state='normal')
@@ -165,6 +168,7 @@ def info_box_insert(info_box, message, log_message=None, logger=None):
 
     if logger:
         logger.info(log_message)
+
 
 class Application(Frame):
     def __init__(self, master=None):
