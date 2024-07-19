@@ -1,10 +1,6 @@
 import glob
-import subprocess
 import os
-import sys
-import re
-import time
-import json
+import subprocess
 
 
 def probe(file):
