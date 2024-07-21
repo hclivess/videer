@@ -7,14 +7,13 @@ Videer integrates `QTGMC`, which provides much smoother results than
 ffmpeg's `yadif`, [see for yourself](https://www.youtube.com/watch?v=jE47A57T5FA). `QTGMC` is the best deinterlacer in
 existence. Including AI and DaVinci Studio.
 
+## Notice
+
+If you are not using a frameserver and are just trying to transcode video like a normal person, you must always run with the "use ffms2" checkbox enabled.
+
 ## Why
 
 FFmpeg is a superior command line video encoding tool. Videer serves as a GUI for it.
-
-## Notice
-
-If you want to deinterlace AVC (x264) video of a `matroska` file, running Videer with `raw transcode first` and `ffms2`
-on is optimal.
 
 ## New features:
 
