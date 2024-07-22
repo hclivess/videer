@@ -9,7 +9,7 @@ existence. Including AI and DaVinci Studio.
 
 ## Notice
 
-If you are not using a frameserver and are just trying to transcode video like a normal person, you must always run with the "use ffms2" checkbox enabled.
+If you are not using a frameserver and are just trying to transcode video with any feature that requires Avisynth+, and are running into issues, you should try with ffms2 enabled.
 
 ## Why
 
