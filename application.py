@@ -381,13 +381,13 @@ class Application(ttk.Frame):
         self.quit = ttk.Button(self, text="Quit", style='W.TButton', command=self.exit)
         self.quit.grid(row=2, column=2, sticky='WE', padx=0, pady=(0, 5))
 
-    def info_box_insert(info_box, message, log_message=None, logger=None):
-        try:
-            info_box.configure(state='normal')
-            info_box.insert(tk.END, f"{message}\n")
-            info_box.configure(state='disabled')
-        except Exception as e:
-            print(f"Info window closed: {e}")
+def info_box_insert(info_box, message, log_message=None, logger=None):
+    try:
+        info_box.configure(state='normal')
+        info_box.insert(tk.END, f"{message}\n")
+        info_box.configure(state='disabled')
+    except Exception as e:
+        print(f"Info window closed: {e}")
 
-        if logger:
-            logger.info(log_message)
+    if logger:
+        logger.info(log_message)

@@ -1,2 +1,2 @@
-python videer.py
+python main.py
 pause
