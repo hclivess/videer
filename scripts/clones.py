@@ -1,8 +1,6 @@
 import glob
-import subprocess
 import os
-import sys
-import re
+
 
 def swap_container(files_mp4, files_mkv):
     for file in files_mp4:
@@ -11,7 +9,6 @@ def swap_container(files_mp4, files_mkv):
             os.remove(file)
             print(file)
             print(f"{basename}.mkv")
-
 
 
 if __name__ == "__main__":
