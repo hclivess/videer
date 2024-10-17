@@ -423,10 +423,13 @@ class Application(Frame):
         return config_dict.get(number)
 
     def replace_file(self, rename_from, rename_to, log):
-
         log.info(f"Replacing {rename_to} with {rename_from} file as requested")
         if os.path.exists(rename_from):
-            os.rename(rename_to, f"{rename_to}.old")
+            # Get the file extension
+            _, extension = os.path.splitext(rename_to)
+            # Create a new filename for the old file, preserving its extension
+            old_file_name = f"{rename_to}.old{extension}"
+            os.rename(rename_to, old_file_name)
         os.rename(rename_from, rename_to)
 
 
