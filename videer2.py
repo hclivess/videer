@@ -775,8 +775,10 @@ class MainWindow(QMainWindow):
         self.remove_files_btn.setEnabled(False)
         self.clear_files_btn.setEnabled(False)
 
+        # Initialize progress bar with file count format
         self.progress_bar.setMaximum(len(self.file_queue))
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("File %v of " + str(len(self.file_queue)))
 
     @pyqtSlot()
     def stop_processing(self):
@@ -794,7 +796,15 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, int)
     def update_progress(self, message, progress):
-        self.status_label.setText(message)
+        # Get current file being processed
+        current_file_index = self.progress_bar.value()
+        total_files = len(self.file_queue)
+        current_filename = os.path.basename(self.file_queue[current_file_index])
+
+        # Update status label with file progress
+        status_text = f"File {current_file_index + 1}/{total_files}: {current_filename}\n{message}"
+        self.status_label.setText(status_text)
+
         if progress > 0:
             self.progress_bar.setValue(progress)
 
@@ -807,6 +817,8 @@ class MainWindow(QMainWindow):
         item = self.file_list.item(index)
         if item:
             item.setBackground(Qt.yellow)
+            # Update progress bar format to show file progress
+            self.progress_bar.setFormat(f"File %v of {len(self.file_queue)}")
 
     @pyqtSlot(int, bool)
     def file_finished(self, index, success):
