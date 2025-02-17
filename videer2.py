@@ -5,18 +5,20 @@ import time
 import logging
 import subprocess
 import multiprocessing
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QLabel, QCheckBox, QRadioButton, 
-                            QPushButton, QLineEdit, QSlider, QTextEdit, 
-                            QFileDialog, QButtonGroup, QScrollArea, QGroupBox,
-                            QListWidget, QStyle, QProgressBar, QSplitter,
-                            QMenuBar, QMenu, QAction, QMessageBox, QListWidgetItem)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                             QHBoxLayout, QLabel, QCheckBox, QRadioButton,
+                             QPushButton, QLineEdit, QSlider, QTextEdit,
+                             QFileDialog, QButtonGroup, QScrollArea, QGroupBox,
+                             QListWidget, QStyle, QProgressBar, QSplitter,
+                             QMenuBar, QMenu, QAction, QMessageBox, QListWidgetItem)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize
 from PyQt5.QtGui import QIcon, QDrag, QDragEnterEvent, QDropEvent
+
 
 def multiple_replace(string, rep_dict):
     pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
     return pattern.sub(lambda x: rep_dict[x.group(0)], string)
+
 
 def get_logger(filename):
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
@@ -30,6 +32,7 @@ def get_logger(filename):
     consoleHandler.setFormatter(logFormatter)
     rootLogger.addHandler(consoleHandler)
     return rootLogger
+
 
 class File:
     def __init__(self, file):
@@ -49,6 +52,7 @@ class File:
 
     def create_logger(self):
         self.log = get_logger(self.filename)
+
 
 class FileListWidget(QListWidget):
     def __init__(self, main_window):
@@ -93,6 +97,7 @@ class FileListWidget(QListWidget):
         else:
             super().dropEvent(event)
 
+
 class ProcessThread(QThread):
     progress_signal = pyqtSignal(str, int)  # message, progress percentage
     info_signal = pyqtSignal(str)
@@ -118,19 +123,19 @@ class ProcessThread(QThread):
 
             fileobj = File((i, file))
             fileobj.create_logger()
-            
+
             # Set output name based on current settings
             fileobj.outputname = f"{fileobj.basename}_{self.app_window.crf_slider.value()}" \
-                               f"{self.app_window.get_selected_codec(self.app_window.video_codec_group)}_" \
-                               f"{self.app_window.get_selected_codec(self.app_window.audio_codec_group)}" \
-                               f"{self.app_window.abr_slider.value()}{fileobj.extension}"
+                                 f"{self.app_window.get_selected_codec(self.app_window.video_codec_group)}_" \
+                                 f"{self.app_window.get_selected_codec(self.app_window.audio_codec_group)}" \
+                                 f"{self.app_window.abr_slider.value()}{fileobj.extension}"
 
             self.file_started_signal.emit(i)
             self.info_signal.emit(f"Processing {i + 1}/{len(files)}: {fileobj.displayname}")
 
             should_transcode_video = self.app_window.transcode_video_check.isChecked()
             should_transcode_audio = self.app_window.transcode_audio_check.isChecked()
-            
+
             # Handle transcoding if needed
             if should_transcode_video or should_transcode_audio:
                 if not self.transcode(fileobj, should_transcode_video, should_transcode_audio):
@@ -158,22 +163,22 @@ class ProcessThread(QThread):
     def transcode(self, fileobj, transcode_video, transcode_audio):
         fileobj.log.info("Transcode process started")
         preset = self.app_window.get_preset(self.app_window.speed_slider.value())
-        
+
         command = ['ffmpeg.exe -err_detect crccheck+bitstream+buffer -hide_banner']
         command.append(f'-i "{fileobj.filename}"')
         command.append(f'-preset {preset}')
         command.append('-map 0:v -map 0:a? -map 0:s?')
-        
+
         if transcode_video and transcode_audio:
             command.append('-c:a pcm_s32le -c:v rawvideo')
         elif transcode_video:
             command.append('-c:a copy -c:v rawvideo')
         elif transcode_audio:
             command.append('-c:a pcm_s32le -c:v copy')
-            
+
         command.append('-c:s copy')
         command.append(f'"{fileobj.transcodename}" -y')
-        
+
         return self.open_process(" ".join(command), fileobj) == 0
 
     def assemble_final(self, fileobj):
@@ -219,10 +224,14 @@ class ProcessThread(QThread):
         if self.app_window.corrupt_check.isChecked():
             command.append("-bsf:v h264_mp4toannexb")
 
+        # Copy metadata from source
+        command.append('-map_metadata 0')
+        command.append('-map_chapters 0')
+
         # Add extras and metadata
         if self.app_window.ffmpeg_extras_edit.text().strip():
             command.append(self.app_window.ffmpeg_extras_edit.text())
-            
+
         command.append('-metadata comment="Made with Video Processor"')
         command.append('-movflags +faststart')
         command.append('-bf 2')
@@ -236,14 +245,14 @@ class ProcessThread(QThread):
     def create_avs(self, fileobj):
         with open(fileobj.avsfile, "w") as avsfile:
             plugins_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
-            
+
             # Load plugins
             avsfile.write(f'LoadPlugin("{plugins_path}/masktools2.dll")\n')
             avsfile.write(f'LoadPlugin("{plugins_path}/mvtools2.dll")\n')
             avsfile.write(f'LoadPlugin("{plugins_path}/nnedi3.dll")\n')
             avsfile.write(f'LoadPlugin("{plugins_path}/ffms2.dll")\n')
             avsfile.write(f'LoadPlugin("{plugins_path}/RgTools.dll")\n')
-            
+
             # Import scripts
             avsfile.write(f'Import("{plugins_path}/QTGMC.avsi")\n')
             avsfile.write(f'Import("{plugins_path}/Zs_RF_Shared.avsi")\n')
@@ -294,24 +303,24 @@ class ProcessThread(QThread):
         fileobj.log.info(f"Executing command {command_line}")
 
         with subprocess.Popen(command_line,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            universal_newlines=True,
-                            encoding="utf8") as self.process:
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT,
+                              universal_newlines=True,
+                              encoding="utf8") as self.process:
 
             errors = ["error", "invalid"]
             for line in self.process.stdout:
                 fileobj.log.info(line.strip())
                 self.progress_signal.emit(multiple_replace(line,
-                                                       {"       ": " ",
-                                                        "    ": " ",
-                                                        "time=": "",
-                                                        "bitrate=  ": "br:",
-                                                        "speed": "rate",
-                                                        "size=": "",
-                                                        "frame": "f",
-                                                        "=": ":",
-                                                        "\n": ""}), 0)
+                                                           {"       ": " ",
+                                                            "    ": " ",
+                                                            "time=": "",
+                                                            "bitrate=  ": "br:",
+                                                            "speed": "rate",
+                                                            "size=": "",
+                                                            "frame": "f",
+                                                            "=": ":",
+                                                            "\n": ""}), 0)
                 for error in errors:
                     if error in line.lower():
                         fileobj.ffmpeg_errors.append(line.strip())
@@ -320,6 +329,7 @@ class ProcessThread(QThread):
         fileobj.log.info(f"Return code: {return_code}")
         return return_code
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -327,43 +337,43 @@ class MainWindow(QMainWindow):
         self.file_queue = []
         self.process_thread = None
         self.setAcceptDrops(True)
-        
+
         # Set window icon
         self.setWindowIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
-        
+
         # Initialize UI
         self.create_menu_bar()
         self.initUI()
-        
+
         # Set minimum window size
         self.setMinimumWidth(1000)
         self.setMinimumHeight(800)
 
     def create_menu_bar(self):
         menubar = self.menuBar()
-        
+
         # File menu
         file_menu = menubar.addMenu('File')
-        
+
         add_files_action = QAction('Add Files', self)
         add_files_action.setShortcut('Ctrl+O')
         add_files_action.triggered.connect(self.select_files)
         file_menu.addAction(add_files_action)
-        
+
         clear_queue_action = QAction('Clear Queue', self)
         clear_queue_action.triggered.connect(self.clear_queue)
         file_menu.addAction(clear_queue_action)
-        
+
         file_menu.addSeparator()
-        
+
         exit_action = QAction('Exit', self)
         exit_action.setShortcut('Ctrl+Q')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
         # Help menu
         help_menu = menubar.addMenu('Help')
-        
+
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
@@ -381,15 +391,15 @@ class MainWindow(QMainWindow):
         # Left panel - File list and controls
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        
+
         # File list section
         files_group = QGroupBox("Input Files")
         files_layout = QVBoxLayout()
-        
+
         # Add file list widget
         self.file_list = FileListWidget(main_window=self)
         files_layout.addWidget(self.file_list)
-        
+
         # File controls
         file_controls = QHBoxLayout()
         self.add_files_btn = QPushButton("Add Files")
@@ -398,29 +408,29 @@ class MainWindow(QMainWindow):
         self.remove_files_btn.clicked.connect(self.remove_selected_files)
         self.clear_files_btn = QPushButton("Clear All")
         self.clear_files_btn.clicked.connect(self.clear_queue)
-        
+
         file_controls.addWidget(self.add_files_btn)
         file_controls.addWidget(self.remove_files_btn)
         file_controls.addWidget(self.clear_files_btn)
-        
+
         files_layout.addLayout(file_controls)
         files_group.setLayout(files_layout)
         left_layout.addWidget(files_group)
-        
+
         # Progress section
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout()
-        
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         progress_layout.addWidget(self.progress_bar)
-        
+
         self.status_label = QLabel("Ready")
         progress_layout.addWidget(self.status_label)
-        
+
         progress_group.setLayout(progress_layout)
         left_layout.addWidget(progress_group)
-        
+
         # Action buttons
         buttons_layout = QHBoxLayout()
         self.run_button = QPushButton("Start Processing")
@@ -428,34 +438,34 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("Stop")
         self.stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
         self.stop_button.setEnabled(False)
-        
+
         self.run_button.clicked.connect(self.run_processing)
         self.stop_button.clicked.connect(self.stop_processing)
-        
+
         buttons_layout.addWidget(self.run_button)
         buttons_layout.addWidget(self.stop_button)
-        
+
         left_layout.addLayout(buttons_layout)
-        
+
         splitter.addWidget(left_panel)
 
         # Right panel - Settings
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        
+
         # Create scrollable area for settings
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        
+
         # Add controls
         self.create_codec_controls(scroll_layout)
         self.create_processing_controls(scroll_layout)
-        
+
         scroll.setWidget(scroll_content)
         right_layout.addWidget(scroll)
-        
+
         splitter.addWidget(right_panel)
 
         # Set initial splitter sizes
@@ -465,7 +475,7 @@ class MainWindow(QMainWindow):
         # Video codec group
         video_group = QGroupBox("Video Codec")
         video_layout = QVBoxLayout()
-        
+
         self.video_codec_group = QButtonGroup()
         codecs = [
             ("x264", "libx264"),
@@ -476,7 +486,7 @@ class MainWindow(QMainWindow):
             ("Raw", "rawvideo"),
             ("Copy", "copy")
         ]
-        
+
         for text, value in codecs:
             radio = QRadioButton(text)
             self.video_codec_group.addButton(radio)
@@ -484,14 +494,14 @@ class MainWindow(QMainWindow):
             video_layout.addWidget(radio)
             if value == "libx265":  # Default selection
                 radio.setChecked(True)
-                
+
         video_group.setLayout(video_layout)
         parent_layout.addWidget(video_group)
 
         # Audio codec group
         audio_group = QGroupBox("Audio Codec")
         audio_layout = QVBoxLayout()
-        
+
         self.audio_codec_group = QButtonGroup()
         audio_codecs = [
             ("LAME MP3", "libmp3lame"),
@@ -500,7 +510,7 @@ class MainWindow(QMainWindow):
             ("PCM32 (Raw)", "pcm_s32le"),
             ("Copy", "copy")
         ]
-        
+
         for text, value in audio_codecs:
             radio = QRadioButton(text)
             self.audio_codec_group.addButton(radio)
@@ -508,7 +518,7 @@ class MainWindow(QMainWindow):
             audio_layout.addWidget(radio)
             if value == "aac":  # Default selection
                 radio.setChecked(True)
-                
+
         audio_group.setLayout(audio_layout)
         parent_layout.addWidget(audio_group)
 
@@ -527,7 +537,7 @@ class MainWindow(QMainWindow):
         self.corrupt_check = QCheckBox("Fix AVC (ts) Corruption")
         self.stereo_check = QCheckBox("Reduce to Stereo")
         self.replace_check = QCheckBox("Replace Original Files")
-        
+
         processing_layout.addWidget(self.deinterlace_check)
         processing_layout.addWidget(self.tff_check)
         processing_layout.addWidget(self.reduce_fps_check)
@@ -538,14 +548,14 @@ class MainWindow(QMainWindow):
         processing_layout.addWidget(self.corrupt_check)
         processing_layout.addWidget(self.stereo_check)
         processing_layout.addWidget(self.replace_check)
-        
+
         # Connect checkbox signals
         self.deinterlace_check.clicked.connect(self.on_deinterlace_changed)
         self.tff_check.clicked.connect(self.on_tff_changed)
         self.reduce_fps_check.clicked.connect(self.on_reduce_fps_changed)
         self.use_avisynth_check.clicked.connect(self.on_avisynth_changed)
         self.use_ffms2_check.clicked.connect(self.on_ffms2_changed)
-        
+
         processing_group.setLayout(processing_layout)
         parent_layout.addWidget(processing_group)
 
@@ -614,12 +624,12 @@ class MainWindow(QMainWindow):
         parent_layout.addWidget(extras_group)
 
     def show_about(self):
-        QMessageBox.about(self, 
-                         "About Video Processor",
-                         "Video Processor\n\n"
-                         "A Qt-based video processing application.\n"
-                         "Drag and drop files to process them.\n\n"
-                         "Version 1.0")
+        QMessageBox.about(self,
+                          "About Video Processor",
+                          "Video Processor\n\n"
+                          "A Qt-based video processing application.\n"
+                          "Drag and drop files to process them.\n\n"
+                          "Version 1.0")
 
     def select_files(self):
         files, _ = QFileDialog.getOpenFileNames(
@@ -627,7 +637,7 @@ class MainWindow(QMainWindow):
             "Select Input Files",
             "",
             "Video Files (*.mp4 *.avi *.mkv *.mov);;All Files (*.*)")
-        
+
         if files:
             self.add_files(files)
 
@@ -638,21 +648,7 @@ class MainWindow(QMainWindow):
                 item = QListWidgetItem(os.path.basename(path))
                 item.setToolTip(path)
                 self.file_list.addItem(item)
-        
-        self.update_ui_state()
 
-    def remove_selected_files(self):
-        selected_items = self.file_list.selectedItems()
-        for item in selected_items:
-            row = self.file_list.row(item)
-            self.file_list.takeItem(row)
-            self.file_queue.pop(row)
-        
-        self.update_ui_state()
-
-    def clear_queue(self):
-        self.file_list.clear()
-        self.file_queue.clear()
         self.update_ui_state()
 
     def update_ui_state(self):
@@ -709,23 +705,23 @@ class MainWindow(QMainWindow):
     def run_processing(self):
         if not self.file_queue:
             return
-            
+
         self.process_thread = ProcessThread(self.file_queue, self)
         self.process_thread.progress_signal.connect(self.update_progress)
         self.process_thread.info_signal.connect(self.update_info)
         self.process_thread.finished_signal.connect(self.processing_finished)
         self.process_thread.file_started_signal.connect(self.file_started)
         self.process_thread.file_finished_signal.connect(self.file_finished)
-        
+
         self.process_thread.start()
-        
+
         # Update UI state
         self.run_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.add_files_btn.setEnabled(False)
         self.remove_files_btn.setEnabled(False)
         self.clear_files_btn.setEnabled(False)
-        
+
         self.progress_bar.setMaximum(len(self.file_queue))
         self.progress_bar.setValue(0)
 
@@ -735,7 +731,7 @@ class MainWindow(QMainWindow):
             self.process_thread.should_stop = True
             if self.process_thread.process:
                 self.process_thread.process.kill()
-            
+
             self.status_label.setText("Processing stopped")
             self.run_button.setEnabled(True)
             self.stop_button.setEnabled(False)
@@ -775,12 +771,29 @@ class MainWindow(QMainWindow):
         self.clear_files_btn.setEnabled(True)
         self.status_label.setText("Processing complete")
 
+    def remove_selected_files(self):
+        selected_items = self.file_list.selectedItems()
+        for item in selected_items:
+            row = self.file_list.row(item)
+            self.file_list.takeItem(row)
+            self.file_queue.pop(row)
+
+        self.update_ui_state()
+
+
+    def clear_queue(self):
+        self.file_list.clear()
+        self.file_queue.clear()
+        self.update_ui_state()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
+
     # Set application style
     app.setStyle('Fusion')
-    
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
+
