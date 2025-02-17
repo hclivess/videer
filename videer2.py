@@ -153,6 +153,9 @@ class ProcessThread(QThread):
             # Handle file replacement if requested
             if success and self.app_window.replace_check.isChecked():
                 self.replace_file(fileobj.outputname, fileobj.orig_name, fileobj.log)
+            elif success:
+                # Preserve timestamps even if not replacing
+                self.preserve_timestamps(fileobj.orig_name, fileobj.outputname, fileobj.log)
 
             # Cleanup temporary files
             self.cleanup_temp_files(fileobj)
@@ -281,13 +284,63 @@ class ProcessThread(QThread):
                 else:
                     avsfile.write(f'QTGMC(Preset="{preset}", EdiThreads={multiprocessing.cpu_count()})\n')
 
+    def preserve_timestamps(self, source_file, dest_file, log):
+        """
+        Preserve timestamps from the source file to the destination file across different platforms
+        """
+        try:
+            # Get original file timestamps
+            orig_stat = os.stat(source_file)
+            orig_atime = orig_stat.st_atime
+            orig_mtime = orig_stat.st_mtime
+            orig_ctime = orig_stat.st_ctime
+
+            # Create datetime objects for timestamps
+            import datetime
+            import platform
+
+            # Convert timestamps to datetime objects
+            creation_time = datetime.datetime.fromtimestamp(orig_ctime)
+            access_time = datetime.datetime.fromtimestamp(orig_atime)
+            mod_time = datetime.datetime.fromtimestamp(orig_mtime)
+
+            # Restore access and modification times
+            os.utime(dest_file, (orig_atime, orig_mtime))
+
+            # Handle creation time for different platforms
+            if platform.system() == 'Windows':
+                # Use PowerShell to set creation time on Windows
+                powershell_cmd = f'(Get-Item "{dest_file}").CreationTime = (Get-Date "{creation_time}")'
+                subprocess.run(['powershell', '-Command', powershell_cmd], check=True)
+            elif platform.system() == 'Darwin':  # macOS
+                # Use SetFile for macOS
+                subprocess.run(['SetFile', '-d', creation_time.strftime("%m/%d/%Y %H:%M:%S"), dest_file], check=True)
+            # For Linux, creation time is typically not directly modifiable
+
+            log.info(f"Preserved file timestamps: "
+                     f"Access={access_time}, "
+                     f"Modified={mod_time}, "
+                     f"Creation={creation_time}")
+        except Exception as e:
+            log.warning(f"Error preserving timestamps: {e}")
+
     def replace_file(self, rename_from, rename_to, log):
         log.info(f"Replacing {rename_to} with {rename_from}")
         if os.path.exists(rename_from):
-            _, extension = os.path.splitext(rename_to)
-            old_file_name = f"{rename_to}.old{extension}"
+            # Get original file timestamps
+            orig_stat = os.stat(rename_to)
+            orig_atime = orig_stat.st_atime
+            orig_mtime = orig_stat.st_mtime
+
+            # Perform the file replacement while preserving the original extension
+            orig_extension = os.path.splitext(rename_to)[1]
+            old_file_name = f"{rename_to}.old{orig_extension}"
             os.rename(rename_to, old_file_name)
             os.rename(rename_from, rename_to)
+
+            # Restore original timestamps
+            os.utime(rename_to, (orig_atime, orig_mtime))
+            log.info(f"Preserved original file timestamps: Access={orig_atime}, Modified={orig_mtime}")
 
     def cleanup_temp_files(self, fileobj):
         if os.path.exists(fileobj.transcodename):
