@@ -1,3 +1,4 @@
+import psutil
 import sys
 import os
 import re
@@ -14,47 +15,41 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize
 from PyQt5.QtGui import QIcon, QDrag, QDragEnterEvent, QDropEvent
 
-
+def find_ffmpeg():
+    """Find FFmpeg executable in system PATH or current directory"""
+    import shutil
+    import os
+    
+    # First check if ffmpeg is in system PATH
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        return ffmpeg_path
+        
+    # Then check current directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    ffmpeg_local = os.path.join(current_dir, 'ffmpeg.exe')
+    if os.path.exists(ffmpeg_local):
+        return ffmpeg_local
+        
+    return None
+    
 def multiple_replace(string, rep_dict):
     pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
     return pattern.sub(lambda x: rep_dict[x.group(0)], string)
 
 
 def get_logger(filename):
-    # Create a new logger with a unique name based on the filename
-    logger_name = f"VideoProcessor_{os.path.basename(filename)}"
-    logger = logging.getLogger(logger_name)
-
-    # Clear any existing handlers
-    if logger.hasHandlers():
-        logger.handlers.clear()
-
-    # Prevent propagation to root logger
-    logger.propagate = False
-    logger.setLevel(logging.INFO)
-
-    # Create formatters
-    logFormatter = logging.Formatter(
-        "%(asctime)s [%(name)s] [%(levelname)-5.5s]  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-
-    # File handler - use absolute path and sanitize filename
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', os.path.basename(filename))
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    log_file = os.path.join(log_dir, f"{safe_name}.log")
-    fileHandler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+    rootLogger = logging.getLogger()
+    rootLogger.propagate = False
+    rootLogger.setLevel(logging.INFO)
+    fileHandler = logging.FileHandler(f"{filename}.log")
     fileHandler.setFormatter(logFormatter)
-    logger.addHandler(fileHandler)
-
-    # Console handler
+    rootLogger.addHandler(fileHandler)
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
-    logger.addHandler(consoleHandler)
-
-    return logger
+    rootLogger.addHandler(consoleHandler)
+    return rootLogger
 
 
 class File:
@@ -144,90 +139,47 @@ class ProcessThread(QThread):
             if self.should_stop:
                 return
 
-            try:
-                fileobj = File((i, file))
-                fileobj.create_logger()
+            fileobj = File((i, file))
+            fileobj.create_logger()
 
-                fileobj.log.info("=" * 80)
-                fileobj.log.info(f"Starting processing of file: {fileobj.displayname}")
-                fileobj.log.info(f"File {i + 1} of {len(files)}")
-                fileobj.log.info("=" * 80)
+            # Set output name based on current settings
+            fileobj.outputname = f"{fileobj.basename}_{self.app_window.crf_slider.value()}" \
+                                 f"{self.app_window.get_selected_codec(self.app_window.video_codec_group)}_" \
+                                 f"{self.app_window.get_selected_codec(self.app_window.audio_codec_group)}" \
+                                 f"{self.app_window.abr_slider.value()}{fileobj.extension}"
 
-                # Create temporary output name with .temp extension
-                temp_name = f"{fileobj.basename}_{self.app_window.crf_slider.value()}" \
-                            f"{self.app_window.get_selected_codec(self.app_window.video_codec_group)}_" \
-                            f"{self.app_window.get_selected_codec(self.app_window.audio_codec_group)}" \
-                            f"{self.app_window.abr_slider.value()}{fileobj.extension}.temp"
+            self.file_started_signal.emit(i)
+            self.info_signal.emit(f"Processing {i + 1}/{len(files)}: {fileobj.displayname}")
 
-                # Store both temporary and final output names
-                fileobj.temp_outputname = temp_name
-                fileobj.outputname = temp_name[:-5]  # Remove .temp extension for final name
+            should_transcode_video = self.app_window.transcode_video_check.isChecked()
+            should_transcode_audio = self.app_window.transcode_audio_check.isChecked()
 
-                self.file_started_signal.emit(i)
-                self.info_signal.emit(f"Processing {i + 1}/{len(files)}: {fileobj.displayname}")
+            # Handle transcoding if needed
+            if should_transcode_video or should_transcode_audio:
+                if not self.transcode(fileobj, should_transcode_video, should_transcode_audio):
+                    self.file_finished_signal.emit(i, False)
+                    continue
+                fileobj.filename = fileobj.transcodename
 
-                # Log current settings
-                fileobj.log.info("Processing settings:")
-                fileobj.log.info(f"Temporary output filename: {fileobj.temp_outputname}")
-                fileobj.log.info(f"Final output filename: {fileobj.outputname}")
-                fileobj.log.info(
-                    f"Video codec: {self.app_window.get_selected_codec(self.app_window.video_codec_group)}")
-                fileobj.log.info(
-                    f"Audio codec: {self.app_window.get_selected_codec(self.app_window.audio_codec_group)}")
-                fileobj.log.info("=" * 80)
+            # Assemble and execute final FFmpeg command
+            command = self.assemble_final(fileobj)
+            return_code = self.open_process(command, fileobj)
 
-                should_transcode_video = self.app_window.transcode_video_check.isChecked()
-                should_transcode_audio = self.app_window.transcode_audio_check.isChecked()
+            success = return_code == 0 and not self.should_stop
+            self.file_finished_signal.emit(i, success)
 
-                # Handle transcoding if needed
-                if should_transcode_video or should_transcode_audio:
-                    if not self.transcode(fileobj, should_transcode_video, should_transcode_audio):
-                        fileobj.log.error("Transcoding failed")
-                        self.file_finished_signal.emit(i, False)
-                        continue
-                    fileobj.filename = fileobj.transcodename
+            # Handle file replacement if requested
+            if success and self.app_window.replace_check.isChecked():
+                self.replace_file(fileobj.outputname, fileobj.orig_name, fileobj.log)
+            elif success:
+                # Preserve timestamps even if not replacing
+                self.preserve_timestamps(fileobj.orig_name, fileobj.outputname, fileobj.log)
 
-                # Assemble and execute final FFmpeg command
-                command = self.assemble_final(fileobj)
-                return_code = self.open_process(command, fileobj)
+            # Cleanup temporary files
+            self.cleanup_temp_files(fileobj)
 
-                success = return_code == 0 and not self.should_stop
-
-                if success:
-                    try:
-                        # Rename temporary file to final output name
-                        os.rename(fileobj.temp_outputname, fileobj.outputname)
-                        fileobj.log.info(f"Renamed temporary file to final output: {fileobj.outputname}")
-                    except Exception as e:
-                        fileobj.log.error(f"Error renaming temporary file: {e}")
-                        success = False
-
-                self.file_finished_signal.emit(i, success)
-
-                if success:
-                    fileobj.log.info("Processing completed successfully")
-                else:
-                    fileobj.log.error("Processing failed")
-
-                # Handle file replacement if requested
-                if success and self.app_window.replace_check.isChecked():
-                    self.replace_file(fileobj.outputname, fileobj.orig_name, fileobj.log)
-                elif success:
-                    # Preserve timestamps even if not replacing
-                    self.preserve_timestamps(fileobj.orig_name, fileobj.outputname, fileobj.log)
-
-                # Cleanup temporary files
-                self.cleanup_temp_files(fileobj)
-
-                if fileobj.ffmpeg_errors:
-                    fileobj.log.error("FFmpeg Errors encountered:")
-                    for error in fileobj.ffmpeg_errors:
-                        fileobj.log.error(error)
-                    self.info_signal.emit("Errors:\n" + '\n'.join(fileobj.ffmpeg_errors))
-
-            except Exception as e:
-                logging.error(f"Error processing file {file}: {str(e)}", exc_info=True)
-                self.file_finished_signal.emit(i, False)
+            if fileobj.ffmpeg_errors:
+                self.info_signal.emit("Errors:\n" + '\n'.join(fileobj.ffmpeg_errors))
 
     def transcode(self, fileobj, transcode_video, transcode_audio):
         fileobj.log.info("Transcode process started")
@@ -306,7 +258,7 @@ class ProcessThread(QThread):
         command.append('-bf 2')
         command.append('-flags +cgop')
         command.append('-pix_fmt yuv420p')
-        command.append(f'-f matroska "{fileobj.temp_outputname}"')  # Use temporary output name
+        command.append(f'-f matroska "{fileobj.outputname}"')
         command.append('-y')
 
         return " ".join(command)
@@ -409,7 +361,6 @@ class ProcessThread(QThread):
             log.info(f"Preserved original file timestamps: Access={orig_atime}, Modified={orig_mtime}")
 
     def cleanup_temp_files(self, fileobj):
-        # Clean up temporary files
         if os.path.exists(fileobj.transcodename):
             os.remove(fileobj.transcodename)
         if os.path.exists(fileobj.ffindex):
@@ -418,54 +369,82 @@ class ProcessThread(QThread):
             os.remove(fileobj.tempffindex)
         if os.path.exists(fileobj.avsfile):
             os.remove(fileobj.avsfile)
-        if os.path.exists(fileobj.temp_outputname):
+
+    def stop_process(self):
+        """Kill the process and all its children"""
+        if self.process_pid:
             try:
-                os.remove(fileobj.temp_outputname)
-            except FileNotFoundError:
-                # This is expected if the file was successfully renamed
+                parent = psutil.Process(self.process_pid)
+                children = parent.children(recursive=True)
+                
+                # Kill children first
+                for child in children:
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                
+                # Kill parent
+                try:
+                    parent.kill()
+                except psutil.NoSuchProcess:
+                    pass
+                    
+                self.process_pid = None
+            except psutil.NoSuchProcess:
                 pass
 
     def open_process(self, command_line, fileobj):
-        fileobj.log.info(f"Starting new process for {fileobj.displayname}")
-        fileobj.log.info(f"Command: {command_line}")
-        fileobj.log.info("=" * 80)  # Add separator for clarity
-
-        with subprocess.Popen(command_line,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT,
-                              universal_newlines=True,
-                              encoding="utf8") as self.process:
-
-            errors = ["error", "invalid"]
-            for line in self.process.stdout:
-                # Strip and clean the line
-                clean_line = line.strip()
-                if clean_line:  # Only log non-empty lines
-                    fileobj.log.info(clean_line)
-
-                    # Process progress and errors
-                    self.progress_signal.emit(
-                        multiple_replace(line, {
-                            "       ": " ",
-                            "    ": " ",
-                            "time=": "",
-                            "bitrate=  ": "br:",
-                            "speed": "rate",
-                            "size=": "",
-                            "frame": "f",
-                            "=": ":",
-                            "\n": ""
-                        }), 0
-                    )
-
+        fileobj.log.info(f"Executing command {command_line}")
+        
+        # Find FFmpeg path
+        ffmpeg_path = find_ffmpeg()
+        if not ffmpeg_path:
+            fileobj.log.error("FFmpeg not found in PATH or current directory")
+            return 1
+            
+        # Replace ffmpeg.exe with full path
+        command_line = command_line.replace('ffmpeg.exe', f'"{ffmpeg_path}"')
+        
+        try:
+            with subprocess.Popen(command_line,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                universal_newlines=True,
+                                encoding="utf8",
+                                shell=True) as self.process:
+                                
+                self.process_pid = self.process.pid
+                errors = ["error", "invalid"]
+                
+                for line in self.process.stdout:
+                    if self.should_stop:
+                        self.stop_process()
+                        return 1
+                        
+                    fileobj.log.info(line.strip())
+                    self.progress_signal.emit(multiple_replace(line,
+                                                           {"       ": " ",
+                                                            "    ": " ",
+                                                            "time=": "",
+                                                            "bitrate=  ": "br:",
+                                                            "speed": "rate",
+                                                            "size=": "",
+                                                            "frame": "f",
+                                                            "=": ":",
+                                                            "\n": ""}), 0)
                     for error in errors:
                         if error in line.lower():
-                            fileobj.ffmpeg_errors.append(clean_line)
+                            fileobj.ffmpeg_errors.append(line.strip())
 
-        return_code = self.process.wait()
-        fileobj.log.info("=" * 80)  # Add separator
-        fileobj.log.info(f"Process completed with return code: {return_code}")
-        return return_code
+            return_code = self.process.wait()
+            self.process_pid = None
+            fileobj.log.info(f"Return code: {return_code}")
+            return return_code
+            
+        except Exception as e:
+            fileobj.log.error(f"Error executing FFmpeg: {str(e)}")
+            return 1
 
 
 class MainWindow(QMainWindow):
@@ -564,7 +543,6 @@ class MainWindow(QMainWindow):
         progress_layout.addWidget(self.progress_bar)
 
         self.status_label = QLabel("Ready")
-        self.status_label.setWordWrap(True)  # Enable text wrapping
         progress_layout.addWidget(self.status_label)
 
         progress_group.setLayout(progress_layout)
@@ -861,18 +839,15 @@ class MainWindow(QMainWindow):
         self.remove_files_btn.setEnabled(False)
         self.clear_files_btn.setEnabled(False)
 
-        # Initialize progress bar with file count format
         self.progress_bar.setMaximum(len(self.file_queue))
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("File %v of " + str(len(self.file_queue)))
 
     @pyqtSlot()
     def stop_processing(self):
         if self.process_thread and self.process_thread.isRunning():
             self.process_thread.should_stop = True
-            if self.process_thread.process:
-                self.process_thread.process.kill()
-
+            self.process_thread.stop_process()  # Call new stop_process method
+            
             self.status_label.setText("Processing stopped")
             self.run_button.setEnabled(True)
             self.stop_button.setEnabled(False)
@@ -882,23 +857,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, int)
     def update_progress(self, message, progress):
-        # Get current file being processed
-        current_file_index = self.progress_bar.value()
-        total_files = len(self.file_queue)
-        current_filename = os.path.basename(self.file_queue[current_file_index])
-
-        # Format the status message to fit in fixed space
-        file_progress = f"File {current_file_index + 1}/{total_files}: {current_filename}"
-
-        # Truncate FFmpeg output if it's too long
-        max_message_length = 100  # Adjust this value as needed
-        if len(message) > max_message_length:
-            message = message[:max_message_length] + "..."
-
-        # Combine file progress and FFmpeg output
-        status_text = f"{file_progress}\n{message}"
-        self.status_label.setText(status_text)
-
+        self.status_label.setText(message)
         if progress > 0:
             self.progress_bar.setValue(progress)
 
@@ -911,8 +870,6 @@ class MainWindow(QMainWindow):
         item = self.file_list.item(index)
         if item:
             item.setBackground(Qt.yellow)
-            # Update progress bar format to show file progress
-            self.progress_bar.setFormat(f"File %v of {len(self.file_queue)}")
 
     @pyqtSlot(int, bool)
     def file_finished(self, index, success):
@@ -954,5 +911,4 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
 
