@@ -278,15 +278,23 @@ class ProcessThread(QThread):
             avsfile.write(f'Import("{plugins_path}/QTGMC.avsi")\n')
             avsfile.write(f'Import("{plugins_path}/Zs_RF_Shared.avsi")\n')
 
+            # CRITICAL: Multi-threading setup BEFORE source loading
+            avsfile.write('SetFilterMTMode("DEFAULT_MT_MODE", 2)\n')
+            avsfile.write('SetFilterMTMode("QTGMC", 3)\n')
+            avsfile.write('SetFilterMTMode("nnedi3", 3)\n')
+            avsfile.write('SetFilterMTMode("MVAnalyse", 3)\n')
+            avsfile.write('SetFilterMTMode("MVDegrain1", 3)\n')
+            avsfile.write('SetFilterMTMode("MVDegrain2", 3)\n')
+            avsfile.write('SetFilterMTMode("MVDegrain3", 3)\n')
+
             # Source
             if self.app_window.use_ffms2_check.isChecked():
                 avsfile.write(f'FFVideoSource("{fileobj.filename}", track=-1)\n')
+                avsfile.write('SetFilterMTMode("FFVideoSource", 3)\n')
             else:
                 avsfile.write(f'AVISource("{fileobj.filename}", audio=true)\n')
 
-            avsfile.write('SetFilterMTMode("FFVideoSource", 3)\n')
             avsfile.write('ConvertToYV24(matrix="rec709")\n')
-            avsfile.write(f'Prefetch({multiprocessing.cpu_count()})\n')
 
             # Add any custom AviSynth extras
             if self.app_window.avisynth_extras_edit.toPlainText().strip():
@@ -295,12 +303,16 @@ class ProcessThread(QThread):
             if self.app_window.tff_check.isChecked():
                 avsfile.write('AssumeTFF()\n')
 
+            # QTGMC deinterlacing - only when enabled
             if self.app_window.deinterlace_check.isChecked():
                 preset = self.app_window.get_preset(self.app_window.speed_slider.value())
                 if self.app_window.reduce_fps_check.isChecked():
                     avsfile.write(f'QTGMC(Preset="{preset}", FPSDivisor=2, EdiThreads={multiprocessing.cpu_count()})\n')
                 else:
                     avsfile.write(f'QTGMC(Preset="{preset}", EdiThreads={multiprocessing.cpu_count()})\n')
+
+            # Prefetch at the end
+            avsfile.write(f'Prefetch({multiprocessing.cpu_count()})\n')
 
     def preserve_timestamps(self, source_file, dest_file, log):
         """
@@ -911,4 +923,3 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
