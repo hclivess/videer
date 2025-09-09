@@ -7,32 +7,34 @@ import logging
 import subprocess
 import multiprocessing
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QLabel, QCheckBox, QRadioButton,
-                             QPushButton, QLineEdit, QSlider, QTextEdit,
-                             QFileDialog, QButtonGroup, QScrollArea, QGroupBox,
-                             QListWidget, QStyle, QProgressBar, QSplitter,
-                             QMenuBar, QMenu, QMessageBox, QListWidgetItem)
+                               QHBoxLayout, QLabel, QCheckBox, QRadioButton,
+                               QPushButton, QLineEdit, QSlider, QTextEdit,
+                               QFileDialog, QButtonGroup, QScrollArea, QGroupBox,
+                               QListWidget, QStyle, QProgressBar, QSplitter,
+                               QMenuBar, QMenu, QMessageBox, QListWidgetItem)
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QSize
 from PySide6.QtGui import QIcon, QDrag, QDragEnterEvent, QDropEvent, QAction
+
 
 def find_ffmpeg():
     """Find FFmpeg executable in system PATH or current directory"""
     import shutil
     import os
-    
+
     # First check if ffmpeg is in system PATH
     ffmpeg_path = shutil.which('ffmpeg')
     if ffmpeg_path:
         return ffmpeg_path
-        
+
     # Then check current directory
     current_dir = os.path.dirname(os.path.abspath(__file__))
     ffmpeg_local = os.path.join(current_dir, 'ffmpeg.exe')
     if os.path.exists(ffmpeg_local):
         return ffmpeg_local
-        
+
     return None
-    
+
+
 def multiple_replace(string, rep_dict):
     pattern = re.compile("|".join([re.escape(k) for k in sorted(rep_dict, key=len, reverse=True)]), flags=re.DOTALL)
     return pattern.sub(lambda x: rep_dict[x.group(0)], string)
@@ -288,9 +290,14 @@ class ProcessThread(QThread):
             avsfile.write('SetFilterMTMode("MVDegrain2", 3)\n')
             avsfile.write('SetFilterMTMode("MVDegrain3", 3)\n')
 
-            # Source
+            # Source - FIXED to include audio with FFMS2
             if self.app_window.use_ffms2_check.isChecked():
-                avsfile.write(f'FFVideoSource("{fileobj.filename}", track=-1)\n')
+                # Load video
+                avsfile.write(f'v = FFVideoSource("{fileobj.filename}", track=-1)\n')
+                # Load audio
+                avsfile.write(f'a = FFAudioSource("{fileobj.filename}", track=-1)\n')
+                # Combine video and audio
+                avsfile.write('AudioDub(v, a)\n')
                 avsfile.write('SetFilterMTMode("FFVideoSource", 3)\n')
             else:
                 avsfile.write(f'AVISource("{fileobj.filename}", audio=true)\n')
@@ -389,63 +396,63 @@ class ProcessThread(QThread):
             try:
                 parent = psutil.Process(self.process_pid)
                 children = parent.children(recursive=True)
-                
+
                 # Kill children first
                 for child in children:
                     try:
                         child.kill()
                     except psutil.NoSuchProcess:
                         pass
-                
+
                 # Kill parent
                 try:
                     parent.kill()
                 except psutil.NoSuchProcess:
                     pass
-                    
+
                 self.process_pid = None
             except psutil.NoSuchProcess:
                 pass
 
     def open_process(self, command_line, fileobj):
         fileobj.log.info(f"Executing command {command_line}")
-        
+
         # Find FFmpeg path
         ffmpeg_path = find_ffmpeg()
         if not ffmpeg_path:
             fileobj.log.error("FFmpeg not found in PATH or current directory")
             return 1
-            
+
         # Replace ffmpeg.exe with full path
         command_line = command_line.replace('ffmpeg.exe', f'"{ffmpeg_path}"')
-        
+
         try:
             with subprocess.Popen(command_line,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                universal_newlines=True,
-                                encoding="utf8",
-                                shell=True) as self.process:
-                                
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT,
+                                  universal_newlines=True,
+                                  encoding="utf8",
+                                  shell=True) as self.process:
+
                 self.process_pid = self.process.pid
                 errors = ["error", "invalid"]
-                
+
                 for line in self.process.stdout:
                     if self.should_stop:
                         self.stop_process()
                         return 1
-                        
+
                     fileobj.log.info(line.strip())
                     self.progress_signal.emit(multiple_replace(line,
-                                                           {"       ": " ",
-                                                            "    ": " ",
-                                                            "time=": "",
-                                                            "bitrate=  ": "br:",
-                                                            "speed": "rate",
-                                                            "size=": "",
-                                                            "frame": "f",
-                                                            "=": ":",
-                                                            "\n": ""}), 0)
+                                                               {"       ": " ",
+                                                                "    ": " ",
+                                                                "time=": "",
+                                                                "bitrate=  ": "br:",
+                                                                "speed": "rate",
+                                                                "size=": "",
+                                                                "frame": "f",
+                                                                "=": ":",
+                                                                "\n": ""}), 0)
                     for error in errors:
                         if error in line.lower():
                             fileobj.ffmpeg_errors.append(line.strip())
@@ -454,7 +461,7 @@ class ProcessThread(QThread):
             self.process_pid = None
             fileobj.log.info(f"Return code: {return_code}")
             return return_code
-            
+
         except Exception as e:
             fileobj.log.error(f"Error executing FFmpeg: {str(e)}")
             return 1
@@ -860,7 +867,7 @@ class MainWindow(QMainWindow):
         if self.process_thread and self.process_thread.isRunning():
             self.process_thread.should_stop = True
             self.process_thread.stop_process()  # Call new stop_process method
-            
+
             self.status_label.setText("Processing stopped")
             self.run_button.setEnabled(True)
             self.stop_button.setEnabled(False)
