@@ -1,2 +1,2 @@
-python -m nuitka --standalone %1 --windows-icon-from-ico=icon.ico --enable-plugin=pyqt5
+python -m nuitka --standalone %1 --windows-icon-from-ico=icon.ico --enable-plugin=pyside6
 pause
