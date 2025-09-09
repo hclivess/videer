@@ -1253,7 +1253,7 @@ class MainWindow(QMainWindow):
                 "preset": self.preset_combo.currentText(),
                 "output_format": self.output_format_combo.currentText(),
                 "stereo": self.stereo_check.isChecked(),
-                "stereo_mode": self.stereo_mode_combo.currentText(),
+                #"stereo_mode": self.stereo_mode_combo.currentText(),
                 "deinterlace": self.deinterlace_check.isChecked(),
                 "tff": self.tff_check.isChecked(),
                 "reduce_fps": self.reduce_fps_check.isChecked(),
@@ -1323,10 +1323,10 @@ class MainWindow(QMainWindow):
                     index = self.output_format_combo.findText(preset["output_format"])
                     if index >= 0:
                         self.output_format_combo.setCurrentIndex(index)
-                if "stereo_mode" in preset:
-                    index = self.stereo_mode_combo.findText(preset["stereo_mode"])
-                    if index >= 0:
-                        self.stereo_mode_combo.setCurrentIndex(index)
+                #if "stereo_mode" in preset:
+                #    index = self.stereo_mode_combo.findText(preset["stereo_mode"])
+                #    if index >= 0:
+                #        self.stereo_mode_combo.setCurrentIndex(index)
 
                 # Apply checkboxes
                 if "stereo" in preset:
