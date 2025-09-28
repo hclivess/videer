@@ -1,1 +1,0 @@
-python -m nuitka --follow-imports %1
