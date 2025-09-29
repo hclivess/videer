@@ -195,7 +195,3 @@ For issues or questions:
 2. Ensure FFmpeg is properly installed
 3. Verify AviSynth+ plugins are in place
 4. Review error logs in the application directory
-
----
-
-**Note**: This application is the successor to Videer, rebuilt with a modular architecture for better maintainability and enhanced features including comprehensive PAR/DAR support.
