@@ -9,9 +9,10 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QSlider, QTextEdit, QFileDialog, QButtonGroup, 
                               QGroupBox, QListWidget, QStyle, QProgressBar, 
                               QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
-                              QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame)
+                              QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
+                              QSizePolicy)
 from PySide6.QtCore import Qt, Signal, QSettings
-from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, 
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS,
@@ -206,10 +207,34 @@ class UIManager(QWidget):
         self.progress_bar = QProgressBar()
         progress_layout.addWidget(self.progress_bar)
         
+        # Status label with fixed width and monospace font to prevent resizing
         self.status_label = QLabel("Ready")
+        self.status_label.setMinimumWidth(450)
+        self.status_label.setMaximumWidth(600)
+        self.status_label.setWordWrap(False)
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
+        
+        # Use monospace font for consistent character widths
+        mono_font = QFont("Courier New", 9)
+        mono_font.setStyleHint(QFont.StyleHint.Monospace)
+        self.status_label.setFont(mono_font)
+        
+        # Set size policy to prevent expansion
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        
+        # Add styling
+        self.status_label.setStyleSheet("""
+            QLabel {
+                padding: 5px;
+                background-color: #f5f5f5;
+                border: 1px solid #ddd;
+                border-radius: 3px;
+            }
+        """)
         progress_layout.addWidget(self.status_label)
         
         self.time_label = QLabel("")
+        self.time_label.setStyleSheet("font-weight: bold;")
         progress_layout.addWidget(self.time_label)
         
         progress_group.setLayout(progress_layout)
@@ -657,8 +682,26 @@ class UIManager(QWidget):
         self.progress_bar.setValue(value)
     
     def update_status(self, message):
-        """Update status label"""
-        self.status_label.setText(message)
+        """Update status label with text eliding for long messages"""
+        # Calculate elided text based on available width
+        if hasattr(self.status_label, 'fontMetrics'):
+            metrics = self.status_label.fontMetrics()
+            available_width = self.status_label.width() - 10  # Leave some padding
+            
+            if available_width > 0:
+                elided_text = metrics.elidedText(
+                    message, 
+                    Qt.TextElideMode.ElideRight, 
+                    available_width
+                )
+                self.status_label.setText(elided_text)
+            else:
+                self.status_label.setText(message)
+            
+            # Show full text on hover
+            self.status_label.setToolTip(message)
+        else:
+            self.status_label.setText(message)
     
     def update_ffmpeg_status(self, available):
         """Update FFmpeg status in status bar"""
