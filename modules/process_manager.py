@@ -223,6 +223,9 @@ class ProcessThread(QThread):
                     h, m, s = map(int, time_match.groups())
                     current_time = h * 3600 + m * 60 + s
                     progress = int((current_time / total_duration) * 100)
+                    
+                    # Clamp progress to 0-100 range
+                    progress = max(0, min(100, progress))
 
                     # Parse and clean the status line
                     clean_line = self._clean_status_line(line)
@@ -322,7 +325,7 @@ class ProcessManager(QObject):
     """Manages video processing operations"""
 
     # Signals
-    progress_updated = Signal(int, int)  # current, total
+    progress_updated = Signal(int, int)  # current percentage (0-100), maximum (100)
     status_updated = Signal(str)
     processing_finished = Signal(int, int)  # success count, total count
 
@@ -331,6 +334,8 @@ class ProcessManager(QObject):
         self.main_window = main_window
         self.process_thread: Optional[ProcessThread] = None
         self._is_processing = False
+        self._current_file_index = 0  # Track current file
+        self._total_files = 0  # Track total files
 
     def start_processing(self, files: List[VideoFile], settings: Dict[str, Any]):
         """Start processing files with given settings"""
@@ -342,6 +347,10 @@ class ProcessManager(QObject):
             self.status_updated.emit("Error: FFmpeg not found!")
             return
 
+        # Initialize tracking
+        self._current_file_index = 0
+        self._total_files = len(files)
+        
         # Files are already VideoFile objects, use them directly
         video_files = files
         
@@ -360,7 +369,8 @@ class ProcessManager(QObject):
         self._is_processing = True
         self.process_thread.start()
         
-        self.progress_updated.emit(0, len(files))
+        # Initialize progress bar (0-100%)
+        self.progress_updated.emit(0, 100)
         self.status_updated.emit("Processing started...")
     
     def stop_processing(self):
@@ -379,9 +389,40 @@ class ProcessManager(QObject):
         """Check if currently processing"""
         return self._is_processing
     
+    def _calculate_overall_progress(self, file_percentage: int) -> int:
+        """
+        Calculate overall progress combining file count and current file encoding progress
+        
+        Args:
+            file_percentage: Current file's encoding percentage (0-100)
+            
+        Returns:
+            Overall percentage (0-100)
+        """
+        if self._total_files == 0:
+            return 0
+        
+        # Files completed before current one
+        completed_files = self._current_file_index
+        
+        # Current file progress as a fraction (0.0 to 1.0)
+        current_file_progress = file_percentage / 100.0
+        
+        # Overall progress: (completed files + current file progress) / total files
+        overall_progress = (completed_files + current_file_progress) / self._total_files
+        
+        # Convert to percentage (0-100)
+        return int(overall_progress * 100)
+    
     def _on_progress(self, message: str, percentage: int):
-        """Handle progress update"""
-        self.status_updated.emit(message)
+        """Handle progress update from FFmpeg"""
+        # Create enhanced status message with file counter
+        enhanced_message = f"[File {self._current_file_index + 1}/{self._total_files}] {message}"
+        self.status_updated.emit(enhanced_message)
+        
+        # Update progress bar with combined progress
+        overall_percentage = self._calculate_overall_progress(percentage)
+        self.progress_updated.emit(overall_percentage, 100)
     
     def _on_info(self, message: str):
         """Handle info message"""
@@ -389,6 +430,9 @@ class ProcessManager(QObject):
     
     def _on_file_started(self, index: int):
         """Handle file processing start"""
+        # Update current file index
+        self._current_file_index = index
+        
         # Update UI to show file is being processed
         if hasattr(self.main_window, 'ui_manager'):
             if hasattr(self.main_window.ui_manager, 'file_list'):
@@ -396,6 +440,10 @@ class ProcessManager(QObject):
                 if item:
                     from PySide6.QtCore import Qt
                     item.setBackground(Qt.GlobalColor.yellow)
+        
+        # Update progress bar (file just started, so 0% progress on this file)
+        overall_percentage = self._calculate_overall_progress(0)
+        self.progress_updated.emit(overall_percentage, 100)
     
     def _on_file_finished(self, index: int, success: bool):
         """Handle file processing completion"""
@@ -408,11 +456,9 @@ class ProcessManager(QObject):
                     color = Qt.GlobalColor.green if success else Qt.GlobalColor.red
                     item.setBackground(color)
         
-        # Update progress bar
-        if self.process_thread:
-            total = len(self.process_thread.files)
-            current = index + 1
-            self.progress_updated.emit(current, total)
+        # File is complete, so 100% progress on this file
+        overall_percentage = self._calculate_overall_progress(100)
+        self.progress_updated.emit(overall_percentage, 100)
     
     def _on_time_remaining(self, time_str: str):
         """Handle time remaining update"""
@@ -425,6 +471,9 @@ class ProcessManager(QObject):
         self._is_processing = False
         self.status_updated.emit(f"Completed: {success_count}/{total_count} files processed successfully")
         self.processing_finished.emit(success_count, total_count)
+        
+        # Set progress to 100%
+        self.progress_updated.emit(100, 100)
     
     def validate_settings(self, settings: Dict[str, Any]) -> List[str]:
         """
