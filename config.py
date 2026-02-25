@@ -3,6 +3,7 @@ Configuration file for videer
 Contains all constants and default settings
 """
 
+import os
 import multiprocessing
 
 # Application info
@@ -123,6 +124,9 @@ DEFAULT_SETTINGS = {
     "dar_value": "16:9",
     "calculate_vmaf": False
 }
+
+# Path to user defaults file (next to this config file, i.e. app directory)
+DEFAULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults.json")
 
 # Preset configurations
 QUALITY_PRESETS = {

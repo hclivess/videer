@@ -14,9 +14,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont
 
-from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, 
+from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS,
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS,
-                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS)
+                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS)
 
 
 class FileListWidget(QListWidget):
@@ -127,7 +127,13 @@ class UIManager(QWidget):
                         lambda: self.main_window.preset_manager.apply_preset('hq'))
         self._add_action(presets_menu, 'Archive (ProRes/PCM)', None,
                         lambda: self.main_window.preset_manager.apply_preset('archive'))
-        
+
+        presets_menu.addSeparator()
+        self._add_action(presets_menu, 'Save Current as Defaults', None,
+                        self.main_window.preset_manager.save_as_defaults)
+        self._add_action(presets_menu, 'Reset to Factory Defaults', None,
+                        self.main_window.preset_manager.reset_defaults)
+
         # Help menu
         help_menu = menubar.addMenu('Help')
         self._add_action(help_menu, 'About', None, self._show_about)
@@ -805,12 +811,21 @@ class UIManager(QWidget):
         return None
     
     def load_settings(self, qsettings: QSettings):
-        """Load settings from QSettings"""
-        # Load values if they exist
-        if qsettings.value("crf"):
-            self.controls['crf'].setValue(int(qsettings.value("crf", DEFAULT_CRF)))
-        if qsettings.value("abr"):
-            self.controls['abr'].setValue(int(qsettings.value("abr", DEFAULT_ABR)))
+        """Load all settings from QSettings"""
+        int_keys = ('crf', 'abr', 'threads')
+        settings = {}
+        for key in qsettings.allKeys():
+            value = qsettings.value(key)
+            if value is None:
+                continue
+            # QSettings stores booleans as strings on some platforms
+            if isinstance(value, str) and value.lower() in ('true', 'false'):
+                value = value.lower() == 'true'
+            elif key in int_keys:
+                value = int(value)
+            settings[key] = value
+        if settings:
+            self.main_window.preset_manager.apply_settings(settings)
     
     def save_settings(self, qsettings: QSettings):
         """Save current settings to QSettings"""
