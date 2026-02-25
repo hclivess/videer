@@ -491,7 +491,11 @@ class UIManager(QWidget):
         
         avs_group.setLayout(avs_layout)
         layout.addWidget(avs_group)
-        
+
+        # Auto-link: deinterlace requires AviSynth+, disabling AviSynth+ disables deinterlace
+        self.controls['deinterlace'].toggled.connect(self._on_deinterlace_toggled)
+        self.controls['use_avisynth'].toggled.connect(self._on_avisynth_toggled)
+
         # Pre-processing
         preprocess_group = QGroupBox("Pre-processing")
         preprocess_layout = QVBoxLayout()
@@ -617,7 +621,17 @@ class UIManager(QWidget):
     def _on_dar_mode_changed(self, text):
         """Handle DAR mode change"""
         self.controls['dar_custom'].setEnabled(text == "Custom")
-    
+
+    def _on_deinterlace_toggled(self, checked):
+        """Auto-enable AviSynth+ when deinterlacing is turned on"""
+        if checked:
+            self.controls['use_avisynth'].setChecked(True)
+
+    def _on_avisynth_toggled(self, checked):
+        """Auto-disable deinterlacing when AviSynth+ is turned off"""
+        if not checked:
+            self.controls['deinterlace'].setChecked(False)
+
     def _on_add_files(self):
         """Add files dialog"""
         from PySide6.QtWidgets import QFileDialog
