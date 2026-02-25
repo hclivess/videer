@@ -186,7 +186,8 @@ class PresetManager(QObject):
         checkbox_fields = [
             'stereo', 'deinterlace', 'tff', 'reduce_fps',
             'use_avisynth', 'use_ffms2', 'transcode_video',
-            'transcode_audio', 'corrupt_fix', 'replace_files'
+            'transcode_audio', 'corrupt_fix', 'replace_files',
+            'calculate_vmaf'
         ]
         
         for field in checkbox_fields:

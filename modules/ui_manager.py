@@ -601,7 +601,22 @@ class UIManager(QWidget):
         
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
-        
+
+        # Quality analysis
+        quality_group = QGroupBox("Quality Analysis")
+        quality_layout = QVBoxLayout()
+
+        self.controls['calculate_vmaf'] = QCheckBox("Calculate VMAF Score After Encoding")
+        self.controls['calculate_vmaf'].setToolTip(
+            "Run Netflix VMAF (Video Multi-Method Assessment Fusion) after encoding.\n"
+            "Compares the encoded output against the original to produce a 0-100 quality score.\n"
+            "Requires libvmaf support in FFmpeg. Skipped when video codec is 'copy'."
+        )
+        quality_layout.addWidget(self.controls['calculate_vmaf'])
+
+        quality_group.setLayout(quality_layout)
+        layout.addWidget(quality_group)
+
         layout.addStretch()
         widget.setLayout(layout)
         return widget
@@ -759,7 +774,8 @@ class UIManager(QWidget):
             'par_mode': self.controls['par_mode'].currentText(),
             'par_custom': self.controls['par_custom'].text(),
             'dar_mode': self.controls['dar_mode'].currentText(),
-            'dar_custom': self.controls['dar_custom'].text()
+            'dar_custom': self.controls['dar_custom'].text(),
+            'calculate_vmaf': self.controls['calculate_vmaf'].isChecked()
         }
         
         # Get PAR handling mode

@@ -120,7 +120,8 @@ DEFAULT_SETTINGS = {
     "par_mode": "auto",
     "par_value": "1:1",
     "dar_mode": "auto",
-    "dar_value": "16:9"
+    "dar_value": "16:9",
+    "calculate_vmaf": False
 }
 
 # Preset configurations
