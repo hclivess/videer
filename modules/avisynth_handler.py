@@ -11,7 +11,14 @@ from models.file_models import VideoFile
 
 class AviSynthHandler:
     """Handles AviSynth+ script generation"""
-    
+
+    # QTGMC presets that require plugins not bundled with videer:
+    # "Ultra Fast" requires Yadifmod2, "Very Slow" requires FFT3DFilter
+    QTGMC_SAFE_PRESET = {
+        "Ultra Fast": "Super Fast",
+        "Very Slow": "Slower",
+    }
+
     def __init__(self, settings: Dict[str, Any]):
         self.settings = settings
         self.cpu_count = multiprocessing.cpu_count()
@@ -135,8 +142,9 @@ class AviSynthHandler:
         else:
             avs_file.write('AssumeBFF()\n')
         
-        # QTGMC deinterlacing
+        # QTGMC deinterlacing (remap presets that need unbundled plugins)
         preset = self.settings.get('preset', 'Medium')
+        preset = self.QTGMC_SAFE_PRESET.get(preset, preset)
         threads = self.settings.get('threads', self.cpu_count)
         
         if self.settings.get('reduce_fps', False):
