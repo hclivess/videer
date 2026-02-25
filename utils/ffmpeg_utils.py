@@ -234,3 +234,12 @@ class FFmpegCommandBuilder:
             # Add high-quality scaling algorithm
             vf_filters.insert(0, 'scale=flags=lanczos')
             cmd.extend(['-vf', ','.join(vf_filters)])
+
+    def build_vmaf_command(self, encoded_file, original_file):
+        """Build FFmpeg command to calculate VMAF score"""
+        cmd = [self.ffmpeg_path, '-hide_banner']
+        cmd.extend(['-i', encoded_file])   # distorted
+        cmd.extend(['-i', original_file])  # reference
+        cmd.extend(['-lavfi', 'libvmaf'])
+        cmd.extend(['-f', 'null', '-'])
+        return cmd

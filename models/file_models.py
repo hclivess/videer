@@ -47,6 +47,9 @@ class VideoFile:
         self.sample_aspect_ratio: Optional[str] = None
         self.display_aspect_ratio: Optional[str] = None
         self.pixel_aspect_ratio: Optional[str] = None
+
+        # Quality metrics
+        self.vmaf_score: Optional[float] = None
     
     def create_logger(self):
         """Create a logger for this file"""

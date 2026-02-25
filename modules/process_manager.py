@@ -21,6 +21,11 @@ from utils.file_utils import FileOperations
 class ProcessThread(QThread):
     """Thread for processing video files"""
 
+    # Pre-compiled regex patterns
+    _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})')
+    _TIME_RE = re.compile(r'time=(\d{2}):(\d{2}):(\d{2})')
+    _VMAF_RE = re.compile(r'VMAF score\s*[:=]\s*([\d.]+)', re.IGNORECASE)
+
     # Signals
     progress_signal = Signal(str, int)  # message, percentage
     info_signal = Signal(str)
@@ -28,6 +33,7 @@ class ProcessThread(QThread):
     file_finished = Signal(int, bool)  # file index, success
     time_remaining = Signal(str)  # time string
     processing_finished = Signal(int, int)  # success count, total count
+    vmaf_calculated = Signal(int, float)  # file index, score
 
     def __init__(self, files: List[VideoFile], settings: Dict[str, Any]):
         super().__init__()
@@ -69,6 +75,11 @@ class ProcessThread(QThread):
 
             if success:
                 self.success_count += 1
+
+                # Calculate VMAF before any file replacement (needs original as reference)
+                if (self.settings.get('calculate_vmaf')
+                        and self.settings.get('video_codec') != 'copy'):
+                    self._calculate_vmaf(file, file.get_full_output_path(), i)
 
                 # Handle file replacement if requested
                 if self.settings.get('replace_files'):
@@ -153,49 +164,49 @@ class ProcessThread(QThread):
 
         return success
 
+    @staticmethod
+    def _quote_command(command: List[str]) -> str:
+        """Quote command arguments that contain spaces for shell execution"""
+        quoted = []
+        for arg in command:
+            if ' ' in arg and not arg.startswith('"') and not arg.startswith("'") and not arg.startswith('-'):
+                quoted.append(f'"{arg}"')
+            else:
+                quoted.append(arg)
+        return ' '.join(quoted)
+
+    def _start_subprocess(self, command_str: str) -> subprocess.Popen:
+        """Start a subprocess with platform-appropriate settings"""
+        if os.name == 'nt':
+            return subprocess.Popen(
+                command_str,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding='utf-8',
+                shell=True,
+                bufsize=1
+            )
+        else:
+            return subprocess.Popen(
+                shlex.split(command_str),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding='utf-8',
+                shell=False,
+                bufsize=1
+            )
+
     def _execute_command(self, command: List[str], file: VideoFile) -> int:
         """Execute FFmpeg command and monitor progress"""
-        # Properly quote each argument to handle spaces in paths
-        quoted_command = []
-        for arg in command:
-            # Don't quote arguments that are already quoted or are flags
-            if ' ' in arg and not arg.startswith('"') and not arg.startswith("'") and not arg.startswith('-'):
-                quoted_command.append(f'"{arg}"')
-            else:
-                quoted_command.append(arg)
-
-        command_str = ' '.join(quoted_command)
+        command_str = self._quote_command(command)
         file.log_info(f"Executing: {command_str}")
 
         try:
-            # Create process with proper shell handling for Windows
-            if os.name == 'nt':  # Windows
-                self.current_process = subprocess.Popen(
-                    command_str,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    encoding='utf-8',
-                    shell=True,
-                    bufsize=1
-                )
-            else:  # Unix-like systems
-                # Use shlex to properly split the command for Unix
-                self.current_process = subprocess.Popen(
-                    shlex.split(command_str),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    encoding='utf-8',
-                    shell=False,
-                    bufsize=1
-                )
-
+            self.current_process = self._start_subprocess(command_str)
             self.current_pid = self.current_process.pid
 
-            # Process output
-            duration_pattern = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})')
-            time_pattern = re.compile(r'time=(\d{2}):(\d{2}):(\d{2})')
             error_keywords = ["error", "invalid", "failed"]
 
             total_duration = None
@@ -212,13 +223,13 @@ class ProcessThread(QThread):
 
                 # Check for duration
                 if not total_duration:
-                    duration_match = duration_pattern.search(line)
+                    duration_match = self._DURATION_RE.search(line)
                     if duration_match:
                         h, m, s = map(int, duration_match.groups())
                         total_duration = h * 3600 + m * 60 + s
 
                 # Check for progress
-                time_match = time_pattern.search(line)
+                time_match = self._TIME_RE.search(line)
                 if time_match and total_duration:
                     h, m, s = map(int, time_match.groups())
                     current_time = h * 3600 + m * 60 + s
@@ -288,6 +299,70 @@ class ProcessThread(QThread):
             time_str = f"{seconds}s"
 
         self.time_remaining.emit(f"Est. remaining: {time_str}")
+
+    def _calculate_vmaf(self, file: VideoFile, encoded_path: str, file_index: int):
+        """Calculate VMAF score by comparing encoded file against original"""
+        file.log_info("Starting VMAF calculation...")
+        self.progress_signal.emit(f"VMAF: {file.filename}", 0)
+
+        try:
+            command = self.command_builder.build_vmaf_command(encoded_path, file.filepath)
+            command_str = self._quote_command(command)
+            file.log_info(f"VMAF command: {command_str}")
+
+            proc = self._start_subprocess(command_str)
+            self.current_process = proc
+            self.current_pid = proc.pid
+
+            total_duration = None
+            vmaf_score = None
+
+            for line in proc.stdout:
+                if self.should_stop:
+                    self._kill_process()
+                    return
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                file.log_info(line)
+
+                # Parse duration
+                if not total_duration:
+                    duration_match = self._DURATION_RE.search(line)
+                    if duration_match:
+                        h, m, s = map(int, duration_match.groups())
+                        total_duration = h * 3600 + m * 60 + s
+
+                # Parse progress
+                time_match = self._TIME_RE.search(line)
+                if time_match and total_duration:
+                    h, m, s = map(int, time_match.groups())
+                    current_time = h * 3600 + m * 60 + s
+                    progress = max(0, min(100, int((current_time / total_duration) * 100)))
+                    self.progress_signal.emit(f"VMAF: {file.filename} ({progress}%)", progress)
+
+                # Parse VMAF score
+                vmaf_match = self._VMAF_RE.search(line)
+                if vmaf_match:
+                    vmaf_score = float(vmaf_match.group(1))
+
+            proc.wait()
+            self.current_process = None
+            self.current_pid = None
+
+            if vmaf_score is not None:
+                file.vmaf_score = vmaf_score
+                file.log_info(f"VMAF score: {vmaf_score}")
+                self.vmaf_calculated.emit(file_index, vmaf_score)
+            else:
+                file.log_info("VMAF score could not be parsed from output")
+
+        except Exception as e:
+            file.log_info(f"VMAF calculation failed: {str(e)}")
+            self.current_process = None
+            self.current_pid = None
 
     def stop(self):
         """Stop processing"""
@@ -364,7 +439,8 @@ class ProcessManager(QObject):
         self.process_thread.file_finished.connect(self._on_file_finished)
         self.process_thread.time_remaining.connect(self._on_time_remaining)
         self.process_thread.processing_finished.connect(self._on_processing_finished)
-        
+        self.process_thread.vmaf_calculated.connect(self._on_vmaf_calculated)
+
         # Start processing
         self._is_processing = True
         self.process_thread.start()
@@ -466,6 +542,14 @@ class ProcessManager(QObject):
             if hasattr(self.main_window.ui_manager, 'time_label'):
                 self.main_window.ui_manager.time_label.setText(time_str)
     
+    def _on_vmaf_calculated(self, index: int, vmaf_score: float):
+        """Handle VMAF score result — append score to file list item"""
+        if hasattr(self.main_window, 'ui_manager'):
+            if hasattr(self.main_window.ui_manager, 'file_list'):
+                item = self.main_window.ui_manager.file_list.item(index)
+                if item:
+                    item.setText(f"{item.text()} | VMAF: {vmaf_score:.1f}")
+
     def _on_processing_finished(self, success_count: int, total_count: int):
         """Handle processing completion"""
         self._is_processing = False
