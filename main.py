@@ -109,7 +109,13 @@ class MainWindow(QMainWindow):
         )
     
     def load_settings(self):
-        """Load saved application settings"""
+        """Load settings in priority order: factory → defaults.json → QSettings"""
+        # 1. Factory defaults already set by UI control initializers
+        # 2. Apply user defaults from defaults.json (if exists)
+        user_defaults = self.preset_manager.load_defaults()
+        if user_defaults:
+            self.preset_manager.apply_settings(user_defaults)
+        # 3. Apply last-session state from QSettings (overrides defaults.json)
         self.ui_manager.load_settings(self.settings)
     
     def save_settings(self):

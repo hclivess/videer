@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 
-from config import QUALITY_PRESETS, PAR_PRESETS, DAR_PRESETS
+from config import QUALITY_PRESETS, PAR_PRESETS, DAR_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE
 
 
 class PresetManager(QObject):
@@ -181,7 +181,17 @@ class PresetManager(QObject):
         
         if 'dar_custom' in settings:
             ui.controls['dar_custom'].setText(settings['dar_custom'])
-        
+
+        if 'par_handling' in settings:
+            handling_map = {
+                'metadata': 0,
+                'resample': 1,
+                'preserve': 2
+            }
+            index = handling_map.get(settings['par_handling'], -1)
+            if index >= 0:
+                ui.controls['par_handling'].setCurrentIndex(index)
+
         # Checkboxes
         checkbox_fields = [
             'stereo', 'deinterlace', 'tff', 'reduce_fps',
@@ -405,6 +415,53 @@ class PresetManager(QObject):
                     )
                 break
     
+    def save_as_defaults(self):
+        """Save current settings as user defaults (defaults.json)"""
+        settings = self.main_window.ui_manager.get_current_settings()
+        try:
+            with open(DEFAULTS_FILE, 'w') as f:
+                json.dump(settings, f, indent=4)
+            QMessageBox.information(
+                self.main_window,
+                "Defaults Saved",
+                "Current settings saved as defaults."
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self.main_window,
+                "Save Failed",
+                f"Failed to save defaults: {str(e)}"
+            )
+
+    def load_defaults(self) -> Optional[Dict[str, Any]]:
+        """Load user defaults from defaults.json, returns settings dict or None"""
+        if not os.path.exists(DEFAULTS_FILE):
+            return None
+        try:
+            with open(DEFAULTS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def reset_defaults(self):
+        """Delete defaults.json and reapply factory defaults"""
+        if os.path.exists(DEFAULTS_FILE):
+            try:
+                os.remove(DEFAULTS_FILE)
+            except Exception as e:
+                QMessageBox.critical(
+                    self.main_window,
+                    "Reset Failed",
+                    f"Failed to delete defaults file: {str(e)}"
+                )
+                return
+        self.apply_settings(DEFAULT_SETTINGS)
+        QMessageBox.information(
+            self.main_window,
+            "Defaults Reset",
+            "Settings restored to factory defaults."
+        )
+
     def _sanitize_filename(self, name: str) -> str:
         """Sanitize preset name for filename"""
         # Remove invalid characters
