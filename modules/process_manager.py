@@ -10,7 +10,7 @@ import re
 import psutil
 import shlex
 from typing import List, Dict, Any, Optional
-from PySide6.QtCore import QThread, Signal, QObject
+from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
 from models.file_models import VideoFile
 from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg
@@ -35,9 +35,9 @@ class ProcessThread(QThread):
     processing_finished = Signal(int, int)  # success count, total count
     vmaf_calculated = Signal(int, float)  # file index, score
 
-    def __init__(self, files: List[VideoFile], settings: Dict[str, Any]):
+    def __init__(self, process_manager, settings: Dict[str, Any]):
         super().__init__()
-        self.files = files
+        self._pm = process_manager
         self.settings = settings
         self.should_stop = False
         self.current_process = None
@@ -50,25 +50,28 @@ class ProcessThread(QThread):
         self.file_ops = FileOperations()
 
     def run(self):
-        """Main processing loop"""
+        """Main processing loop — pulls files dynamically from the shared queue"""
         self.start_time = time.time()
         self.success_count = 0
-        total_count = len(self.files)
 
-        for i, file in enumerate(self.files):
-            if self.should_stop:
+        index = 0
+        while not self.should_stop:
+            file = self._pm.get_file_at(index)
+            if file is None:
                 break
+
+            total_count = self._pm.get_total_file_count()
 
             # Setup file for processing
             file.create_logger()
             file.set_output_name(self.settings)
 
-            self.file_started.emit(i)
-            self.info_signal.emit(f"Processing {i + 1}/{total_count}: {file.filename}")
+            self.file_started.emit(index)
+            self.info_signal.emit(f"Processing {index + 1}/{total_count}: {file.filename}")
 
             # Calculate time remaining
-            if i > 0:
-                self._emit_time_remaining(i, total_count)
+            if index > 0:
+                self._emit_time_remaining(index, total_count)
 
             # Process file
             success = self._process_file(file)
@@ -79,7 +82,7 @@ class ProcessThread(QThread):
                 # Calculate VMAF before any file replacement (needs original as reference)
                 if (self.settings.get('calculate_vmaf')
                         and self.settings.get('video_codec') != 'copy'):
-                    self._calculate_vmaf(file, file.get_full_output_path(), i)
+                    self._calculate_vmaf(file, file.get_full_output_path(), index)
 
                 # Handle file replacement if requested
                 if self.settings.get('replace_files'):
@@ -100,12 +103,15 @@ class ProcessThread(QThread):
             file.cleanup_temp_files()
 
             # Emit completion
-            self.file_finished.emit(i, success)
+            self.file_finished.emit(index, success)
 
             # Report errors if any
             if file.error_messages:
                 self.info_signal.emit(f"Errors in {file.filename}:\n" + '\n'.join(file.error_messages))
 
+            index += 1
+
+        total_count = self._pm.get_total_file_count()
         self.processing_finished.emit(self.success_count, total_count)
 
     def _process_file(self, file: VideoFile) -> bool:
@@ -411,6 +417,35 @@ class ProcessManager(QObject):
         self._is_processing = False
         self._current_file_index = 0  # Track current file
         self._total_files = 0  # Track total files
+        self._queue_mutex = QMutex()
+        self._shared_files: List[VideoFile] = []
+
+    def append_files(self, new_files: List[VideoFile]):
+        """Thread-safe: append files to the running queue."""
+        self._queue_mutex.lock()
+        try:
+            self._shared_files.extend(new_files)
+            self._total_files = len(self._shared_files)
+        finally:
+            self._queue_mutex.unlock()
+
+    def get_file_at(self, index: int) -> Optional[VideoFile]:
+        """Thread-safe: retrieve file at index, or None if out of range."""
+        self._queue_mutex.lock()
+        try:
+            if index < len(self._shared_files):
+                return self._shared_files[index]
+            return None
+        finally:
+            self._queue_mutex.unlock()
+
+    def get_total_file_count(self) -> int:
+        """Thread-safe: get current total file count."""
+        self._queue_mutex.lock()
+        try:
+            return len(self._shared_files)
+        finally:
+            self._queue_mutex.unlock()
 
     def start_processing(self, files: List[VideoFile], settings: Dict[str, Any]):
         """Start processing files with given settings"""
@@ -424,13 +459,17 @@ class ProcessManager(QObject):
 
         # Initialize tracking
         self._current_file_index = 0
-        self._total_files = len(files)
-        
-        # Files are already VideoFile objects, use them directly
-        video_files = files
-        
+
+        # Populate shared queue (thread-safe)
+        self._queue_mutex.lock()
+        try:
+            self._shared_files = list(files)
+            self._total_files = len(self._shared_files)
+        finally:
+            self._queue_mutex.unlock()
+
         # Create and start process thread
-        self.process_thread = ProcessThread(video_files, settings)
+        self.process_thread = ProcessThread(self, settings)
         
         # Connect signals
         self.process_thread.progress_signal.connect(self._on_progress)

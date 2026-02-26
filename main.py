@@ -65,8 +65,11 @@ class MainWindow(QMainWindow):
         self.ui_manager.start_processing.connect(self.start_processing)
         self.ui_manager.stop_processing.connect(self.stop_processing)
         self.ui_manager.files_added.connect(self.file_manager.add_files)
-        self.ui_manager.files_removed.connect(self.file_manager.remove_files)
+        self.ui_manager.files_removed.connect(self._on_files_removed)
         self.ui_manager.queue_cleared.connect(self.file_manager.clear_queue)
+
+        # Route newly-added files to the running process queue
+        self.file_manager.files_updated.connect(self._on_files_updated_during_processing)
     
     def check_dependencies(self):
         """Check if required dependencies are available"""
@@ -98,6 +101,28 @@ class MainWindow(QMainWindow):
         self.process_manager.stop_processing()
         self.ui_manager.set_processing_state(False)
     
+    def _on_files_updated_during_processing(self, files):
+        """When files are added while processing, push new ones into the shared queue"""
+        if self.process_manager.is_processing():
+            current_shared_count = self.process_manager.get_total_file_count()
+            if len(files) > current_shared_count:
+                new_files = files[current_shared_count:]
+                self.process_manager.append_files(new_files)
+
+    def _on_files_removed(self, indices):
+        """Safe removal: block removal of already-processed or in-progress files"""
+        if self.process_manager.is_processing():
+            current_index = self.process_manager._current_file_index
+            safe = [i for i in indices if i > current_index]
+            blocked = [i for i in indices if i <= current_index]
+            if blocked:
+                QMessageBox.warning(self, "Cannot Remove",
+                    f"{len(blocked)} file(s) already processed or in progress.")
+            if safe:
+                self.file_manager.remove_files(safe)
+        else:
+            self.file_manager.remove_files(indices)
+
     def on_processing_finished(self, success_count, total_count):
         """Handle processing completion"""
         self.ui_manager.set_processing_state(False)

@@ -22,6 +22,7 @@ FFmpeg is a superior command line video encoding tool. Videer serves as a GUI fo
 - 64bit Implementation
 - Matroska format as it is the only one to support `pgssub`
 - CUDA GPU acceleration support
+- Live queue: add files or drag-drop while encoding is running — new files are appended and processed without restarting
 
 ## Requirements:
 

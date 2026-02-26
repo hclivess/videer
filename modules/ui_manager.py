@@ -699,9 +699,20 @@ class UIManager(QWidget):
         )
     
     def update_file_list(self, files):
-        """Update file list display"""
+        """Update file list display — during processing, append only to preserve colors"""
+        if getattr(self, '_processing_active', False):
+            self.append_to_file_list(files)
+            return
         self.file_list.clear()
         for file in files:
+            item = QListWidgetItem(f"{file.filename} ({file.get_file_size_mb():.1f} MB)")
+            item.setToolTip(file.filepath)
+            self.file_list.addItem(item)
+
+    def append_to_file_list(self, files):
+        """Append new items without clearing existing ones (preserves background colors)"""
+        current_count = self.file_list.count()
+        for file in files[current_count:]:
             item = QListWidgetItem(f"{file.filename} ({file.get_file_size_mb():.1f} MB)")
             item.setToolTip(file.filepath)
             self.file_list.addItem(item)
@@ -749,11 +760,23 @@ class UIManager(QWidget):
     
     def set_processing_state(self, is_processing):
         """Set UI state for processing"""
+        self._processing_active = is_processing
         self.controls['start'].setEnabled(not is_processing)
         self.controls['stop'].setEnabled(is_processing)
-        self.controls['add_files'].setEnabled(not is_processing)
-        self.controls['add_folder'].setEnabled(not is_processing)
-        self.tabs.setEnabled(not is_processing)
+        self.controls['add_files'].setEnabled(True)        # always enabled
+        self.controls['add_folder'].setEnabled(True)       # always enabled
+        self.controls['remove_files'].setEnabled(True)     # always enabled
+        self.controls['clear_files'].setEnabled(not is_processing)  # disable during processing
+        self.tabs.setEnabled(not is_processing)             # settings stay locked
+
+        # Disable internal drag-drop reordering during processing (prevents index corruption)
+        # but keep external file drops working
+        if is_processing:
+            self.file_list.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
+            self.file_list.setAcceptDrops(True)
+        else:
+            self.file_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+            self.file_list.setAcceptDrops(True)
     
     def get_current_settings(self) -> Dict[str, Any]:
         """Get all current settings"""
