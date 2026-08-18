@@ -11,14 +11,15 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
                               QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
                               QSizePolicy, QMessageBox)
-from PySide6.QtCore import Qt, Signal, QSettings
-from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont
+from PySide6.QtCore import Qt, Signal, QSettings, QTimer
+from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont, QColor, QBrush
 
-from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS,
-                   ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS,
+from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS,
+                   ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS,
                    RESOLUTION_PRESETS, SCALE_ALGORITHMS, DEFAULT_SCALE_ALGORITHM,
                    DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
-                   APP_NAME, APP_VERSION)
+                   QUALITY_PRESETS, APP_NAME, APP_VERSION)
+from modules.process_manager import format_duration, format_size
 
 
 class FileListWidget(QListWidget):
@@ -86,7 +87,7 @@ class UIManager(QWidget):
     files_added = Signal(list)
     files_removed = Signal(list)
     queue_cleared = Signal()
-    settings_changed = Signal(dict)
+    files_reordered = Signal(int, int)   # from_index, to_index
     
     def __init__(self, main_window):
         super().__init__()
@@ -122,19 +123,20 @@ class UIManager(QWidget):
                         self.main_window.preset_manager.load_preset)
         presets_menu.addSeparator()
         
-        # Default presets
-        self._add_action(presets_menu, 'Web Quality (H.264/AAC)', None, 
-                        lambda: self.main_window.preset_manager.apply_preset('web'))
-        self._add_action(presets_menu, 'High Quality (H.265/Opus)', None,
-                        lambda: self.main_window.preset_manager.apply_preset('hq'))
-        self._add_action(presets_menu, 'Archive (ProRes/PCM)', None,
-                        lambda: self.main_window.preset_manager.apply_preset('archive'))
+        # Built-in quality presets
+        pm = self.main_window.preset_manager
+        for key, preset in QUALITY_PRESETS.items():
+            self._add_action(presets_menu, preset['name'], None,
+                             lambda checked=False, k=key: pm.apply_preset(k))
 
         presets_menu.addSeparator()
-        self._add_action(presets_menu, 'Save Current as Defaults', None,
-                        self.main_window.preset_manager.save_as_defaults)
-        self._add_action(presets_menu, 'Reset to Factory Defaults', None,
-                        self.main_window.preset_manager.reset_defaults)
+        self._add_action(presets_menu, 'Import Preset…', None, pm.import_preset)
+        self._add_action(presets_menu, 'Export Preset…', None, pm.export_preset)
+        self._add_action(presets_menu, 'Delete Preset…', None, pm.delete_preset)
+
+        presets_menu.addSeparator()
+        self._add_action(presets_menu, 'Save Current as Defaults', None, pm.save_as_defaults)
+        self._add_action(presets_menu, 'Reset to Factory Defaults', None, pm.reset_defaults)
 
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -182,6 +184,7 @@ class UIManager(QWidget):
         
         self.file_list = FileListWidget()
         self.file_list.files_dropped.connect(self.files_added)
+        self.file_list.model().rowsMoved.connect(self._on_rows_moved)
         files_layout.addWidget(self.file_list)
         
         # File controls
@@ -209,45 +212,8 @@ class UIManager(QWidget):
         layout.addWidget(files_group)
         
         # Progress
-        progress_group = QGroupBox("Progress")
-        progress_layout = QVBoxLayout()
-        
-        self.progress_bar = QProgressBar()
-        progress_layout.addWidget(self.progress_bar)
-        
-        # Status label with fixed width and monospace font to prevent resizing
-        self.status_label = QLabel("Ready")
-        self.status_label.setMinimumWidth(450)
-        self.status_label.setMaximumWidth(600)
-        self.status_label.setWordWrap(False)
-        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
-        
-        # Use monospace font for consistent character widths
-        mono_font = QFont("Courier New", 9)
-        mono_font.setStyleHint(QFont.StyleHint.Monospace)
-        self.status_label.setFont(mono_font)
-        
-        # Set size policy to prevent expansion
-        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        
-        # Add styling
-        self.status_label.setStyleSheet("""
-            QLabel {
-                padding: 5px;
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 3px;
-            }
-        """)
-        progress_layout.addWidget(self.status_label)
-        
-        self.time_label = QLabel("")
-        self.time_label.setStyleSheet("font-weight: bold;")
-        progress_layout.addWidget(self.time_label)
-        
-        progress_group.setLayout(progress_layout)
-        layout.addWidget(progress_group)
-        
+        layout.addWidget(self._create_progress_group())
+
         # Action buttons
         buttons_layout = QHBoxLayout()
         
@@ -298,6 +264,110 @@ class UIManager(QWidget):
         
         return panel
     
+    # ------------------------------------------------------------------
+    # Progress panel
+    # ------------------------------------------------------------------
+    _BAR_STYLE = """
+        QProgressBar {
+            border: 1px solid #c8c8c8; border-radius: 4px; background: #f0f0f0;
+            text-align: center; height: 18px; font-weight: bold; color: #333;
+        }
+        QProgressBar::chunk { background-color: %s; border-radius: 3px; }
+    """
+
+    def _make_stat_tile(self, title: str) -> QLabel:
+        """Small 'label over value' tile used in the stats row"""
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; }")
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(8, 4, 8, 4)
+        box.setSpacing(0)
+        caption = QLabel(title)
+        caption.setStyleSheet("color: #888; font-size: 10px; border: none;")
+        value = QLabel("--")
+        value.setStyleSheet("font-weight: bold; font-size: 13px; border: none;")
+        box.addWidget(caption)
+        box.addWidget(value)
+        value.tile = frame
+        return value
+
+    def _create_progress_group(self) -> QGroupBox:
+        group = QGroupBox("Progress")
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+
+        # Header: phase pill + file name + counter
+        header = QHBoxLayout()
+        self.phase_label = QLabel("Idle")
+        self.phase_label.setStyleSheet(
+            "QLabel { background: #e0e0e0; color: #444; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+        self.current_file_label = QLabel("Ready — add files and press Start")
+        self.current_file_label.setStyleSheet("font-weight: bold;")
+        self.current_file_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.counter_label = QLabel("")
+        self.counter_label.setStyleSheet("color: #666;")
+        header.addWidget(self.phase_label)
+        header.addWidget(self.current_file_label, 1)
+        header.addWidget(self.counter_label)
+        layout.addLayout(header)
+
+        # Current file bar + ETA line
+        self.file_progress_bar = QProgressBar()
+        self.file_progress_bar.setRange(0, 100)
+        self.file_progress_bar.setFormat("%p%")
+        self.file_progress_bar.setStyleSheet(self._BAR_STYLE % "#4a90d9")
+        layout.addWidget(self.file_progress_bar)
+
+        file_line = QHBoxLayout()
+        self.file_eta_label = QLabel("File ETA: --")
+        self.file_elapsed_label = QLabel("Elapsed: --")
+        self.file_elapsed_label.setStyleSheet("color: #666;")
+        file_line.addWidget(self.file_eta_label)
+        file_line.addStretch()
+        file_line.addWidget(self.file_elapsed_label)
+        layout.addLayout(file_line)
+
+        # Overall bar + ETA line
+        overall_caption = QLabel("Overall")
+        overall_caption.setStyleSheet("color: #666; font-size: 11px; margin-top: 4px;")
+        layout.addWidget(overall_caption)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setStyleSheet(self._BAR_STYLE % "#28a745")
+        layout.addWidget(self.progress_bar)
+
+        total_line = QHBoxLayout()
+        self.time_label = QLabel("Total ETA: --")
+        self.total_elapsed_label = QLabel("Elapsed: --")
+        self.total_elapsed_label.setStyleSheet("color: #666;")
+        total_line.addWidget(self.time_label)
+        total_line.addStretch()
+        total_line.addWidget(self.total_elapsed_label)
+        layout.addLayout(total_line)
+
+        # Stats tiles
+        tiles = QHBoxLayout()
+        tiles.setSpacing(6)
+        self.stat_fps = self._make_stat_tile("FPS")
+        self.stat_speed = self._make_stat_tile("Speed")
+        self.stat_bitrate = self._make_stat_tile("Bitrate")
+        self.stat_size = self._make_stat_tile("Output size")
+        self.stat_position = self._make_stat_tile("Position")
+        for tile in (self.stat_fps, self.stat_speed, self.stat_bitrate, self.stat_size, self.stat_position):
+            tiles.addWidget(tile.tile, 1)
+        layout.addLayout(tiles)
+
+        # Compact status line (kept for messages such as errors / stopped)
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("color: #555; font-size: 11px;")
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self.status_label)
+
+        group.setLayout(layout)
+        return group
+
     def _create_right_panel(self):
         """Create right panel with settings tabs"""
         panel = QWidget()
@@ -539,8 +609,21 @@ class UIManager(QWidget):
         self.controls['deinterlace'] = QCheckBox("Enable Deinterlacing")
         self.controls['tff'] = QCheckBox("Top Field First")
         self.controls['reduce_fps'] = QCheckBox("Reduce Frame Rate (Halve FPS)")
-        
+
+        deint_row = QHBoxLayout()
+        deint_row.addWidget(QLabel("Deinterlacer:"))
+        self.controls['deinterlacer'] = QComboBox()
+        for text, value in DEINTERLACERS:
+            self.controls['deinterlacer'].addItem(text, value)
+        self.controls['deinterlacer'].setToolTip(
+            "QTGMC: highest quality, needs AviSynth+ (Windows).\n"
+            "bwdif / yadif: built into FFmpeg, work on every OS and with any input."
+        )
+        self.controls['deinterlacer'].currentIndexChanged.connect(self._on_deinterlacer_changed)
+        deint_row.addWidget(self.controls['deinterlacer'], 1)
+
         deint_layout.addWidget(self.controls['deinterlace'])
+        deint_layout.addLayout(deint_row)
         deint_layout.addWidget(self.controls['tff'])
         deint_layout.addWidget(self.controls['reduce_fps'])
         
@@ -613,7 +696,8 @@ class UIManager(QWidget):
         fixes_group = QGroupBox("Fixes & Workarounds")
         fixes_layout = QVBoxLayout()
         
-        self.controls['corrupt_fix'] = QCheckBox("Fix H.264 Stream Corruption (TS files)")
+        self.controls['corrupt_fix'] = QCheckBox("Tolerate corrupt streams (regenerate timestamps, drop bad packets)")
+        self.controls['corrupt_fix'].setToolTip("Adds -fflags +genpts+discardcorrupt for damaged TS/DVB captures.")
         fixes_layout.addWidget(self.controls['corrupt_fix'])
         
         fixes_group.setLayout(fixes_layout)
@@ -719,23 +803,41 @@ class UIManager(QWidget):
         """Handle DAR mode change"""
         self.controls['dar_custom'].setEnabled(text == "Custom")
 
+    def _uses_qtgmc(self) -> bool:
+        return self.controls['deinterlacer'].currentData() == 'qtgmc'
+
     def _on_deinterlace_toggled(self, checked):
-        """Auto-enable AviSynth+ when deinterlacing is turned on"""
-        if checked:
+        """QTGMC lives in the AviSynth script, so enable AviSynth+ when it is chosen"""
+        if checked and self._uses_qtgmc():
+            self.controls['use_avisynth'].setChecked(True)
+
+    def _on_deinterlacer_changed(self, _index):
+        if self.controls['deinterlace'].isChecked() and self._uses_qtgmc():
             self.controls['use_avisynth'].setChecked(True)
 
     def _on_avisynth_toggled(self, checked):
-        """Auto-disable deinterlacing when AviSynth+ is turned off"""
-        if not checked:
-            self.controls['deinterlace'].setChecked(False)
+        """Turning AviSynth+ off makes QTGMC unavailable — fall back to bwdif"""
+        if not checked and self.controls['deinterlace'].isChecked() and self._uses_qtgmc():
+            index = self.controls['deinterlacer'].findData('bwdif')
+            if index >= 0:
+                self.controls['deinterlacer'].setCurrentIndex(index)
+
+    def _on_rows_moved(self, _parent, start, end, _dest, row):
+        """Internal drag-and-drop in the list → reorder the real queue"""
+        if start != end:
+            return  # multi-row moves are not supported by the queue model
+        to_index = row - 1 if row > start else row
+        # Defer: the view is still inside its drop handling when rowsMoved fires
+        QTimer.singleShot(0, lambda: self.files_reordered.emit(start, to_index))
 
     def _on_add_files(self):
         """Add files dialog"""
+        patterns = ' '.join(f'*{ext}' for ext in VIDEO_EXTENSIONS)
         files, _ = QFileDialog.getOpenFileNames(
             self.main_window,
             "Select Input Files",
             "",
-            "Video Files (*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm);;All Files (*.*)"
+            f"Video Files ({patterns});;All Files (*.*)"
         )
         if files:
             self.files_added.emit(files)
@@ -768,49 +870,122 @@ class UIManager(QWidget):
             "• AviSynth+ integration\n"
             "• PAR/DAR support\n"
             "• Optional resolution scaling\n"
+            "• QTGMC / bwdif / yadif deinterlacing\n"
             "• Batch processing\n\n"
             "Drag and drop files or folders to process."
         )
     
     def update_file_list(self, files):
-        """Update file list display — during processing, append only to preserve colors"""
-        if getattr(self, '_processing_active', False):
-            self.append_to_file_list(files)
-            return
+        """Rebuild the list from the queue, keeping per-file state colours"""
+        self._files = list(files)
         self.file_list.clear()
         for file in files:
-            item = QListWidgetItem(f"{file.filename} ({file.get_file_size_mb():.1f} MB)")
+            label = f"{file.filename} ({file.get_file_size_mb():.1f} MB)"
+            if file.vmaf_score is not None:
+                label += f" | VMAF: {file.vmaf_score:.1f}"
+            item = QListWidgetItem(label)
             item.setToolTip(file.filepath)
+            color = self._FILE_STATE_COLORS.get(getattr(file, 'status', 'pending'))
+            if color:
+                item.setBackground(QBrush(color))
             self.file_list.addItem(item)
 
-    def append_to_file_list(self, files):
-        """Append new items without clearing existing ones (preserves background colors)"""
-        current_count = self.file_list.count()
-        for file in files[current_count:]:
-            item = QListWidgetItem(f"{file.filename} ({file.get_file_size_mb():.1f} MB)")
-            item.setToolTip(file.filepath)
-            self.file_list.addItem(item)
-    
     def update_file_count(self, count):
         """Update file count label"""
         self.file_count_label.setText(f"{count} files in queue")
         self.controls['start'].setEnabled(count > 0)
     
+    _FILE_STATE_COLORS = {
+        'running': QColor(255, 244, 179),   # soft yellow
+        'success': QColor(200, 240, 200),   # soft green
+        'failed': QColor(250, 200, 200),    # soft red
+    }
+
     def update_progress(self, value, maximum):
-        """Update progress bar"""
+        """Update overall progress bar"""
         self.progress_bar.setMaximum(maximum)
         self.progress_bar.setValue(value)
-    
+
     def update_status(self, message):
-        """Update status label, eliding long messages (full text in tooltip)"""
+        """Update the compact status line (full text in tooltip)"""
         available_width = self.status_label.width() - 10
+        shown = message
         if available_width > 0:
-            message_shown = self.status_label.fontMetrics().elidedText(
+            shown = self.status_label.fontMetrics().elidedText(
                 message, Qt.TextElideMode.ElideRight, available_width)
-        else:
-            message_shown = message
-        self.status_label.setText(message_shown)
+        self.status_label.setText(shown)
         self.status_label.setToolTip(message)
+
+    def update_stats(self, snap: Dict[str, Any]):
+        """Refresh the progress panel from a ProcessManager snapshot"""
+        phase = snap.get('phase') or 'Working'
+        self.phase_label.setText(phase)
+        self.phase_label.setStyleSheet(
+            "QLabel { background: #d6e9ff; color: #1b4f8a; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+
+        name = snap.get('file_name') or ''
+        width = max(50, self.current_file_label.width() - 10)
+        self.current_file_label.setText(
+            self.current_file_label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, width))
+        self.current_file_label.setToolTip(name)
+        self.counter_label.setText(f"{snap.get('file_index', 0) + 1} / {snap.get('total_files', 0)}")
+
+        percent = snap.get('percent')
+        if percent is None:
+            self.file_progress_bar.setRange(0, 0)   # busy indicator (unknown duration)
+        else:
+            self.file_progress_bar.setRange(0, 100)
+            self.file_progress_bar.setValue(int(percent))
+
+        self.file_eta_label.setText(f"File ETA: {format_duration(snap.get('eta_file'))}")
+        self.file_elapsed_label.setText(f"Elapsed: {format_duration(snap.get('elapsed_file'))}")
+        self.time_label.setText(f"Total ETA: {format_duration(snap.get('eta_total'))}")
+        self.total_elapsed_label.setText(f"Elapsed: {format_duration(snap.get('elapsed_total'))}")
+
+        fps = snap.get('fps')
+        speed = snap.get('speed')
+        self.stat_fps.setText(f"{fps:.0f}" if fps else "--")
+        self.stat_speed.setText(f"{speed:.2f}×" if speed else "--")
+        self.stat_bitrate.setText(snap.get('bitrate') or "--")
+        self.stat_size.setText(format_size(snap.get('size')))
+        out_time, duration = snap.get('out_time'), snap.get('duration')
+        if out_time is not None:
+            pos = format_duration(out_time)
+            self.stat_position.setText(f"{pos} / {format_duration(duration)}" if duration else pos)
+        else:
+            self.stat_position.setText("--")
+
+    def reset_progress_panel(self, message: str = "Ready — add files and press Start"):
+        """Return the panel to its idle look"""
+        self.phase_label.setText("Idle")
+        self.phase_label.setStyleSheet(
+            "QLabel { background: #e0e0e0; color: #444; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+        self.current_file_label.setText(message)
+        self.current_file_label.setToolTip("")
+        self.counter_label.setText("")
+        self.file_progress_bar.setRange(0, 100)
+        self.file_progress_bar.setValue(0)
+        self.file_eta_label.setText("File ETA: --")
+        self.file_elapsed_label.setText("Elapsed: --")
+        self.time_label.setText("Total ETA: --")
+        self.total_elapsed_label.setText("Elapsed: --")
+        for tile in (self.stat_fps, self.stat_speed, self.stat_bitrate, self.stat_size, self.stat_position):
+            tile.setText("--")
+
+    def set_file_state(self, index: int, state: str):
+        """Colour a queue entry by processing state (and remember it on the file)"""
+        files = getattr(self, '_files', [])
+        if 0 <= index < len(files):
+            files[index].status = state
+        item = self.file_list.item(index)
+        color = self._FILE_STATE_COLORS.get(state)
+        if item and color:
+            item.setBackground(QBrush(color))
+
+    def set_file_vmaf(self, index: int, score: float):
+        item = self.file_list.item(index)
+        if item:
+            item.setText(f"{item.text()} | VMAF: {score:.1f}")
 
     def update_ffmpeg_status(self, available):
         """Update FFmpeg status in status bar"""
@@ -824,6 +999,15 @@ class UIManager(QWidget):
     def set_processing_state(self, is_processing):
         """Set UI state for processing"""
         self._processing_active = is_processing
+        if is_processing:
+            self.reset_progress_panel("Starting…")
+        else:
+            self.phase_label.setText("Idle")
+            self.phase_label.setStyleSheet(
+                "QLabel { background: #e0e0e0; color: #444; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+            self.file_progress_bar.setRange(0, 100)
+            self.file_eta_label.setText("File ETA: --")
+            self.time_label.setText("Total ETA: --")
         self.controls['start'].setEnabled(not is_processing)
         self.controls['stop'].setEnabled(is_processing)
         self.controls['add_files'].setEnabled(True)        # always enabled
@@ -852,6 +1036,7 @@ class UIManager(QWidget):
             'output_format': self.controls['output_format'].currentText(),
             'stereo': self.controls['stereo'].isChecked(),
             'deinterlace': self.controls['deinterlace'].isChecked(),
+            'deinterlacer': self.controls['deinterlacer'].currentData(),
             'tff': self.controls['tff'].isChecked(),
             'reduce_fps': self.controls['reduce_fps'].isChecked(),
             'use_avisynth': self.controls['use_avisynth'].isChecked(),

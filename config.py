@@ -8,7 +8,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -22,9 +22,11 @@ VIDEO_EXTENSIONS = [
 VIDEO_CODECS = [
     ("H.264 (x264)", "libx264"),
     ("H.265/HEVC (x265)", "libx265"),
+    ("AV1 (SVT-AV1)", "libsvtav1"),
+    ("VP9 (libvpx)", "libvpx-vp9"),
     ("NVIDIA H.264 (NVENC)", "h264_nvenc"),
     ("NVIDIA H.265/HEVC (NVENC)", "hevc_nvenc"),
-    ("ProRes", "prores_ks"),
+    ("ProRes (HQ)", "prores_ks"),
     ("Raw/Uncompressed", "rawvideo"),
     ("Copy (No Re-encoding)", "copy")
 ]
@@ -49,6 +51,7 @@ ENCODING_PRESETS = [
     "Slower", "Very Slow"
 ]
 
+# x264 / x265 preset names
 PRESET_MAPPING = {
     "Ultra Fast": "ultrafast",
     "Super Fast": "superfast",
@@ -59,6 +62,60 @@ PRESET_MAPPING = {
     "Slow": "slow",
     "Slower": "slower",
     "Very Slow": "veryslow"
+}
+
+# NVENC presets p1 (fastest) .. p7 (best quality)
+NVENC_PRESET_MAPPING = {
+    "Ultra Fast": "p1",
+    "Super Fast": "p2",
+    "Very Fast": "p3",
+    "Faster": "p3",
+    "Fast": "p4",
+    "Medium": "p4",
+    "Slow": "p5",
+    "Slower": "p6",
+    "Very Slow": "p7"
+}
+
+# SVT-AV1 presets 13 (fastest) .. 0 (slowest); 2..12 is the practical range
+SVTAV1_PRESET_MAPPING = {
+    "Ultra Fast": "12",
+    "Super Fast": "11",
+    "Very Fast": "10",
+    "Faster": "9",
+    "Fast": "8",
+    "Medium": "6",
+    "Slow": "5",
+    "Slower": "4",
+    "Very Slow": "2"
+}
+
+# libvpx-vp9 -cpu-used 5 (fastest) .. 0 (slowest) with -deadline good
+VP9_CPU_USED_MAPPING = {
+    "Ultra Fast": "5",
+    "Super Fast": "5",
+    "Very Fast": "4",
+    "Faster": "4",
+    "Fast": "3",
+    "Medium": "2",
+    "Slow": "1",
+    "Slower": "1",
+    "Very Slow": "0"
+}
+
+# Deinterlacers: display name -> key
+DEINTERLACERS = [
+    ("QTGMC (AviSynth+, best quality)", "qtgmc"),
+    ("bwdif (FFmpeg, good)", "bwdif"),
+    ("yadif (FFmpeg, fast)", "yadif")
+]
+
+# Codecs allowed per container (None = anything goes)
+CONTAINER_VIDEO_CODECS = {
+    "webm": {"libvpx-vp9", "libsvtav1", "copy"},
+}
+CONTAINER_AUDIO_CODECS = {
+    "webm": {"libopus", "copy"},
 }
 
 # PAR (Pixel Aspect Ratio) presets
@@ -126,6 +183,7 @@ DEFAULT_SETTINGS = {
     "output_format": DEFAULT_FORMAT,
     "stereo": False,
     "deinterlace": False,
+    "deinterlacer": "qtgmc",
     "tff": False,
     "reduce_fps": False,
     "use_avisynth": False,
@@ -171,12 +229,20 @@ QUALITY_PRESETS = {
         "output_format": "MKV"
     },
     "archive": {
-        "name": "Archive (ProRes/PCM)",
+        "name": "Archive (ProRes HQ/PCM)",
         "video_codec": "prores_ks",
         "audio_codec": "pcm_s32le",
-        "crf": 10,
         "abr": 512,
         "preset": "Medium",
         "output_format": "MOV"
+    },
+    "av1": {
+        "name": "Modern (AV1/Opus)",
+        "video_codec": "libsvtav1",
+        "audio_codec": "libopus",
+        "crf": 30,
+        "abr": 160,
+        "preset": "Medium",
+        "output_format": "MKV"
     }
 }

@@ -45,7 +45,6 @@ class AviSynthHandler:
                 self._write_processing(avs)
                 self._write_custom_extras(avs)
                 self._write_deinterlacing(avs)
-                self._write_par_dar_corrections(avs)
                 self._write_prefetch(avs)
             
             return True
@@ -116,9 +115,10 @@ class AviSynthHandler:
         avs_file.write('\n')
     
     def _write_processing(self, avs_file):
-        """Write basic processing"""
+        """Normalise to 4:2:0 (no-op for YV12 sources, converts RGB/YUY2 inputs).
+        QTGMC on 4:4:4 costs ~2x for chroma that ffmpeg drops again with yuv420p."""
         avs_file.write('# Color conversion\n')
-        avs_file.write('ConvertToYV24(matrix="rec709")\n')
+        avs_file.write('ConvertToYV12(matrix="rec709")\n')
         avs_file.write('\n')
     
     def _write_custom_extras(self, avs_file):
@@ -129,9 +129,20 @@ class AviSynthHandler:
             avs_file.write(extras + '\n')
             avs_file.write('\n')
     
+    def _edi_threads(self) -> int:
+        """
+        Threads for QTGMC's internal (nnedi3) threading. Prefetch() already runs
+        several frames in parallel, so give each frame a small slice of the cores
+        instead of threads*threads oversubscription.
+        """
+        threads = int(self.settings.get('threads', self.cpu_count) or 1)
+        return max(1, min(4, threads // 2))
+
     def _write_deinterlacing(self, avs_file):
-        """Write deinterlacing section if enabled"""
+        """Write QTGMC deinterlacing section if enabled (ffmpeg handles yadif/bwdif)"""
         if not self.settings.get('deinterlace', False):
+            return
+        if self.settings.get('deinterlacer', 'qtgmc') != 'qtgmc':
             return
         
         avs_file.write('# Deinterlacing\n')
@@ -145,7 +156,7 @@ class AviSynthHandler:
         # QTGMC deinterlacing (remap presets that need unbundled plugins)
         preset = self.settings.get('preset', 'Medium')
         preset = self.QTGMC_SAFE_PRESET.get(preset, preset)
-        threads = self.settings.get('threads', self.cpu_count)
+        threads = self._edi_threads()
         
         if self.settings.get('reduce_fps', False):
             # Reduce frame rate (halve FPS)
@@ -155,35 +166,6 @@ class AviSynthHandler:
             avs_file.write(f'QTGMC(Preset="{preset}", EdiThreads={threads})\n')
         
         avs_file.write('\n')
-    
-    def _write_par_dar_corrections(self, avs_file):
-        """Write PAR/DAR correction if needed"""
-        par_mode = self.settings.get('par_mode', 'auto')
-        dar_mode = self.settings.get('dar_mode', 'auto')
-        
-        if par_mode != 'auto' or dar_mode != 'auto':
-            avs_file.write('# Aspect ratio corrections\n')
-            
-            # PAR correction
-            if par_mode == 'custom':
-                par_value = self.settings.get('par_custom', '1:1')
-                if ':' in par_value:
-                    num, den = par_value.split(':')
-                    avs_file.write(f'# Custom PAR: {par_value}\n')
-                    # You could add resize operations here if needed
-            elif par_mode != 'auto':
-                par_value = self.settings.get('par_value', '1:1')
-                avs_file.write(f'# PAR preset: {par_value}\n')
-            
-            # DAR correction
-            if dar_mode == 'custom':
-                dar_value = self.settings.get('dar_custom', '16:9')
-                avs_file.write(f'# Custom DAR: {dar_value}\n')
-            elif dar_mode != 'auto':
-                dar_value = self.settings.get('dar_value', '16:9')
-                avs_file.write(f'# DAR preset: {dar_value}\n')
-            
-            avs_file.write('\n')
     
     def _write_prefetch(self, avs_file):
         """Write prefetch for multi-threading"""

@@ -59,6 +59,9 @@ class MainWindow(QMainWindow):
         # Process manager signals
         self.process_manager.progress_updated.connect(self.ui_manager.update_progress)
         self.process_manager.status_updated.connect(self.ui_manager.update_status)
+        self.process_manager.stats_updated.connect(self.ui_manager.update_stats)
+        self.process_manager.file_state_changed.connect(self.ui_manager.set_file_state)
+        self.process_manager.vmaf_calculated.connect(self.ui_manager.set_file_vmaf)
         self.process_manager.processing_finished.connect(self.on_processing_finished)
         
         # UI signals
@@ -67,6 +70,7 @@ class MainWindow(QMainWindow):
         self.ui_manager.files_added.connect(self.file_manager.add_files)
         self.ui_manager.files_removed.connect(self._on_files_removed)
         self.ui_manager.queue_cleared.connect(self.file_manager.clear_queue)
+        self.ui_manager.files_reordered.connect(self.file_manager.move_file)
 
         # Route newly-added files to the running process queue
         self.file_manager.files_updated.connect(self._on_files_updated_during_processing)
@@ -80,8 +84,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "FFmpeg Not Found",
-                "FFmpeg was not found in your system PATH or current directory.\n"
-                "Please install FFmpeg or place ffmpeg.exe in the application directory."
+                "FFmpeg was not found in your system PATH or the application directory.\n"
+                "Install FFmpeg (or place the ffmpeg binary next to main.py)."
             )
     
     def start_processing(self):
@@ -92,7 +96,21 @@ class MainWindow(QMainWindow):
         
         settings = self.ui_manager.get_current_settings()
         files = self.file_manager.get_queue()
-        
+
+        issues = self.process_manager.validate_settings(settings)
+        if issues:
+            reply = QMessageBox.warning(
+                self,
+                "Check Settings",
+                "The current settings have potential problems:\n\n• "
+                + "\n• ".join(issues)
+                + "\n\nStart processing anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         self.process_manager.start_processing(files, settings)
         self.ui_manager.set_processing_state(True)
     
@@ -102,17 +120,14 @@ class MainWindow(QMainWindow):
         self.ui_manager.set_processing_state(False)
     
     def _on_files_updated_during_processing(self, files):
-        """When files are added while processing, push new ones into the shared queue"""
+        """Keep the running queue's pending tail in sync with the UI queue"""
         if self.process_manager.is_processing():
-            current_shared_count = self.process_manager.get_total_file_count()
-            if len(files) > current_shared_count:
-                new_files = files[current_shared_count:]
-                self.process_manager.append_files(new_files)
+            self.process_manager.sync_pending(files)
 
     def _on_files_removed(self, indices):
         """Safe removal: block removal of already-processed or in-progress files"""
         if self.process_manager.is_processing():
-            current_index = self.process_manager._current_file_index
+            current_index = self.process_manager.current_file_index
             safe = [i for i in indices if i > current_index]
             blocked = [i for i in indices if i <= current_index]
             if blocked:

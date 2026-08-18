@@ -26,9 +26,8 @@ class VideoFile:
         self.error_file: Optional[str] = None
         self.ffindex_file: Optional[str] = None
         
-        # Processing state
-        self.is_processing = False
-        self.is_completed = False
+        # Processing state: 'pending' | 'running' | 'success' | 'failed'
+        self.status = 'pending'
         self.has_error = False
         self.error_messages: List[str] = []
         
@@ -59,11 +58,12 @@ class VideoFile:
         
         self.logger = logging.getLogger(f"file_{self.index}_{self.basename}")
         self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False   # keep per-file logs out of the root logger / stderr
         self.logger.handlers.clear()
         
         # File handler
         log_file = os.path.join(self.directory, f"{self.basename}.log")
-        file_handler = logging.FileHandler(log_file)
+        file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
         file_handler.setFormatter(log_formatter)
         self.logger.addHandler(file_handler)
         
@@ -173,7 +173,6 @@ class FileQueue:
     
     def __init__(self):
         self.files: List[VideoFile] = []
-        self._current_index = 0
     
     def add_file(self, filepath: str) -> VideoFile:
         """Add a file to the queue"""
@@ -212,7 +211,6 @@ class FileQueue:
     def clear(self):
         """Clear all files from queue"""
         self.files.clear()
-        self._current_index = 0
     
     def contains(self, filepath: str) -> bool:
         """Check if filepath is already in queue"""
@@ -221,18 +219,6 @@ class FileQueue:
     def get_all(self) -> List[VideoFile]:
         """Get all files in queue"""
         return self.files.copy()
-    
-    def get_next(self) -> Optional[VideoFile]:
-        """Get next file to process"""
-        if self._current_index < len(self.files):
-            file = self.files[self._current_index]
-            self._current_index += 1
-            return file
-        return None
-    
-    def reset_iterator(self):
-        """Reset the iterator to beginning"""
-        self._current_index = 0
     
     def _reindex(self):
         """Reindex files after removal"""

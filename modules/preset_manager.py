@@ -182,6 +182,11 @@ class PresetManager(QObject):
         if 'dar_custom' in settings:
             ui.controls['dar_custom'].setText(settings['dar_custom'])
 
+        if 'deinterlacer' in settings:
+            index = ui.controls['deinterlacer'].findData(settings['deinterlacer'])
+            if index >= 0:
+                ui.controls['deinterlacer'].setCurrentIndex(index)
+
         # Resolution
         if 'resolution_mode' in settings:
             index = ui.controls['resolution_mode'].findText(settings['resolution_mode'])
@@ -231,15 +236,7 @@ class PresetManager(QObject):
             return
         
         preset = QUALITY_PRESETS[preset_name]
-        settings = {
-            'video_codec': preset.get('video_codec'),
-            'audio_codec': preset.get('audio_codec'),
-            'crf': preset.get('crf'),
-            'abr': preset.get('abr'),
-            'preset': preset.get('preset'),
-            'output_format': preset.get('output_format')
-        }
-        
+        settings = {k: v for k, v in preset.items() if k != 'name'}
         self.apply_settings(settings)
     
     def get_available_presets(self) -> List[Dict[str, str]]:

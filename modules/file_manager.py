@@ -29,8 +29,16 @@ class FileManager(QObject):
         """
         added_count = 0
         valid_files = []
-        
+
         for filepath in filepaths:
+            # Dropped folders: expand to the video files they contain
+            if os.path.isdir(filepath):
+                for entry in sorted(os.listdir(filepath)):
+                    candidate = os.path.join(filepath, entry)
+                    if self._is_valid_video_file(candidate) and not self.queue.contains(candidate):
+                        valid_files.append(candidate)
+                        added_count += 1
+                continue
             if self._is_valid_video_file(filepath):
                 if not self.queue.contains(filepath):
                     valid_files.append(filepath)
@@ -116,23 +124,15 @@ class FileManager(QObject):
         return bool(self.queue)
     
     def move_file(self, from_index: int, to_index: int) -> bool:
-        """
-        Move file from one position to another in queue
-        Used for drag and drop reordering
-        """
-        if (0 <= from_index < len(self.queue) and 
-            0 <= to_index < len(self.queue) and 
-            from_index != to_index):
-            
-            files = self.queue.files
-            file_to_move = files.pop(from_index)
-            files.insert(to_index, file_to_move)
-            self.queue._reindex()
-            self._emit_updates()
-            return True
-        
-        return False
-    
+        """Move a file within the queue (list drag-and-drop reordering)"""
+        files = self.queue.files
+        if not (0 <= from_index < len(files) and 0 <= to_index < len(files)) or from_index == to_index:
+            return False
+        files.insert(to_index, files.pop(from_index))
+        self.queue._reindex()
+        self._emit_updates()
+        return True
+
     def get_total_size_mb(self) -> float:
         """Get total size of all files in queue (MB)"""
         total_size = 0
@@ -152,50 +152,3 @@ class FileManager(QObject):
         """Emit signals to notify about queue changes"""
         self.files_updated.emit(self.queue.get_all())
         self.file_count_changed.emit(len(self.queue))
-    
-    def validate_queue(self) -> List[str]:
-        """
-        Validate all files in queue still exist
-        Returns list of missing files
-        """
-        missing = []
-        for file in self.queue:
-            if not os.path.exists(file.filepath):
-                missing.append(file.filepath)
-        
-        # Remove missing files
-        for filepath in missing:
-            self.queue.remove_file(filepath)
-        
-        if missing:
-            self._emit_updates()
-        
-        return missing
-    
-    def get_output_paths(self, settings: dict, output_dir: Optional[str] = None) -> List[str]:
-        """
-        Get list of output paths based on current settings
-        Useful for checking if files will be overwritten
-        """
-        output_paths = []
-        
-        for file in self.queue:
-            file.set_output_name(settings)
-            output_path = file.get_full_output_path(output_dir)
-            output_paths.append(output_path)
-        
-        return output_paths
-    
-    def check_overwrites(self, settings: dict, output_dir: Optional[str] = None) -> List[str]:
-        """
-        Check which output files already exist
-        Returns list of existing files that would be overwritten
-        """
-        existing = []
-        output_paths = self.get_output_paths(settings, output_dir)
-        
-        for path in output_paths:
-            if os.path.exists(path):
-                existing.append(path)
-        
-        return existing

@@ -4,62 +4,85 @@ Handles FFmpeg process execution and monitoring
 """
 
 import os
+import sys
 import time
 import subprocess
 import re
 import psutil
 import shlex
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
 from models.file_models import VideoFile
-from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg
+from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration
 from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
+from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS
+
+
+def format_duration(seconds: Optional[float]) -> str:
+    """Render seconds as 1h 02m 03s / 4m 05s / 12s; '--' when unknown"""
+    if seconds is None or seconds < 0 or seconds != seconds:  # NaN guard
+        return "--"
+    seconds = int(round(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def format_size(num_bytes: Optional[float]) -> str:
+    """Human-readable size"""
+    if not num_bytes or num_bytes < 0:
+        return "--"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num_bytes < 1024 or unit == "TB":
+            return f"{num_bytes:.0f} {unit}" if unit == "B" else f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
+    return "--"
 
 
 class ProcessThread(QThread):
     """Thread for processing video files"""
 
     # Pre-compiled regex patterns
-    _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})')
-    _TIME_RE = re.compile(r'time=(\d{2}):(\d{2}):(\d{2})')
+    _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?')
     _VMAF_RE = re.compile(r'VMAF score\s*[:=]\s*([\d.]+)', re.IGNORECASE)
     _ERROR_KEYWORDS = ("error", "invalid", "failed")
-    _MULTISPACE_RE = re.compile(r' {2,}')
-    _STATUS_REPLACEMENTS = (
-        ("time=", ""),
-        ("bitrate= ", "br:"),
-        ("bitrate=", "br:"),
-        ("speed", "rate"),
-        ("size=", ""),
-        ("frame", "f"),
-        ("=", ":"),
-    )
 
     # Signals
-    progress_signal = Signal(str, int)  # message, percentage
+    progress_signal = Signal(dict)          # structured progress snapshot
     info_signal = Signal(str)
-    file_started = Signal(int)  # file index
-    file_finished = Signal(int, bool)  # file index, success
-    time_remaining = Signal(str)  # time string
+    file_started = Signal(int)              # file index
+    file_finished = Signal(int, bool)       # file index, success
     processing_finished = Signal(int, int)  # success count, total count
-    vmaf_calculated = Signal(int, float)  # file index, score
+    vmaf_calculated = Signal(int, float)    # file index, score
 
     def __init__(self, process_manager, settings: Dict[str, Any]):
         super().__init__()
         self._pm = process_manager
         self.settings = settings
         self.should_stop = False
-        self.current_process = None
-        self.current_pid = None
-        self.start_time = None
+        self.current_process: Optional[subprocess.Popen] = None
+        self.current_pid: Optional[int] = None
+        self.start_time: Optional[float] = None
         self.success_count = 0
+
+        # Timing bookkeeping for ETA
+        self._file_start_time: Optional[float] = None
+        self._completed_wall_times: List[float] = []
+        self._current_index = 0
 
         self.command_builder = FFmpegCommandBuilder(settings)
         self.avisynth_handler = AviSynthHandler(settings) if settings.get('use_avisynth') else None
         self.file_ops = FileOperations()
 
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
     def run(self):
         """Main processing loop — pulls files dynamically from the shared queue"""
         self.start_time = time.time()
@@ -71,20 +94,17 @@ class ProcessThread(QThread):
             if file is None:
                 break
 
+            self._current_index = index
+            self._file_start_time = time.time()
             total_count = self._pm.get_total_file_count()
 
-            # Setup file for processing
             file.create_logger()
             file.set_output_name(self.settings)
+            file.duration = probe_duration(file.filepath)
 
             self.file_started.emit(index)
             self.info_signal.emit(f"Processing {index + 1}/{total_count}: {file.filename}")
 
-            # Calculate time remaining
-            if index > 0:
-                self._emit_time_remaining(index, total_count)
-
-            # Process file
             success = self._process_file(file)
 
             if success:
@@ -95,49 +115,32 @@ class ProcessThread(QThread):
                         and self.settings.get('video_codec') != 'copy'):
                     self._calculate_vmaf(file, file.get_full_output_path(), index)
 
-                # Handle file replacement if requested
                 if self.settings.get('replace_files'):
-                    self.file_ops.replace_file(
-                        file.get_full_output_path(),
-                        file.filepath,
-                        file.logger
-                    )
+                    self.file_ops.replace_file(file.get_full_output_path(), file.filepath, file.logger)
                 else:
-                    # Preserve timestamps
-                    self.file_ops.preserve_timestamps(
-                        file.filepath,
-                        file.get_full_output_path(),
-                        file.logger
-                    )
+                    self.file_ops.preserve_timestamps(file.filepath, file.get_full_output_path(), file.logger)
 
-            # Cleanup temporary files
             file.cleanup_temp_files()
-
-            # Emit completion
+            self._completed_wall_times.append(time.time() - self._file_start_time)
             self.file_finished.emit(index, success)
 
-            # Report errors if any
             if file.error_messages:
                 self.info_signal.emit(f"Errors in {file.filename}:\n" + '\n'.join(file.error_messages))
 
             index += 1
 
-        total_count = self._pm.get_total_file_count()
-        self.processing_finished.emit(self.success_count, total_count)
+        self.processing_finished.emit(self.success_count, self._pm.get_total_file_count())
 
     def _process_file(self, file: VideoFile) -> bool:
         """Process a single file"""
         try:
-            # Transcode if needed
             if self.settings.get('transcode_video') or self.settings.get('transcode_audio'):
                 if not self._transcode(file):
                     return False
-                # Update filename to transcoded version
                 input_file = file.transcode_name
             else:
                 input_file = file.filepath
 
-            # Create AviSynth script if needed
             if self.settings.get('use_avisynth') and self.avisynth_handler:
                 if self.avisynth_handler.create_script(file):
                     input_file = file.avs_file
@@ -145,15 +148,10 @@ class ProcessThread(QThread):
                     file.add_error("Failed to create AviSynth script")
                     return False
 
-            # Build and execute main command
             command = self.command_builder.build_main_command(
-                input_file,
-                file.get_full_output_path(),
-                self.settings.get('use_avisynth', False)
-            )
+                input_file, file.get_full_output_path(), self.settings.get('use_avisynth', False))
 
-            return_code = self._execute_command(command, file)
-
+            return_code = self._execute_command(command, file, phase="Encoding")
             return return_code == 0 and not self.should_stop
 
         except Exception as e:
@@ -163,24 +161,22 @@ class ProcessThread(QThread):
     def _transcode(self, file: VideoFile) -> bool:
         """Transcode to raw format"""
         file.log_info("Starting transcoding...")
-
         command = self.command_builder.build_transcode_command(
-            file.filepath,
-            file.transcode_name,
+            file.filepath, file.transcode_name,
             self.settings.get('transcode_video', False),
-            self.settings.get('transcode_audio', False)
-        )
+            self.settings.get('transcode_audio', False))
 
-        return_code = self._execute_command(command, file)
+        return_code = self._execute_command(command, file, phase="Transcoding")
         success = return_code == 0 and not self.should_stop
-
         if success:
             file.log_info("Transcoding completed successfully")
         else:
             file.add_error("Transcoding failed")
-
         return success
 
+    # ------------------------------------------------------------------
+    # Subprocess handling
+    # ------------------------------------------------------------------
     @staticmethod
     def _format_command(command: List[str]) -> str:
         """Human-readable command line for logging"""
@@ -203,14 +199,20 @@ class ProcessThread(QThread):
             kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
         return subprocess.Popen(command, **kwargs)
 
-    def _run_monitored(self, command: List[str], file: VideoFile,
-                       on_progress, on_line=None) -> int:
-        """
-        Run an FFmpeg command, log its output, and report percentage progress.
+    @staticmethod
+    def _to_float(value: str) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
-        on_progress(line, percent) is called for every progress line;
-        on_line(line) is called for every non-empty output line (optional).
-        Returns the process return code (1 if stopped or failed to launch).
+    def _run_monitored(self, command: List[str], file: VideoFile, phase: str,
+                       duration: Optional[float],
+                       on_line: Optional[Callable[[str], None]] = None) -> int:
+        """
+        Run an FFmpeg command started with `-progress pipe:1`, log its output and
+        emit structured progress snapshots. Returns the return code (1 if stopped
+        or failed to launch).
         """
         file.log_info(f"Executing: {self._format_command(command)}")
 
@@ -221,7 +223,9 @@ class ProcessThread(QThread):
             return 1
 
         self.current_pid = self.current_process.pid
-        total_duration = None
+        phase_start = time.time()
+        block: Dict[str, str] = {}
+        last_emit = 0.0
 
         try:
             for raw_line in self.current_process.stdout:
@@ -233,20 +237,26 @@ class ProcessThread(QThread):
                 if not line:
                     continue
 
+                # -progress key=value blocks, terminated by progress=continue|end
+                if '=' in line and ' ' not in line.split('=', 1)[0]:
+                    key, _, value = line.partition('=')
+                    block[key] = value.strip()
+                    if key == 'progress':
+                        now = time.time()
+                        if value.strip() == 'end' or now - last_emit >= 0.25:
+                            self._emit_progress(file, phase, block, duration, phase_start)
+                            last_emit = now
+                        block = {}
+                    continue
+
                 file.log_info(line)
 
-                if total_duration is None:
-                    duration_match = self._DURATION_RE.search(line)
-                    if duration_match:
-                        h, m, sec = map(int, duration_match.groups())
-                        total_duration = h * 3600 + m * 60 + sec
-
-                time_match = self._TIME_RE.search(line)
-                if time_match and total_duration:
-                    h, m, sec = map(int, time_match.groups())
-                    current_time = h * 3600 + m * 60 + sec
-                    progress = max(0, min(100, int((current_time / total_duration) * 100)))
-                    on_progress(line, progress)
+                if duration is None:
+                    match = self._DURATION_RE.search(line)
+                    if match:
+                        h, m, sec, frac = match.groups()
+                        duration = int(h) * 3600 + int(m) * 60 + int(sec) + \
+                            (float(f"0.{frac}") if frac else 0.0)
 
                 if on_line:
                     on_line(line)
@@ -259,56 +269,81 @@ class ProcessThread(QThread):
         file.log_info(f"Process completed with return code: {return_code}")
         return return_code
 
-    def _execute_command(self, command: List[str], file: VideoFile) -> int:
-        """Execute FFmpeg command and monitor progress"""
+    def _emit_progress(self, file: VideoFile, phase: str, block: Dict[str, str],
+                       duration: Optional[float], phase_start: float):
+        """Turn a -progress block into a snapshot dict for the UI"""
+        out_time = None
+        us = self._to_float(block.get('out_time_us') or block.get('out_time_ms'))
+        if us is not None:
+            out_time = us / 1_000_000.0
 
-        def on_progress(line, progress):
-            self.progress_signal.emit(self._clean_status_line(line), progress)
+        speed = self._to_float((block.get('speed') or '').rstrip('x'))
+        fps = self._to_float(block.get('fps'))
+        bitrate = (block.get('bitrate') or '').strip()
+        size = self._to_float(block.get('total_size'))
+        frame = block.get('frame')
 
+        percent = None
+        eta_file = None
+        elapsed = time.time() - phase_start
+        if duration and out_time is not None and duration > 0:
+            percent = max(0.0, min(100.0, out_time / duration * 100.0))
+            remaining_media = max(0.0, duration - out_time)
+            if speed and speed > 0:
+                eta_file = remaining_media / speed
+            elif percent > 0:
+                eta_file = elapsed * (100.0 - percent) / percent
+
+        if block.get('progress') == 'end':
+            percent = 100.0
+            eta_file = 0.0
+
+        # Queue-level ETA: current file remainder + average wall time × files left
+        total_files = self._pm.get_total_file_count()
+        files_left = max(0, total_files - self._current_index - 1)
+        if self._completed_wall_times:
+            avg = sum(self._completed_wall_times) / len(self._completed_wall_times)
+        elif percent and percent > 0:
+            avg = (time.time() - self._file_start_time) * 100.0 / percent
+        else:
+            avg = None
+        eta_total = None
+        if eta_file is not None and (avg is not None or files_left == 0):
+            eta_total = eta_file + files_left * (avg or 0.0)
+
+        self.progress_signal.emit({
+            'file_index': self._current_index,
+            'total_files': total_files,
+            'file_name': file.filename,
+            'phase': phase,
+            'percent': percent,
+            'fps': fps,
+            'speed': speed,
+            'bitrate': bitrate if bitrate and bitrate != 'N/A' else None,
+            'size': size,
+            'frame': frame,
+            'out_time': out_time,
+            'duration': duration,
+            'eta_file': eta_file,
+            'eta_total': eta_total,
+            'elapsed_file': time.time() - (self._file_start_time or phase_start),
+            'elapsed_total': time.time() - (self.start_time or phase_start),
+        })
+
+    def _execute_command(self, command: List[str], file: VideoFile, phase: str) -> int:
+        """Execute FFmpeg command, monitor progress and collect error lines"""
         def on_line(line):
-            line_lower = line.lower()
-            if any(keyword in line_lower for keyword in self._ERROR_KEYWORDS):
+            lower = line.lower()
+            if any(keyword in lower for keyword in self._ERROR_KEYWORDS):
                 file.add_error(line)
 
-        return self._run_monitored(command, file, on_progress, on_line)
-
-    def _clean_status_line(self, line: str) -> str:
-        """Clean FFmpeg status line for display"""
-        line = self._MULTISPACE_RE.sub(' ', line)
-        for old, new in self._STATUS_REPLACEMENTS:
-            line = line.replace(old, new)
-        return line.strip()
-
-    def _emit_time_remaining(self, current_index: int, total: int):
-        """Calculate and emit estimated time remaining"""
-        elapsed = time.time() - self.start_time
-        avg_time_per_file = elapsed / current_index
-        remaining_files = total - current_index
-        est_remaining = avg_time_per_file * remaining_files
-
-        hours = int(est_remaining // 3600)
-        minutes = int((est_remaining % 3600) // 60)
-        seconds = int(est_remaining % 60)
-
-        if hours > 0:
-            time_str = f"{hours}h {minutes}m {seconds}s"
-        elif minutes > 0:
-            time_str = f"{minutes}m {seconds}s"
-        else:
-            time_str = f"{seconds}s"
-
-        self.time_remaining.emit(f"Est. remaining: {time_str}")
+        return self._run_monitored(command, file, phase, file.duration, on_line)
 
     def _calculate_vmaf(self, file: VideoFile, encoded_path: str, file_index: int):
         """Calculate VMAF score by comparing encoded file against original"""
         file.log_info("Starting VMAF calculation...")
-        self.progress_signal.emit(f"VMAF: {file.filename}", 0)
-
         command = self.command_builder.build_vmaf_command(encoded_path, file.filepath)
         vmaf_score: Optional[float] = None
-
-        def on_progress(_line, progress):
-            self.progress_signal.emit(f"VMAF: {file.filename} ({progress}%)", progress)
 
         def on_line(line):
             nonlocal vmaf_score
@@ -317,7 +352,7 @@ class ProcessThread(QThread):
                 vmaf_score = float(match.group(1))
 
         try:
-            self._run_monitored(command, file, on_progress, on_line)
+            self._run_monitored(command, file, "VMAF", file.duration, on_line)
         except Exception as e:
             file.log_info(f"VMAF calculation failed: {str(e)}")
             return
@@ -336,54 +371,55 @@ class ProcessThread(QThread):
 
     def _kill_process(self):
         """Kill current FFmpeg process and children"""
-        if self.current_pid:
-            try:
-                parent = psutil.Process(self.current_pid)
-                children = parent.children(recursive=True)
-
-                # Kill children first
-                for child in children:
-                    try:
-                        child.kill()
-                    except psutil.NoSuchProcess:
-                        pass
-
-                # Kill parent
+        if not self.current_pid:
+            return
+        try:
+            parent = psutil.Process(self.current_pid)
+            for child in parent.children(recursive=True):
                 try:
-                    parent.kill()
+                    child.kill()
                 except psutil.NoSuchProcess:
                     pass
-
-                self.current_pid = None
-                self.current_process = None
-
-            except psutil.NoSuchProcess:
-                pass
+            parent.kill()
+        except psutil.NoSuchProcess:
+            pass
+        finally:
+            self.current_pid = None
+            self.current_process = None
 
 
 class ProcessManager(QObject):
     """Manages video processing operations"""
 
     # Signals
-    progress_updated = Signal(int, int)  # current percentage (0-100), maximum (100)
-    status_updated = Signal(str)
-    processing_finished = Signal(int, int)  # success count, total count
+    progress_updated = Signal(int, int)        # overall percentage (0-100), maximum (100)
+    status_updated = Signal(str)               # short human-readable status text
+    stats_updated = Signal(dict)               # rich progress snapshot for the UI panel
+    file_state_changed = Signal(int, str)      # index, 'running' | 'success' | 'failed'
+    vmaf_calculated = Signal(int, float)       # index, score
+    processing_finished = Signal(int, int)     # success count, total count
 
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
         self.process_thread: Optional[ProcessThread] = None
         self._is_processing = False
-        self._current_file_index = 0  # Track current file
-        self._total_files = 0  # Track total files
+        self._current_file_index = 0
+        self._total_files = 0
         self._queue_mutex = QMutex()
         self._shared_files: List[VideoFile] = []
 
-    def append_files(self, new_files: List[VideoFile]):
-        """Thread-safe: append files to the running queue."""
+    # ---- shared queue --------------------------------------------------
+    def sync_pending(self, files: List[VideoFile]):
+        """
+        Thread-safe: make the not-yet-started tail of the running queue match
+        the UI queue (handles files added *and* removed while encoding).
+        Files up to and including the current one are never touched.
+        """
         self._queue_mutex.lock()
         try:
-            self._shared_files.extend(new_files)
+            keep = self._current_file_index + 1
+            self._shared_files = self._shared_files[:keep] + list(files[keep:])
             self._total_files = len(self._shared_files)
         finally:
             self._queue_mutex.unlock()
@@ -392,9 +428,7 @@ class ProcessManager(QObject):
         """Thread-safe: retrieve file at index, or None if out of range."""
         self._queue_mutex.lock()
         try:
-            if index < len(self._shared_files):
-                return self._shared_files[index]
-            return None
+            return self._shared_files[index] if index < len(self._shared_files) else None
         finally:
             self._queue_mutex.unlock()
 
@@ -406,20 +440,21 @@ class ProcessManager(QObject):
         finally:
             self._queue_mutex.unlock()
 
+    @property
+    def current_file_index(self) -> int:
+        return self._current_file_index
+
+    # ---- lifecycle -----------------------------------------------------
     def start_processing(self, files: List[VideoFile], settings: Dict[str, Any]):
         """Start processing files with given settings"""
         if self._is_processing:
             return
 
-        # Check FFmpeg availability
         if not find_ffmpeg():
             self.status_updated.emit("Error: FFmpeg not found!")
             return
 
-        # Initialize tracking
         self._current_file_index = 0
-
-        # Populate shared queue (thread-safe)
         self._queue_mutex.lock()
         try:
             self._shared_files = list(files)
@@ -427,156 +462,125 @@ class ProcessManager(QObject):
         finally:
             self._queue_mutex.unlock()
 
-        # Create and start process thread
         self.process_thread = ProcessThread(self, settings)
-        
-        # Connect signals
         self.process_thread.progress_signal.connect(self._on_progress)
         self.process_thread.info_signal.connect(self._on_info)
         self.process_thread.file_started.connect(self._on_file_started)
         self.process_thread.file_finished.connect(self._on_file_finished)
-        self.process_thread.time_remaining.connect(self._on_time_remaining)
         self.process_thread.processing_finished.connect(self._on_processing_finished)
-        self.process_thread.vmaf_calculated.connect(self._on_vmaf_calculated)
+        self.process_thread.vmaf_calculated.connect(self.vmaf_calculated)
 
-        # Start processing
         self._is_processing = True
         self.process_thread.start()
-        
-        # Initialize progress bar (0-100%)
+
         self.progress_updated.emit(0, 100)
         self.status_updated.emit("Processing started...")
-    
+
     def stop_processing(self):
         """Stop current processing"""
         if self.process_thread and self.process_thread.isRunning():
             self.process_thread.stop()
-            self.process_thread.wait(5000)  # Wait up to 5 seconds
-            
+            self.process_thread.wait(5000)
             if self.process_thread.isRunning():
-                self.process_thread.terminate()  # Force terminate if still running
-            
+                self.process_thread.terminate()
             self._is_processing = False
             self.status_updated.emit("Processing stopped")
-    
+
     def is_processing(self) -> bool:
-        """Check if currently processing"""
         return self._is_processing
-    
-    def _calculate_overall_progress(self, file_percentage: int) -> int:
-        """
-        Calculate overall progress combining file count and current file encoding progress
-        
-        Args:
-            file_percentage: Current file's encoding percentage (0-100)
-            
-        Returns:
-            Overall percentage (0-100)
-        """
+
+    # ---- slots ---------------------------------------------------------
+    def _overall_percent(self, file_percent: float) -> int:
         if self._total_files == 0:
             return 0
-        
-        # Files completed before current one
-        completed_files = self._current_file_index
-        
-        # Current file progress as a fraction (0.0 to 1.0)
-        current_file_progress = file_percentage / 100.0
-        
-        # Overall progress: (completed files + current file progress) / total files
-        overall_progress = (completed_files + current_file_progress) / self._total_files
-        
-        # Convert to percentage (0-100)
-        return int(overall_progress * 100)
-    
-    def _on_progress(self, message: str, percentage: int):
-        """Handle progress update from FFmpeg"""
-        # Create enhanced status message with file counter
-        enhanced_message = f"[File {self._current_file_index + 1}/{self._total_files}] {message}"
-        self.status_updated.emit(enhanced_message)
-        
-        # Update progress bar with combined progress
-        overall_percentage = self._calculate_overall_progress(percentage)
-        self.progress_updated.emit(overall_percentage, 100)
-    
+        overall = (self._current_file_index + file_percent / 100.0) / self._total_files
+        return int(max(0.0, min(100.0, overall * 100.0)))
+
+    def _on_progress(self, snapshot: Dict[str, Any]):
+        percent = snapshot.get('percent')
+        overall = self._overall_percent(percent or 0.0)
+        snapshot = dict(snapshot, overall_percent=overall)
+        self.stats_updated.emit(snapshot)
+        self.progress_updated.emit(overall, 100)
+
+        # Compact one-line status
+        pct = f"{percent:.0f}%" if percent is not None else "…"
+        eta = format_duration(snapshot.get('eta_file'))
+        self.status_updated.emit(
+            f"[{snapshot['file_index'] + 1}/{snapshot['total_files']}] "
+            f"{snapshot['phase']} {snapshot['file_name']} — {pct}, ETA {eta}")
+
     def _on_info(self, message: str):
-        """Handle info message"""
-        print(f"[INFO] {message}")  # Could add to a log viewer
-    
+        print(f"[INFO] {message}")
+
     def _on_file_started(self, index: int):
-        """Handle file processing start"""
-        # Update current file index
         self._current_file_index = index
-        
-        # Update UI to show file is being processed
-        if hasattr(self.main_window, 'ui_manager'):
-            if hasattr(self.main_window.ui_manager, 'file_list'):
-                item = self.main_window.ui_manager.file_list.item(index)
-                if item:
-                    from PySide6.QtCore import Qt
-                    item.setBackground(Qt.GlobalColor.yellow)
-        
-        # Update progress bar (file just started, so 0% progress on this file)
-        overall_percentage = self._calculate_overall_progress(0)
-        self.progress_updated.emit(overall_percentage, 100)
-    
+        self.file_state_changed.emit(index, 'running')
+        self.progress_updated.emit(self._overall_percent(0), 100)
+
     def _on_file_finished(self, index: int, success: bool):
-        """Handle file processing completion"""
-        # Update UI to show file completion status
-        if hasattr(self.main_window, 'ui_manager'):
-            if hasattr(self.main_window.ui_manager, 'file_list'):
-                item = self.main_window.ui_manager.file_list.item(index)
-                if item:
-                    from PySide6.QtCore import Qt
-                    color = Qt.GlobalColor.green if success else Qt.GlobalColor.red
-                    item.setBackground(color)
-        
-        # File is complete, so 100% progress on this file
-        overall_percentage = self._calculate_overall_progress(100)
-        self.progress_updated.emit(overall_percentage, 100)
-    
-    def _on_time_remaining(self, time_str: str):
-        """Handle time remaining update"""
-        if hasattr(self.main_window, 'ui_manager'):
-            if hasattr(self.main_window.ui_manager, 'time_label'):
-                self.main_window.ui_manager.time_label.setText(time_str)
-    
-    def _on_vmaf_calculated(self, index: int, vmaf_score: float):
-        """Handle VMAF score result — append score to file list item"""
-        if hasattr(self.main_window, 'ui_manager'):
-            if hasattr(self.main_window.ui_manager, 'file_list'):
-                item = self.main_window.ui_manager.file_list.item(index)
-                if item:
-                    item.setText(f"{item.text()} | VMAF: {vmaf_score:.1f}")
+        self.file_state_changed.emit(index, 'success' if success else 'failed')
+        self.progress_updated.emit(self._overall_percent(100), 100)
 
     def _on_processing_finished(self, success_count: int, total_count: int):
-        """Handle processing completion"""
         self._is_processing = False
         self.status_updated.emit(f"Completed: {success_count}/{total_count} files processed successfully")
         self.processing_finished.emit(success_count, total_count)
-        
-        # Set progress to 100%
         self.progress_updated.emit(100, 100)
-    
-    def validate_settings(self, settings: Dict[str, Any]) -> List[str]:
-        """
-        Validate processing settings
-        Returns list of warnings/errors
-        """
+
+    # ---- validation ----------------------------------------------------
+    @staticmethod
+    def validate_settings(settings: Dict[str, Any]) -> List[str]:
+        """Return a list of human-readable warnings about the chosen settings"""
         issues = []
-        
-        # Check codec compatibility
         video_codec = settings.get('video_codec')
-        output_format = settings.get('output_format', '').lower()
-        
-        if video_codec == 'prores_ks' and output_format not in ['mov', 'mkv']:
-            issues.append("ProRes codec works best with MOV or MKV containers")
-        
-        if output_format == 'webm' and video_codec not in ['libvpx', 'libvpx-vp9']:
-            issues.append("WebM requires VP8/VP9 video codec")
-        
-        # Check AviSynth requirements
+        audio_codec = settings.get('audio_codec')
+        output_format = (settings.get('output_format') or '').lower()
+
+        allowed_v = CONTAINER_VIDEO_CODECS.get(output_format)
+        if allowed_v and video_codec not in allowed_v:
+            issues.append(f"{output_format.upper()} only supports VP9/AV1 video — "
+                          f"'{video_codec}' will fail. Choose MKV/MP4 or switch codec.")
+        allowed_a = CONTAINER_AUDIO_CODECS.get(output_format)
+        if allowed_a and audio_codec not in allowed_a:
+            issues.append(f"{output_format.upper()} only supports Opus audio — "
+                          f"'{audio_codec}' will fail.")
+
+        if video_codec == 'prores_ks' and output_format not in ('mov', 'mkv'):
+            issues.append("ProRes works best in MOV or MKV containers.")
+        if video_codec == 'rawvideo' and output_format == 'mp4':
+            issues.append("Raw video cannot be stored in MP4; use AVI/MKV/MOV.")
+        if audio_codec == 'pcm_s32le' and output_format == 'mp4':
+            issues.append("MP4 does not support PCM audio; use MOV/MKV or a lossy codec.")
+
         if settings.get('use_avisynth'):
-            if settings.get('deinterlace') and not settings.get('use_ffms2'):
-                issues.append("Deinterlacing requires FFMS2 source filter")
-        
+            if not sys.platform.startswith('win'):
+                issues.append("AviSynth+ is only available on Windows; disable it or use bwdif/yadif.")
+            missing = AviSynthHandler(settings).get_missing_plugins()
+            if missing:
+                issues.append("Missing AviSynth plugins in plugins/: " + ", ".join(missing))
+
+        if settings.get('deinterlace'):
+            if settings.get('deinterlacer', 'qtgmc') == 'qtgmc':
+                if not settings.get('use_avisynth'):
+                    issues.append("QTGMC deinterlacing requires AviSynth+ to be enabled.")
+                elif not settings.get('use_ffms2'):
+                    issues.append("QTGMC deinterlacing needs the FFMS2 source filter for non-AVI inputs.")
+            if video_codec == 'copy':
+                issues.append("Deinterlacing has no effect when the video stream is copied.")
+
+        if video_codec == 'copy':
+            res_mode = settings.get('resolution_mode') or ''
+            if res_mode and not res_mode.startswith('Original'):
+                issues.append("Resolution scaling is ignored when the video stream is copied.")
+
+        if settings.get('stereo') and audio_codec == 'copy':
+            issues.append("Force Stereo has no effect when the audio stream is copied.")
+        if output_format in ('avi', 'webm'):
+            issues.append(f"{output_format.upper()} cannot carry text subtitles — they will be dropped.")
+        if settings.get('transcode_video') or settings.get('transcode_audio'):
+            issues.append("Raw pre-transcode uses an AVI intermediate: subtitles are not carried over.")
+        if settings.get('calculate_vmaf') and settings.get('deinterlace') and settings.get('reduce_fps'):
+            issues.append("VMAF needs matching frame rates; halving FPS while deinterlacing will make it fail.")
+
         return issues
