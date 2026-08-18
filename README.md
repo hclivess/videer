@@ -32,9 +32,9 @@ FFmpeg is a superior command line video encoding tool. Videer serves as a GUI fo
 
 ## Requirements:
 
-- [FFmpeg](https://ffmpeg.org/) (in system path)
-- To use AviSynth+ or deinterlacing, you will need [AviSynth+](https://avs-plus.net/) installed
-- No need to install plugins, all are bundled
+- [FFmpeg](https://ffmpeg.org/) in the system PATH or next to videer (a Windows build is attached to the [latest release](https://github.com/hclivess/videer/releases/latest) as `ffmpeg.7z`)
+- For QTGMC deinterlacing / AviSynth+ processing (Windows): [AviSynth+](https://avs-plus.net/) — the tested MT installer is attached to the [latest release](https://github.com/hclivess/videer/releases/latest) as `AviSynthPlus-MT-r2772.exe`
+- No need to install AviSynth plugins, all are bundled in `plugins/`
 - Python 3.9+ — on Windows run `run.cmd` (installs `requirements.txt` via pip and starts the app), or manually `pip install -r requirements.txt && python main.py`
 
 ### Preview:
