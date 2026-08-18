@@ -8,7 +8,7 @@ import sys
 import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QPalette, QColor, QIcon
 
 # Import modules
 from modules.ui_manager import UIManager
@@ -188,6 +188,10 @@ def main():
     
     # Set application style
     app.setStyle('Fusion')
+
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     # Optional: Enable dark theme
     # setup_dark_theme(app)

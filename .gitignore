@@ -9,3 +9,8 @@ parameters.avs
 defaults.json
 presets/
 *.ffindex
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
