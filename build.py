@@ -61,15 +61,21 @@ def nuitka_command() -> list:
     if system == "Windows":
         cmd += ["--windows-console-mode=disable", "--windows-icon-from-ico=icon.ico"]
     elif system == "Darwin":
-        cmd += ["--macos-create-app-bundle", f"--macos-app-name={APP_NAME}",
+        cmd += ["--macos-create-app-bundle", "--macos-app-icon=none",
+                f"--macos-app-name={APP_NAME}",
                 f"--macos-app-version={APP_VERSION}"]
     cmd.append("main.py")
     return cmd
 
 
 def find_output_dir() -> str:
-    """Nuitka writes main.dist (or main.app on macOS with a bundle)"""
-    for pattern in ("main.dist", "main.app", f"{APP_NAME}.app", "*.dist", "*.app"):
+    """Nuitka writes main.dist (or main.app on macOS with a bundle — an empty
+    main.dist may exist next to it, so prefer the bundle there)"""
+    if platform.system() == "Darwin":
+        patterns = ("main.app", f"{APP_NAME}.app", "*.app")
+    else:
+        patterns = ("main.dist", "*.dist")
+    for pattern in patterns:
         matches = glob.glob(os.path.join(BUILD_DIR, pattern))
         if matches:
             return matches[0]
