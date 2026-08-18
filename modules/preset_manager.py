@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 
-from config import QUALITY_PRESETS, PAR_PRESETS, DAR_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE
+from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION
 
 
 class PresetManager(QObject):
@@ -49,7 +49,7 @@ class PresetManager(QObject):
         # Add metadata
         preset_data = {
             "name": name,
-            "version": "2.1",
+            "version": APP_VERSION,
             "settings": settings
         }
         
@@ -182,6 +182,20 @@ class PresetManager(QObject):
         if 'dar_custom' in settings:
             ui.controls['dar_custom'].setText(settings['dar_custom'])
 
+        # Resolution
+        if 'resolution_mode' in settings:
+            index = ui.controls['resolution_mode'].findText(settings['resolution_mode'])
+            if index >= 0:
+                ui.controls['resolution_mode'].setCurrentIndex(index)
+        if 'custom_width' in settings:
+            ui.controls['custom_width'].setValue(int(settings['custom_width'] or 0))
+        if 'custom_height' in settings:
+            ui.controls['custom_height'].setValue(int(settings['custom_height'] or 0))
+        if 'scale_algorithm' in settings:
+            index = ui.controls['scale_algorithm'].findText(settings['scale_algorithm'])
+            if index >= 0:
+                ui.controls['scale_algorithm'].setCurrentIndex(index)
+
         if 'par_handling' in settings:
             handling_map = {
                 'metadata': 0,
@@ -197,7 +211,7 @@ class PresetManager(QObject):
             'stereo', 'deinterlace', 'tff', 'reduce_fps',
             'use_avisynth', 'use_ffms2', 'transcode_video',
             'transcode_audio', 'corrupt_fix', 'replace_files',
-            'calculate_vmaf'
+            'calculate_vmaf', 'no_upscale'
         ]
         
         for field in checkbox_fields:
@@ -279,7 +293,7 @@ class PresetManager(QObject):
         # Create preset data
         preset_data = {
             "name": name,
-            "version": "2.1",
+            "version": APP_VERSION,
             "settings": settings
         }
         

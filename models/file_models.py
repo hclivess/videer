@@ -81,7 +81,10 @@ class VideoFile:
         codec_suffix = f"_{video_codec}_{audio_codec}"
         quality_suffix = f"_crf{crf}_abr{abr}"
         
-        self.output_name = f"{self.basename}{codec_suffix}{quality_suffix}.{output_format}"
+        resolution_suffix = self._resolution_suffix(settings)
+
+        self.output_name = (f"{self.basename}{codec_suffix}{quality_suffix}"
+                            f"{resolution_suffix}.{output_format}")
         
         # Set transcode name if needed
         if settings.get('transcode_video') or settings.get('transcode_audio'):
@@ -95,6 +98,21 @@ class VideoFile:
         self.ffindex_file = f"{self.filepath}.ffindex"
         self.error_file = f"{self.filepath}.error"
     
+    @staticmethod
+    def _resolution_suffix(settings: Dict[str, Any]) -> str:
+        """Filename suffix describing the requested output resolution, if any"""
+        mode = settings.get('resolution_mode') or ''
+        if not mode or mode.startswith('Original'):
+            return ''
+        if mode == 'Custom':
+            width = int(settings.get('custom_width') or 0)
+            height = int(settings.get('custom_height') or 0)
+            if width <= 0 and height <= 0:
+                return ''
+            return f"_{width if width > 0 else 'auto'}x{height if height > 0 else 'auto'}"
+        # e.g. "1080p (Full HD)" -> "1080p"
+        return f"_{mode.split(' ')[0]}"
+
     def get_full_output_path(self, output_dir: Optional[str] = None) -> str:
         """Get full path for output file"""
         if output_dir:
@@ -136,6 +154,15 @@ class VideoFile:
                     self.log_info(f"Removed temp file: {file}")
                 except Exception as e:
                     self.log_info(f"Failed to remove temp file {file}: {e}")
+
+        self.close_logger()
+
+    def close_logger(self):
+        """Flush and close log handlers so the log file handle is released"""
+        if self.logger:
+            for handler in list(self.logger.handlers):
+                handler.close()
+                self.logger.removeHandler(handler)
     
     def __repr__(self) -> str:
         return f"<VideoFile: {self.filename}>"

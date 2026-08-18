@@ -10,13 +10,15 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QGroupBox, QListWidget, QStyle, QProgressBar, 
                               QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
                               QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
-                              QSizePolicy)
+                              QSizePolicy, QMessageBox)
 from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS,
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS,
-                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS)
+                   RESOLUTION_PRESETS, SCALE_ALGORITHMS, DEFAULT_SCALE_ALGORITHM,
+                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
+                   APP_NAME, APP_VERSION)
 
 
 class FileListWidget(QListWidget):
@@ -367,7 +369,10 @@ class UIManager(QWidget):
         
         quality_group.setLayout(quality_layout)
         layout.addWidget(quality_group)
-        
+
+        # Resolution settings
+        layout.addWidget(self._create_resolution_group())
+
         # PAR settings
         par_group = QGroupBox("Pixel Aspect Ratio (PAR)")
         par_layout = QGridLayout()
@@ -404,6 +409,68 @@ class UIManager(QWidget):
         widget.setLayout(layout)
         return widget
     
+    def _create_resolution_group(self) -> QGroupBox:
+        """Create the optional output-resolution controls"""
+        group = QGroupBox("Output Resolution")
+        grid = QGridLayout()
+
+        grid.addWidget(QLabel("Resolution:"), 0, 0)
+        self.controls['resolution_mode'] = QComboBox()
+        self.controls['resolution_mode'].addItems(list(RESOLUTION_PRESETS.keys()))
+        self.controls['resolution_mode'].setToolTip(
+            "Scale the output video. Presets keep the aspect ratio and pick the width\n"
+            "automatically (even number). Choose Custom to enter exact dimensions."
+        )
+        self.controls['resolution_mode'].currentTextChanged.connect(self._on_resolution_mode_changed)
+        grid.addWidget(self.controls['resolution_mode'], 0, 1)
+
+        grid.addWidget(QLabel("Custom Size:"), 1, 0)
+        size_widget = QWidget()
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.controls['custom_width'] = QSpinBox()
+        self.controls['custom_width'].setRange(0, 16384)
+        self.controls['custom_width'].setSingleStep(2)
+        self.controls['custom_width'].setSpecialValueText("auto")
+        self.controls['custom_width'].setSuffix(" px")
+        self.controls['custom_width'].setToolTip("Width in pixels (auto = keep aspect ratio)")
+
+        self.controls['custom_height'] = QSpinBox()
+        self.controls['custom_height'].setRange(0, 16384)
+        self.controls['custom_height'].setSingleStep(2)
+        self.controls['custom_height'].setSpecialValueText("auto")
+        self.controls['custom_height'].setSuffix(" px")
+        self.controls['custom_height'].setToolTip("Height in pixels (auto = keep aspect ratio)")
+
+        size_layout.addWidget(self.controls['custom_width'])
+        size_layout.addWidget(QLabel("×"))
+        size_layout.addWidget(self.controls['custom_height'])
+        grid.addWidget(size_widget, 1, 1)
+
+        grid.addWidget(QLabel("Algorithm:"), 2, 0)
+        self.controls['scale_algorithm'] = QComboBox()
+        self.controls['scale_algorithm'].addItems(SCALE_ALGORITHMS)
+        self.controls['scale_algorithm'].setCurrentText(DEFAULT_SCALE_ALGORITHM)
+        self.controls['scale_algorithm'].setToolTip(
+            "lanczos: sharpest, best for downscaling (default)\n"
+            "bicubic / spline: smooth, good general purpose\n"
+            "bilinear: fastest, softer\n"
+            "neighbor: pixel-exact, for pixel art / integer scaling"
+        )
+        grid.addWidget(self.controls['scale_algorithm'], 2, 1)
+
+        self.controls['no_upscale'] = QCheckBox("Never upscale (only shrink larger videos)")
+        self.controls['no_upscale'].setChecked(True)
+        self.controls['no_upscale'].setToolTip(
+            "When enabled, videos already smaller than the target keep their original size."
+        )
+        grid.addWidget(self.controls['no_upscale'], 3, 0, 1, 2)
+
+        group.setLayout(grid)
+        self._on_resolution_mode_changed(self.controls['resolution_mode'].currentText())
+        return group
+
     def _create_audio_tab(self):
         """Create audio settings tab"""
         widget = QWidget()
@@ -639,6 +706,15 @@ class UIManager(QWidget):
         """Handle PAR mode change"""
         self.controls['par_custom'].setEnabled(text == "Custom")
     
+    def _on_resolution_mode_changed(self, text):
+        """Enable scaling controls only when scaling is requested"""
+        scaling = RESOLUTION_PRESETS.get(text) is not None
+        is_custom = text == "Custom"
+        self.controls['custom_width'].setEnabled(is_custom)
+        self.controls['custom_height'].setEnabled(is_custom)
+        self.controls['scale_algorithm'].setEnabled(scaling)
+        self.controls['no_upscale'].setEnabled(scaling)
+
     def _on_dar_mode_changed(self, text):
         """Handle DAR mode change"""
         self.controls['dar_custom'].setEnabled(text == "Custom")
@@ -655,7 +731,6 @@ class UIManager(QWidget):
 
     def _on_add_files(self):
         """Add files dialog"""
-        from PySide6.QtWidgets import QFileDialog
         files, _ = QFileDialog.getOpenFileNames(
             self.main_window,
             "Select Input Files",
@@ -667,7 +742,6 @@ class UIManager(QWidget):
     
     def _on_add_folder(self):
         """Add folder dialog"""
-        from PySide6.QtWidgets import QFileDialog
         folder = QFileDialog.getExistingDirectory(self.main_window, "Select Folder")
         if folder:
             self.main_window.file_manager.add_folder(folder)
@@ -684,16 +758,16 @@ class UIManager(QWidget):
     
     def _show_about(self):
         """Show about dialog"""
-        from PySide6.QtWidgets import QMessageBox
         QMessageBox.about(
             self.main_window,
-            "About videer",
-            "videer v2.1\n\n"
+            f"About {APP_NAME}",
+            f"{APP_NAME} v{APP_VERSION}\n\n"
             "Professional video processing with:\n"
             "• Multi-format support\n"
             "• Hardware acceleration\n"
             "• AviSynth+ integration\n"
             "• PAR/DAR support\n"
+            "• Optional resolution scaling\n"
             "• Batch processing\n\n"
             "Drag and drop files or folders to process."
         )
@@ -728,27 +802,16 @@ class UIManager(QWidget):
         self.progress_bar.setValue(value)
     
     def update_status(self, message):
-        """Update status label with text eliding for long messages"""
-        # Calculate elided text based on available width
-        if hasattr(self.status_label, 'fontMetrics'):
-            metrics = self.status_label.fontMetrics()
-            available_width = self.status_label.width() - 10  # Leave some padding
-            
-            if available_width > 0:
-                elided_text = metrics.elidedText(
-                    message, 
-                    Qt.TextElideMode.ElideRight, 
-                    available_width
-                )
-                self.status_label.setText(elided_text)
-            else:
-                self.status_label.setText(message)
-            
-            # Show full text on hover
-            self.status_label.setToolTip(message)
+        """Update status label, eliding long messages (full text in tooltip)"""
+        available_width = self.status_label.width() - 10
+        if available_width > 0:
+            message_shown = self.status_label.fontMetrics().elidedText(
+                message, Qt.TextElideMode.ElideRight, available_width)
         else:
-            self.status_label.setText(message)
-    
+            message_shown = message
+        self.status_label.setText(message_shown)
+        self.status_label.setToolTip(message)
+
     def update_ffmpeg_status(self, available):
         """Update FFmpeg status in status bar"""
         if available:
@@ -804,6 +867,11 @@ class UIManager(QWidget):
             'par_custom': self.controls['par_custom'].text(),
             'dar_mode': self.controls['dar_mode'].currentText(),
             'dar_custom': self.controls['dar_custom'].text(),
+            'resolution_mode': self.controls['resolution_mode'].currentText(),
+            'custom_width': self.controls['custom_width'].value(),
+            'custom_height': self.controls['custom_height'].value(),
+            'no_upscale': self.controls['no_upscale'].isChecked(),
+            'scale_algorithm': self.controls['scale_algorithm'].currentText(),
             'calculate_vmaf': self.controls['calculate_vmaf'].isChecked()
         }
         
@@ -835,7 +903,7 @@ class UIManager(QWidget):
     
     def load_settings(self, qsettings: QSettings):
         """Load all settings from QSettings"""
-        int_keys = ('crf', 'abr', 'threads')
+        int_keys = ('crf', 'abr', 'threads', 'custom_width', 'custom_height')
         settings = {}
         for key in qsettings.allKeys():
             value = qsettings.value(key)

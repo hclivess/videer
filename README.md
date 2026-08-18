@@ -23,13 +23,14 @@ FFmpeg is a superior command line video encoding tool. Videer serves as a GUI fo
 - Matroska format as it is the only one to support `pgssub`
 - CUDA GPU acceleration support
 - Live queue: add files or drag-drop while encoding is running — new files are appended and processed without restarting
+- Optional resolution scaling (2160p → 360p presets or custom W×H, "never upscale" guard, selectable lanczos/bicubic/spline/bilinear/neighbor scaler)
 
 ## Requirements:
 
 - [FFmpeg](https://ffmpeg.org/) (in system path)
 - To use AviSynth+ or deinterlacing, you will need [AviSynth+](https://avs-plus.net/) installed
 - No need to install plugins, all are bundled
-- `pip install -r requirements.txt`
+- Python 3.9+ — run `run.cmd` (installs `requirements.txt` via pip and starts the app), or manually `pip install -r requirements.txt && python main.py`
 
 ### Preview:
 

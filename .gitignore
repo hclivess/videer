@@ -4,4 +4,8 @@ parameters.avs
 *.7z
 .idea/
 *.xml
-*.iml
+*.iml__pycache__/
+*.pyc
+defaults.json
+presets/
+*.ffindex

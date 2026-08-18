@@ -8,7 +8,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -86,6 +86,23 @@ DAR_PRESETS = {
     "Custom": "custom"
 }
 
+# Resolution presets: display name -> target height (None = keep original, 0 = custom)
+RESOLUTION_PRESETS = {
+    "Original (no scaling)": None,
+    "2160p (4K UHD)": 2160,
+    "1440p (QHD)": 1440,
+    "1080p (Full HD)": 1080,
+    "720p (HD)": 720,
+    "576p (PAL SD)": 576,
+    "480p (NTSC SD)": 480,
+    "360p": 360,
+    "Custom": 0
+}
+
+# Scaling algorithms for FFmpeg's scale filter
+SCALE_ALGORITHMS = ["lanczos", "bicubic", "bilinear", "spline", "neighbor"]
+DEFAULT_SCALE_ALGORITHM = "lanczos"
+
 # Quality defaults
 DEFAULT_CRF = 23
 DEFAULT_ABR = 256
@@ -122,6 +139,11 @@ DEFAULT_SETTINGS = {
     "par_value": "1:1",
     "dar_mode": "auto",
     "dar_value": "16:9",
+    "resolution_mode": "Original (no scaling)",
+    "custom_width": 0,
+    "custom_height": 0,
+    "no_upscale": True,
+    "scale_algorithm": DEFAULT_SCALE_ALGORITHM,
     "calculate_vmaf": False
 }
 

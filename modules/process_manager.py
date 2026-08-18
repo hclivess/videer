@@ -25,6 +25,17 @@ class ProcessThread(QThread):
     _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})')
     _TIME_RE = re.compile(r'time=(\d{2}):(\d{2}):(\d{2})')
     _VMAF_RE = re.compile(r'VMAF score\s*[:=]\s*([\d.]+)', re.IGNORECASE)
+    _ERROR_KEYWORDS = ("error", "invalid", "failed")
+    _MULTISPACE_RE = re.compile(r' {2,}')
+    _STATUS_REPLACEMENTS = (
+        ("time=", ""),
+        ("bitrate= ", "br:"),
+        ("bitrate=", "br:"),
+        ("speed", "rate"),
+        ("size=", ""),
+        ("frame", "f"),
+        ("=", ":"),
+    )
 
     # Signals
     progress_signal = Signal(str, int)  # message, percentage
@@ -171,119 +182,101 @@ class ProcessThread(QThread):
         return success
 
     @staticmethod
-    def _quote_command(command: List[str]) -> str:
-        """Quote command arguments that contain spaces for shell execution"""
-        quoted = []
-        for arg in command:
-            if ' ' in arg and not arg.startswith('"') and not arg.startswith("'") and not arg.startswith('-'):
-                quoted.append(f'"{arg}"')
-            else:
-                quoted.append(arg)
-        return ' '.join(quoted)
-
-    def _start_subprocess(self, command_str: str) -> subprocess.Popen:
-        """Start a subprocess with platform-appropriate settings"""
+    def _format_command(command: List[str]) -> str:
+        """Human-readable command line for logging"""
         if os.name == 'nt':
-            return subprocess.Popen(
-                command_str,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                encoding='utf-8',
-                shell=True,
-                bufsize=1
-            )
-        else:
-            return subprocess.Popen(
-                shlex.split(command_str),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                encoding='utf-8',
-                shell=False,
-                bufsize=1
-            )
+            return subprocess.list2cmdline(command)
+        return ' '.join(shlex.quote(arg) for arg in command)
 
-    def _execute_command(self, command: List[str], file: VideoFile) -> int:
-        """Execute FFmpeg command and monitor progress"""
-        command_str = self._quote_command(command)
-        file.log_info(f"Executing: {command_str}")
+    def _start_subprocess(self, command: List[str]) -> subprocess.Popen:
+        """Start FFmpeg without a shell so paths with spaces/quotes are passed verbatim"""
+        kwargs = dict(
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            universal_newlines=True,
+            encoding='utf-8',
+            errors='replace',
+            bufsize=1,
+        )
+        if os.name == 'nt':
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        return subprocess.Popen(command, **kwargs)
+
+    def _run_monitored(self, command: List[str], file: VideoFile,
+                       on_progress, on_line=None) -> int:
+        """
+        Run an FFmpeg command, log its output, and report percentage progress.
+
+        on_progress(line, percent) is called for every progress line;
+        on_line(line) is called for every non-empty output line (optional).
+        Returns the process return code (1 if stopped or failed to launch).
+        """
+        file.log_info(f"Executing: {self._format_command(command)}")
 
         try:
-            self.current_process = self._start_subprocess(command_str)
-            self.current_pid = self.current_process.pid
-
-            error_keywords = ["error", "invalid", "failed"]
-
-            total_duration = None
-
-            for line in self.current_process.stdout:
-                if self.should_stop:
-                    self._kill_process()
-                    return 1
-
-                # Log line
-                line = line.strip()
-                if line:
-                    file.log_info(line)
-
-                # Check for duration
-                if not total_duration:
-                    duration_match = self._DURATION_RE.search(line)
-                    if duration_match:
-                        h, m, s = map(int, duration_match.groups())
-                        total_duration = h * 3600 + m * 60 + s
-
-                # Check for progress
-                time_match = self._TIME_RE.search(line)
-                if time_match and total_duration:
-                    h, m, s = map(int, time_match.groups())
-                    current_time = h * 3600 + m * 60 + s
-                    progress = int((current_time / total_duration) * 100)
-                    
-                    # Clamp progress to 0-100 range
-                    progress = max(0, min(100, progress))
-
-                    # Parse and clean the status line
-                    clean_line = self._clean_status_line(line)
-                    self.progress_signal.emit(clean_line, progress)
-
-                # Check for errors
-                line_lower = line.lower()
-                for error_keyword in error_keywords:
-                    if error_keyword in line_lower:
-                        file.add_error(line)
-                        break
-
-            # Wait for process to complete
-            return_code = self.current_process.wait()
-            self.current_process = None
-            self.current_pid = None
-
-            file.log_info(f"Process completed with return code: {return_code}")
-            return return_code
-
+            self.current_process = self._start_subprocess(command)
         except Exception as e:
             file.add_error(f"Command execution error: {str(e)}")
             return 1
 
+        self.current_pid = self.current_process.pid
+        total_duration = None
+
+        try:
+            for raw_line in self.current_process.stdout:
+                if self.should_stop:
+                    self._kill_process()
+                    return 1
+
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                file.log_info(line)
+
+                if total_duration is None:
+                    duration_match = self._DURATION_RE.search(line)
+                    if duration_match:
+                        h, m, sec = map(int, duration_match.groups())
+                        total_duration = h * 3600 + m * 60 + sec
+
+                time_match = self._TIME_RE.search(line)
+                if time_match and total_duration:
+                    h, m, sec = map(int, time_match.groups())
+                    current_time = h * 3600 + m * 60 + sec
+                    progress = max(0, min(100, int((current_time / total_duration) * 100)))
+                    on_progress(line, progress)
+
+                if on_line:
+                    on_line(line)
+
+            return_code = self.current_process.wait()
+        finally:
+            self.current_process = None
+            self.current_pid = None
+
+        file.log_info(f"Process completed with return code: {return_code}")
+        return return_code
+
+    def _execute_command(self, command: List[str], file: VideoFile) -> int:
+        """Execute FFmpeg command and monitor progress"""
+
+        def on_progress(line, progress):
+            self.progress_signal.emit(self._clean_status_line(line), progress)
+
+        def on_line(line):
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in self._ERROR_KEYWORDS):
+                file.add_error(line)
+
+        return self._run_monitored(command, file, on_progress, on_line)
+
     def _clean_status_line(self, line: str) -> str:
         """Clean FFmpeg status line for display"""
-        replacements = {
-            "       ": " ",
-            "    ": " ",
-            "time=": "",
-            "bitrate=  ": "br:",
-            "speed": "rate",
-            "size=": "",
-            "frame": "f",
-            "=": ":",
-            "\n": ""
-        }
-
-        for old, new in replacements.items():
+        line = self._MULTISPACE_RE.sub(' ', line)
+        for old, new in self._STATUS_REPLACEMENTS:
             line = line.replace(old, new)
-
         return line.strip()
 
     def _emit_time_remaining(self, current_index: int, total: int):
@@ -311,64 +304,30 @@ class ProcessThread(QThread):
         file.log_info("Starting VMAF calculation...")
         self.progress_signal.emit(f"VMAF: {file.filename}", 0)
 
+        command = self.command_builder.build_vmaf_command(encoded_path, file.filepath)
+        vmaf_score: Optional[float] = None
+
+        def on_progress(_line, progress):
+            self.progress_signal.emit(f"VMAF: {file.filename} ({progress}%)", progress)
+
+        def on_line(line):
+            nonlocal vmaf_score
+            match = self._VMAF_RE.search(line)
+            if match:
+                vmaf_score = float(match.group(1))
+
         try:
-            command = self.command_builder.build_vmaf_command(encoded_path, file.filepath)
-            command_str = self._quote_command(command)
-            file.log_info(f"VMAF command: {command_str}")
-
-            proc = self._start_subprocess(command_str)
-            self.current_process = proc
-            self.current_pid = proc.pid
-
-            total_duration = None
-            vmaf_score = None
-
-            for line in proc.stdout:
-                if self.should_stop:
-                    self._kill_process()
-                    return
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                file.log_info(line)
-
-                # Parse duration
-                if not total_duration:
-                    duration_match = self._DURATION_RE.search(line)
-                    if duration_match:
-                        h, m, s = map(int, duration_match.groups())
-                        total_duration = h * 3600 + m * 60 + s
-
-                # Parse progress
-                time_match = self._TIME_RE.search(line)
-                if time_match and total_duration:
-                    h, m, s = map(int, time_match.groups())
-                    current_time = h * 3600 + m * 60 + s
-                    progress = max(0, min(100, int((current_time / total_duration) * 100)))
-                    self.progress_signal.emit(f"VMAF: {file.filename} ({progress}%)", progress)
-
-                # Parse VMAF score
-                vmaf_match = self._VMAF_RE.search(line)
-                if vmaf_match:
-                    vmaf_score = float(vmaf_match.group(1))
-
-            proc.wait()
-            self.current_process = None
-            self.current_pid = None
-
-            if vmaf_score is not None:
-                file.vmaf_score = vmaf_score
-                file.log_info(f"VMAF score: {vmaf_score}")
-                self.vmaf_calculated.emit(file_index, vmaf_score)
-            else:
-                file.log_info("VMAF score could not be parsed from output")
-
+            self._run_monitored(command, file, on_progress, on_line)
         except Exception as e:
             file.log_info(f"VMAF calculation failed: {str(e)}")
-            self.current_process = None
-            self.current_pid = None
+            return
+
+        if vmaf_score is not None:
+            file.vmaf_score = vmaf_score
+            file.log_info(f"VMAF score: {vmaf_score}")
+            self.vmaf_calculated.emit(file_index, vmaf_score)
+        else:
+            file.log_info("VMAF score could not be parsed from output")
 
     def stop(self):
         """Stop processing"""
