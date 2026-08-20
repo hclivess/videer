@@ -217,18 +217,21 @@ class ProcessThread(QThread):
         file.log_info(f"Executing: {self._format_command(command)}")
 
         try:
-            self.current_process = self._start_subprocess(command)
+            process = self._start_subprocess(command)
         except Exception as e:
             file.add_error(f"Command execution error: {str(e)}")
             return 1
 
-        self.current_pid = self.current_process.pid
+        # Keep a local reference: stop() runs on the GUI thread and clears
+        # self.current_process while this loop is still draining stdout.
+        self.current_process = process
+        self.current_pid = process.pid
         phase_start = time.time()
         block: Dict[str, str] = {}
         last_emit = 0.0
 
         try:
-            for raw_line in self.current_process.stdout:
+            for raw_line in process.stdout:
                 if self.should_stop:
                     self._kill_process()
                     return 1
@@ -261,7 +264,7 @@ class ProcessThread(QThread):
                 if on_line:
                     on_line(line)
 
-            return_code = self.current_process.wait()
+            return_code = process.wait()
         finally:
             self.current_process = None
             self.current_pid = None
