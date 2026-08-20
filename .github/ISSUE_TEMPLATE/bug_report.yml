@@ -1,0 +1,43 @@
+name: Bug report
+description: Something fails or behaves wrongly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: videer version
+      description: Title bar shows it (e.g. 3.6). Say whether you run the release exe or `python main.py`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / Ubuntu 24.04 / macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings used
+      description: Codec, container, deinterlacer, AviSynth+/ffms2 on or off, any extras. A screenshot of the settings tabs is fine.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: |
+        videer writes `<input name>.log` next to every input file — it contains the exact FFmpeg command and its full output.
+        Drag it here (or paste the last ~50 lines). This is by far the most useful thing you can attach.
+      render: text
+  - type: input
+    id: sample
+    attributes:
+      label: Sample file (optional)
+      description: A link to a short clip that reproduces the problem makes fixes much faster.

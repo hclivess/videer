@@ -832,14 +832,22 @@ class UIManager(QWidget):
     def _uses_qtgmc(self) -> bool:
         return self.controls['deinterlacer'].currentData() == 'qtgmc'
 
+    def _enable_qtgmc_prereqs(self):
+        """
+        QTGMC lives in the AviSynth script, so it needs AviSynth+ — and, for
+        anything but plain AVI, the FFMS2 source filter (AVISource only handles
+        AVI and is meant for frameserving; see issue #10). Turn both on.
+        """
+        self.controls['use_avisynth'].setChecked(True)
+        self.controls['use_ffms2'].setChecked(True)
+
     def _on_deinterlace_toggled(self, checked):
-        """QTGMC lives in the AviSynth script, so enable AviSynth+ when it is chosen"""
         if checked and self._uses_qtgmc():
-            self.controls['use_avisynth'].setChecked(True)
+            self._enable_qtgmc_prereqs()
 
     def _on_deinterlacer_changed(self, _index):
         if self.controls['deinterlace'].isChecked() and self._uses_qtgmc():
-            self.controls['use_avisynth'].setChecked(True)
+            self._enable_qtgmc_prereqs()
 
     def _on_avisynth_toggled(self, checked):
         """Turning AviSynth+ off makes QTGMC unavailable — fall back to bwdif"""

@@ -12,12 +12,20 @@ from models.file_models import VideoFile
 class AviSynthHandler:
     """Handles AviSynth+ script generation"""
 
-    # QTGMC presets that require plugins not bundled with videer:
-    # "Ultra Fast" requires Yadifmod2, "Very Slow" requires FFT3DFilter
-    QTGMC_SAFE_PRESET = {
-        "Ultra Fast": "Super Fast",
-        "Very Slow": "Slower",
-    }
+    # Every plugin QTGMC can call across all its presets is bundled in plugins/:
+    # "Ultra Fast" uses yadifmod2, "Very Slow" uses FFT3DFilter (needs FFTW).
+    PLUGIN_DLLS = [
+        "masktools2.dll",
+        "mvtools2.dll",
+        "nnedi3.dll",
+        "ffms2.dll",
+        "RgTools.dll",
+        "yadifmod2.dll",
+        "fft3dfilter.dll",
+    ]
+    PLUGIN_SCRIPTS = ["QTGMC.avsi", "Zs_RF_Shared.avsi"]
+    # Runtime DLLs loaded by plugins via LoadLibrary (found through PATH, not LoadPlugin)
+    RUNTIME_DLLS = ["libfftw3f-3.dll"]
 
     def __init__(self, settings: Dict[str, Any]):
         self.settings = settings
@@ -55,25 +63,12 @@ class AviSynthHandler:
     
     def _write_plugins(self, avs_file):
         """Write plugin loading section"""
-        plugins = [
-            "masktools2.dll",
-            "mvtools2.dll",
-            "nnedi3.dll",
-            "ffms2.dll",
-            "RgTools.dll"
-        ]
-        
-        for plugin in plugins:
+        for plugin in self.PLUGIN_DLLS:
             plugin_path = os.path.join(self.plugins_path, plugin)
             avs_file.write(f'LoadPlugin("{plugin_path}")\n')
         
         # Import scripts
-        scripts = [
-            "QTGMC.avsi",
-            "Zs_RF_Shared.avsi"
-        ]
-        
-        for script in scripts:
+        for script in self.PLUGIN_SCRIPTS:
             script_path = os.path.join(self.plugins_path, script)
             avs_file.write(f'Import("{script_path}")\n')
         
@@ -153,9 +148,8 @@ class AviSynthHandler:
         else:
             avs_file.write('AssumeBFF()\n')
         
-        # QTGMC deinterlacing (remap presets that need unbundled plugins)
+        # QTGMC deinterlacing — all presets are usable, plugins are bundled
         preset = self.settings.get('preset', 'Medium')
-        preset = self.QTGMC_SAFE_PRESET.get(preset, preset)
         threads = self._edi_threads()
         
         if self.settings.get('reduce_fps', False):
@@ -178,15 +172,8 @@ class AviSynthHandler:
         Check which AviSynth plugins are available
         Returns dict of plugin_name: available
         """
-        required_plugins = {
-            "masktools2.dll": False,
-            "mvtools2.dll": False,
-            "nnedi3.dll": False,
-            "ffms2.dll": False,
-            "RgTools.dll": False,
-            "QTGMC.avsi": False,
-            "Zs_RF_Shared.avsi": False
-        }
+        required_plugins = {name: False for name in
+                            self.PLUGIN_DLLS + self.PLUGIN_SCRIPTS + self.RUNTIME_DLLS}
         
         for plugin in required_plugins:
             plugin_path = os.path.join(self.plugins_path, plugin)

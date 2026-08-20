@@ -215,6 +215,12 @@ class ProcessThread(QThread):
         )
         if os.name == 'nt':
             kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            # Plugins that pull in runtime DLLs via LoadLibrary (fft3dfilter ->
+            # libfftw3f-3.dll) resolve them through PATH, so expose plugins/.
+            if self.avisynth_handler:
+                env = dict(os.environ)
+                env['PATH'] = self.avisynth_handler.plugins_path + os.pathsep + env.get('PATH', '')
+                kwargs['env'] = env
         return subprocess.Popen(command, **kwargs)
 
     @staticmethod

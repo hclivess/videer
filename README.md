@@ -40,12 +40,13 @@ are running into issues, you should try with ffms2 enabled.
 - Audio: AAC, MP3, Opus, AC3, FLAC, PCM, or stream copy; bitrate control and optional stereo downmix
 - Containers: MKV (the only one that carries `pgssub`), MP4, AVI, MOV, WebM
 - Deinterlacer choice: `QTGMC` (AviSynth+, Windows) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order
-  and optional frame-rate halving
+  and optional frame-rate halving. Picking QTGMC switches AviSynth+ and the ffms2 source filter on automatically
 - Optional resolution scaling (2160p → 360p presets or custom W×H, "never upscale" guard, lanczos / bicubic / spline /
   bilinear / neighbor scaler)
 - PAR / DAR presets and custom values, with metadata-only or resampling handling
 - AviSynth+ pipeline with `SetFilterMTMode` multithreading, ffms2 source filter, optional raw pre-transcode for
-  problematic inputs, and a free-form script box; all required AviSynth plugins are bundled in `plugins/`
+  problematic inputs, and a free-form script box; every plugin QTGMC needs across *all* its presets is bundled in
+  `plugins/` (masktools2, mvtools2, nnedi3, RgTools, ffms2, yadifmod2 for *Ultra Fast*, FFT3DFilter + FFTW for *Very Slow*)
 - CUDA GPU acceleration support; 64-bit implementation
 - Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1
   presets; `defaults.json` support for your own startup defaults
