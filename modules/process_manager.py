@@ -66,9 +66,12 @@ class ProcessThread(QThread):
         self._pm = process_manager
         self.settings = settings
         self.should_stop = False
+        self.paused = False
+        self._pause_started: Optional[float] = None
         self.current_process: Optional[subprocess.Popen] = None
         self.current_pid: Optional[int] = None
         self.start_time: Optional[float] = None
+        self._phase_start: Optional[float] = None
         self.success_count = 0
 
         # Timing bookkeeping for ETA
@@ -90,6 +93,12 @@ class ProcessThread(QThread):
 
         index = 0
         while not self.should_stop:
+            # Paused between files: hold before pulling the next entry
+            while self.paused and not self.should_stop:
+                time.sleep(0.2)
+            if self.should_stop:
+                break
+
             file = self._pm.get_file_at(index)
             if file is None:
                 break
@@ -226,7 +235,9 @@ class ProcessThread(QThread):
         # self.current_process while this loop is still draining stdout.
         self.current_process = process
         self.current_pid = process.pid
-        phase_start = time.time()
+        self._phase_start = time.time()
+        if self.paused:  # pause hit while the process was being spawned
+            self._signal_tree(suspend=True)
         block: Dict[str, str] = {}
         last_emit = 0.0
 
@@ -247,7 +258,7 @@ class ProcessThread(QThread):
                     if key == 'progress':
                         now = time.time()
                         if value.strip() == 'end' or now - last_emit >= 0.25:
-                            self._emit_progress(file, phase, block, duration, phase_start)
+                            self._emit_progress(file, phase, block, duration)
                             last_emit = now
                         block = {}
                     continue
@@ -273,8 +284,9 @@ class ProcessThread(QThread):
         return return_code
 
     def _emit_progress(self, file: VideoFile, phase: str, block: Dict[str, str],
-                       duration: Optional[float], phase_start: float):
+                       duration: Optional[float]):
         """Turn a -progress block into a snapshot dict for the UI"""
+        phase_start = self._phase_start or time.time()
         out_time = None
         us = self._to_float(block.get('out_time_us') or block.get('out_time_ms'))
         if us is not None:
@@ -370,7 +382,48 @@ class ProcessThread(QThread):
     def stop(self):
         """Stop processing"""
         self.should_stop = True
+        if self.paused:
+            self._signal_tree(suspend=False)
+            self.paused = False
         self._kill_process()
+
+    def pause(self):
+        """Suspend the running FFmpeg process tree and hold the queue"""
+        if self.paused or self.should_stop:
+            return
+        self.paused = True
+        self._pause_started = time.time()
+        self._signal_tree(suspend=True)
+
+    def resume(self):
+        """Resume a paused FFmpeg process tree; shift ETA clocks past the gap"""
+        if not self.paused:
+            return
+        self._signal_tree(suspend=False)
+        if self._pause_started is not None:
+            delta = time.time() - self._pause_started
+            if self.start_time is not None:
+                self.start_time += delta
+            if self._file_start_time is not None:
+                self._file_start_time += delta
+            if self._phase_start is not None:
+                self._phase_start += delta
+        self._pause_started = None
+        self.paused = False
+
+    def _signal_tree(self, suspend: bool):
+        """Suspend or resume the current FFmpeg process and its children"""
+        if not self.current_pid:
+            return
+        try:
+            parent = psutil.Process(self.current_pid)
+            for proc in [parent] + parent.children(recursive=True):
+                try:
+                    proc.suspend() if suspend else proc.resume()
+                except psutil.NoSuchProcess:
+                    pass
+        except psutil.NoSuchProcess:
+            pass
 
     def _kill_process(self):
         """Kill current FFmpeg process and children"""
@@ -401,6 +454,7 @@ class ProcessManager(QObject):
     file_state_changed = Signal(int, str)      # index, 'running' | 'success' | 'failed'
     vmaf_calculated = Signal(int, float)       # index, score
     processing_finished = Signal(int, int)     # success count, total count
+    paused_state_changed = Signal(bool)        # True = paused
 
     def __init__(self, main_window):
         super().__init__()
@@ -479,6 +533,23 @@ class ProcessManager(QObject):
         self.progress_updated.emit(0, 100)
         self.status_updated.emit("Processing started...")
 
+    def pause_processing(self):
+        """Pause: suspend FFmpeg and hold the queue after the current point"""
+        if self.process_thread and self.process_thread.isRunning() and not self.is_paused():
+            self.process_thread.pause()
+            self.paused_state_changed.emit(True)
+            self.status_updated.emit("Paused")
+
+    def resume_processing(self):
+        """Resume a paused run"""
+        if self.process_thread and self.process_thread.isRunning() and self.is_paused():
+            self.process_thread.resume()
+            self.paused_state_changed.emit(False)
+            self.status_updated.emit("Resumed")
+
+    def is_paused(self) -> bool:
+        return bool(self.process_thread and self.process_thread.paused)
+
     def stop_processing(self):
         """Stop current processing"""
         if self.process_thread and self.process_thread.isRunning():
@@ -487,6 +558,7 @@ class ProcessManager(QObject):
             if self.process_thread.isRunning():
                 self.process_thread.terminate()
             self._is_processing = False
+            self.paused_state_changed.emit(False)
             self.status_updated.emit("Processing stopped")
 
     def is_processing(self) -> bool:
@@ -527,6 +599,7 @@ class ProcessManager(QObject):
 
     def _on_processing_finished(self, success_count: int, total_count: int):
         self._is_processing = False
+        self.paused_state_changed.emit(False)
         self.status_updated.emit(f"Completed: {success_count}/{total_count} files processed successfully")
         self.processing_finished.emit(success_count, total_count)
         self.progress_updated.emit(100, 100)

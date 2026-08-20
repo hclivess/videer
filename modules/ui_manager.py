@@ -84,6 +84,7 @@ class UIManager(QWidget):
     # Signals
     start_processing = Signal()
     stop_processing = Signal()
+    pause_clicked = Signal()   # toggles pause/resume (main window decides which)
     files_added = Signal(list)
     files_removed = Signal(list)
     queue_cleared = Signal()
@@ -236,6 +237,27 @@ class UIManager(QWidget):
             }
         """)
         
+        self.controls['pause'] = QPushButton("Pause")
+        self.controls['pause'].clicked.connect(self.pause_clicked)
+        self.controls['pause'].setEnabled(False)
+        self.controls['pause'].setStyleSheet("""
+            QPushButton {
+                font-size: 14px;
+                font-weight: bold;
+                padding: 8px;
+                background-color: #ffc107;
+                color: #333;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e0a800;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666;
+            }
+        """)
+
         self.controls['stop'] = QPushButton("Stop")
         self.controls['stop'].clicked.connect(self.stop_processing)
         self.controls['stop'].setEnabled(False)
@@ -257,6 +279,7 @@ class UIManager(QWidget):
         """)
         
         buttons_layout.addWidget(self.controls['start'])
+        buttons_layout.addWidget(self.controls['pause'])
         buttons_layout.addWidget(self.controls['stop'])
         
         layout.addLayout(buttons_layout)
@@ -919,9 +942,10 @@ class UIManager(QWidget):
     def update_stats(self, snap: Dict[str, Any]):
         """Refresh the progress panel from a ProcessManager snapshot"""
         phase = snap.get('phase') or 'Working'
-        self.phase_label.setText(phase)
-        self.phase_label.setStyleSheet(
-            "QLabel { background: #d6e9ff; color: #1b4f8a; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+        if not getattr(self, '_ui_paused', False):
+            self.phase_label.setText(phase)
+            self.phase_label.setStyleSheet(
+                "QLabel { background: #d6e9ff; color: #1b4f8a; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
 
         name = snap.get('file_name') or ''
         width = max(50, self.current_file_label.width() - 10)
@@ -996,9 +1020,20 @@ class UIManager(QWidget):
             self.ffmpeg_status.setText("FFmpeg: ✗ Not Found")
             self.ffmpeg_status.setStyleSheet("color: red;")
     
+    def set_paused_state(self, paused: bool):
+        """Reflect pause/resume in the controls and progress panel"""
+        self._ui_paused = paused
+        self.controls['pause'].setText("Resume" if paused else "Pause")
+        if paused:
+            self.phase_label.setText("Paused")
+            self.phase_label.setStyleSheet(
+                "QLabel { background: #fff3cd; color: #856404; border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: bold; }")
+        # on resume the next progress snapshot restores the phase pill
+
     def set_processing_state(self, is_processing):
         """Set UI state for processing"""
         self._processing_active = is_processing
+        self._ui_paused = False
         if is_processing:
             self.reset_progress_panel("Starting…")
         else:
@@ -1009,6 +1044,8 @@ class UIManager(QWidget):
             self.file_eta_label.setText("File ETA: --")
             self.time_label.setText("Total ETA: --")
         self.controls['start'].setEnabled(not is_processing)
+        self.controls['pause'].setEnabled(is_processing)
+        self.controls['pause'].setText("Pause")
         self.controls['stop'].setEnabled(is_processing)
         self.controls['add_files'].setEnabled(True)        # always enabled
         self.controls['add_folder'].setEnabled(True)       # always enabled

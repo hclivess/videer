@@ -67,6 +67,8 @@ class MainWindow(QMainWindow):
         # UI signals
         self.ui_manager.start_processing.connect(self.start_processing)
         self.ui_manager.stop_processing.connect(self.stop_processing)
+        self.ui_manager.pause_clicked.connect(self.toggle_pause)
+        self.process_manager.paused_state_changed.connect(self.ui_manager.set_paused_state)
         self.ui_manager.files_added.connect(self.file_manager.add_files)
         self.ui_manager.files_removed.connect(self._on_files_removed)
         self.ui_manager.queue_cleared.connect(self.file_manager.clear_queue)
@@ -118,6 +120,13 @@ class MainWindow(QMainWindow):
         """Stop the current processing"""
         self.process_manager.stop_processing()
         self.ui_manager.set_processing_state(False)
+
+    def toggle_pause(self):
+        """Pause or resume the current processing run"""
+        if self.process_manager.is_paused():
+            self.process_manager.resume_processing()
+        else:
+            self.process_manager.pause_processing()
     
     def _on_files_updated_during_processing(self, files):
         """Keep the running queue's pending tail in sync with the UI queue"""
