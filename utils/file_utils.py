@@ -71,13 +71,26 @@ class FileOperations:
                 logger.warning(f"Error preserving timestamps: {e}")
             return False
 
-    def replace_file(self, new_file: str, original_file: str,
-                     logger: Optional[logging.Logger] = None) -> bool:
-        """Replace original with new file, keeping the original as <name>.old<ext>"""
+    @staticmethod
+    def output_is_usable(path: str) -> bool:
+        """True when *path* exists and is a non-empty regular file"""
         try:
-            if not os.path.exists(new_file):
+            return os.path.isfile(path) and os.path.getsize(path) > 0
+        except OSError:
+            return False
+
+    def replace_file(self, new_file: str, original_file: str,
+                     logger: Optional[logging.Logger] = None,
+                     keep_backup: bool = True) -> bool:
+        """
+        Replace original with new file. The original is kept as <name>.old<ext>
+        unless keep_backup is False, in which case it is deleted once the new
+        file is safely in place.
+        """
+        try:
+            if not self.output_is_usable(new_file):
                 if logger:
-                    logger.error(f"New file does not exist: {new_file}")
+                    logger.error(f"New file is missing or empty: {new_file}")
                 return False
 
             st = os.stat(original_file)
@@ -91,10 +104,35 @@ class FileOperations:
             if platform.system() == 'Windows':
                 _set_creation_time_windows(original_file, st.st_ctime)
 
-            if logger:
-                logger.info(f"Replaced {original_file} (original kept as {backup})")
+            if keep_backup:
+                if logger:
+                    logger.info(f"Replaced {original_file} (original kept as {backup})")
+            else:
+                os.remove(backup)
+                if logger:
+                    logger.info(f"Replaced {original_file} (original deleted)")
             return True
         except Exception as e:
             if logger:
                 logger.error(f"Error replacing file: {e}")
+            return False
+
+    def delete_source(self, source_file: str, output_file: str,
+                      logger: Optional[logging.Logger] = None) -> bool:
+        """
+        Permanently delete *source_file* — but only if *output_file* exists and
+        is non-empty, so a failed or interrupted encode never costs the original.
+        """
+        if not self.output_is_usable(output_file):
+            if logger:
+                logger.warning(f"Not deleting source: output missing or empty: {output_file}")
+            return False
+        try:
+            os.remove(source_file)
+            if logger:
+                logger.info(f"Deleted source file: {source_file}")
+            return True
+        except Exception as e:
+            if logger:
+                logger.error(f"Error deleting source file: {e}")
             return False

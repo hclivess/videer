@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         # File manager signals
         self.file_manager.files_updated.connect(self.ui_manager.update_file_list)
         self.file_manager.file_count_changed.connect(self.ui_manager.update_file_count)
+        self.file_manager.duplicates_skipped.connect(self._on_duplicates_skipped)
         
         # Process manager signals
         self.process_manager.progress_updated.connect(self.ui_manager.update_progress)
@@ -132,6 +133,13 @@ class MainWindow(QMainWindow):
         """Keep the running queue's pending tail in sync with the UI queue"""
         if self.process_manager.is_processing():
             self.process_manager.sync_pending(files)
+
+    def _on_duplicates_skipped(self, paths):
+        """Tell the user which dropped/selected files were already in the queue"""
+        names = [os.path.basename(p) for p in paths]
+        shown = ", ".join(names[:5]) + (f" (+{len(names) - 5} more)" if len(names) > 5 else "")
+        self.ui_manager.update_status(
+            f"Skipped {len(names)} duplicate file{'s' if len(names) != 1 else ''} already in queue: {shown}")
 
     def _on_files_removed(self, indices):
         """Safe removal: block removal of already-processed or in-progress files"""

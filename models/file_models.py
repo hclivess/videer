@@ -8,12 +8,25 @@ import logging
 from typing import Optional, List, Dict, Any
 
 
+def canonical_path(filepath: str) -> str:
+    """
+    Identity key for duplicate detection: absolute, symlink-resolved,
+    case-normalized (case-insensitive filesystems on Windows/macOS).
+    """
+    try:
+        resolved = os.path.realpath(os.path.abspath(filepath))
+    except OSError:
+        resolved = os.path.abspath(filepath)
+    return os.path.normcase(resolved)
+
+
 class VideoFile:
     """Represents a video file to be processed"""
     
     def __init__(self, filepath: str, index: int = 0):
         self.index = index
         self.filepath = filepath
+        self.canonical = canonical_path(filepath)
         self.filename = os.path.basename(filepath)
         self.directory = os.path.dirname(os.path.abspath(filepath))
         self.basename = os.path.splitext(self.filename)[0]
@@ -213,8 +226,9 @@ class FileQueue:
         self.files.clear()
     
     def contains(self, filepath: str) -> bool:
-        """Check if filepath is already in queue"""
-        return any(f.filepath == filepath for f in self.files)
+        """Check if filepath (or another spelling of the same file) is already in queue"""
+        key = canonical_path(filepath)
+        return any(f.canonical == key for f in self.files)
     
     def get_all(self) -> List[VideoFile]:
         """Get all files in queue"""

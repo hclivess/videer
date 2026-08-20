@@ -8,7 +8,7 @@ import re
 from typing import List, Optional
 from PySide6.QtCore import QObject, Signal
 
-from models.file_models import VideoFile, FileQueue
+from models.file_models import VideoFile, FileQueue, canonical_path
 from config import VIDEO_EXTENSIONS
 
 
@@ -24,6 +24,7 @@ class FileManager(QObject):
     # Signals
     files_updated = Signal(list)  # List of VideoFile objects
     file_count_changed = Signal(int)  # Number of files in queue
+    duplicates_skipped = Signal(list)  # Paths that were already queued (or repeated in the drop)
     
     def __init__(self):
         super().__init__()
@@ -31,11 +32,25 @@ class FileManager(QObject):
     
     def add_files(self, filepaths: List[str]) -> int:
         """
-        Add files to the queue
-        Returns number of files added
+        Add files to the queue, skipping duplicates.
+        A file counts as a duplicate if it is already queued *or* appears twice
+        in the same batch — compared by resolved, case-normalized path, so
+        `C:\\Video\\a.mkv`, `c:/video/A.MKV` and a symlink to it are all one file.
+        Returns number of files added.
         """
-        added_count = 0
         valid_files = []
+        skipped = []
+        seen = set()
+
+        def consider(candidate: str):
+            if not self._is_valid_video_file(candidate):
+                return
+            key = canonical_path(candidate)
+            if key in seen or self.queue.contains(candidate):
+                skipped.append(candidate)
+                return
+            seen.add(key)
+            valid_files.append(candidate)
 
         for filepath in filepaths:
             # Dropped folders: expand recursively to the video files they contain
@@ -43,16 +58,10 @@ class FileManager(QObject):
                 for root, dirs, entries in os.walk(filepath):
                     dirs.sort(key=_natural_sort_key)
                     for entry in sorted(entries, key=_natural_sort_key):
-                        candidate = os.path.join(root, entry)
-                        if self._is_valid_video_file(candidate) and not self.queue.contains(candidate):
-                            valid_files.append(candidate)
-                            added_count += 1
+                        consider(os.path.join(root, entry))
                 continue
-            if self._is_valid_video_file(filepath):
-                if not self.queue.contains(filepath):
-                    valid_files.append(filepath)
-                    added_count += 1
-        
+            consider(filepath)
+
         if valid_files:
             # Multi-selects arrive in OS selection order (often lexicographic:
             # 1, 10, 2, 20) — order each added batch naturally instead
@@ -60,8 +69,11 @@ class FileManager(QObject):
                 valid_files.sort(key=_natural_sort_key)
             self.queue.add_files(valid_files)
             self._emit_updates()
-        
-        return added_count
+
+        if skipped:
+            self.duplicates_skipped.emit(skipped)
+
+        return len(valid_files)
     
     def add_folder(self, folder_path: str) -> int:
         """

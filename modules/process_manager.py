@@ -124,10 +124,19 @@ class ProcessThread(QThread):
                         and self.settings.get('video_codec') != 'copy'):
                     self._calculate_vmaf(file, file.get_full_output_path(), index)
 
+                output_path = file.get_full_output_path()
+                delete_source = bool(self.settings.get('delete_source'))
                 if self.settings.get('replace_files'):
-                    self.file_ops.replace_file(file.get_full_output_path(), file.filepath, file.logger)
+                    # With delete_source the .old backup is dropped as well
+                    self.file_ops.replace_file(output_path, file.filepath, file.logger,
+                                               keep_backup=not delete_source)
                 else:
-                    self.file_ops.preserve_timestamps(file.filepath, file.get_full_output_path(), file.logger)
+                    self.file_ops.preserve_timestamps(file.filepath, output_path, file.logger)
+                    if delete_source:
+                        # Free space as we go: remove this source right after its
+                        # encode is verified, before moving on to the next file
+                        if self.file_ops.delete_source(file.filepath, output_path, file.logger):
+                            self.info_signal.emit(f"Deleted source: {file.filename}")
 
             file.cleanup_temp_files()
             self._completed_wall_times.append(time.time() - self._file_start_time)
@@ -656,6 +665,9 @@ class ProcessManager(QObject):
             issues.append(f"{output_format.upper()} cannot carry text subtitles — they will be dropped.")
         if settings.get('transcode_video') or settings.get('transcode_audio'):
             issues.append("Raw pre-transcode uses an AVI intermediate: subtitles are not carried over.")
+        if settings.get('delete_source'):
+            issues.append("Delete Source Files is ON: each original is permanently deleted "
+                          "as soon as its encode succeeds (no .old backup, no recycle bin).")
         if settings.get('calculate_vmaf') and settings.get('deinterlace') and settings.get('reduce_fps'):
             issues.append("VMAF needs matching frame rates; halving FPS while deinterlacing will make it fail.")
 

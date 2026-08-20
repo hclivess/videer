@@ -8,7 +8,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.5"
+APP_VERSION = "3.6"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -192,6 +192,7 @@ DEFAULT_SETTINGS = {
     "transcode_audio": False,
     "corrupt_fix": False,
     "replace_files": False,
+    "delete_source": False,
     "threads": DEFAULT_THREADS,
     "par_mode": "auto",
     "par_value": "1:1",

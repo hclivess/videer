@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
                               QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
                               QSizePolicy, QMessageBox)
-from PySide6.QtCore import Qt, Signal, QSettings, QTimer
+from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
 from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont, QColor, QBrush
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS,
@@ -32,32 +32,19 @@ class FileListWidget(QListWidget):
         self.setAcceptDrops(True)
         self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.setAlternatingRowColors(True)
+        self.setAlternatingRowColors(False)
+        self.setSpacing(2)
         self._setup_style()
     
     def _setup_style(self):
+        # Note: no ::item box rules here — a styled ::item makes Qt ignore the
+        # per-item background brush used for running/success/failed colouring.
         self.setStyleSheet("""
             QListWidget {
                 border: 2px solid #aaa;
                 border-radius: 5px;
                 padding: 5px;
                 background-color: #f9f9f9;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid #eee;
-                padding: 8px;
-                margin: 2px;
-                border-radius: 3px;
-            }
-            QListWidget::item:selected {
-                background-color: #0078D7;
-                color: white;
-            }
-            QListWidget::item:alternate {
-                background-color: #f7f7f7;
-            }
-            QListWidget::item:hover {
-                background-color: #e3f2fd;
             }
         """)
     
@@ -777,7 +764,23 @@ class UIManager(QWidget):
         
         self.controls['replace_files'] = QCheckBox("Replace Original Files")
         self.controls['replace_files'].setStyleSheet("color: #d9534f; font-weight: bold;")
+        self.controls['replace_files'].setToolTip(
+            "Move the encoded output over the original filename.\n"
+            "The original is kept next to it as <name>.old<ext> unless\n"
+            "'Delete Source Files' is also enabled."
+        )
         file_layout.addWidget(self.controls['replace_files'])
+
+        self.controls['delete_source'] = QCheckBox("Delete Source Files After Processing")
+        self.controls['delete_source'].setStyleSheet("color: #d9534f; font-weight: bold;")
+        self.controls['delete_source'].setToolTip(
+            "Permanently delete each source file right after its encode succeeds,\n"
+            "one by one as the queue progresses, to free disk space.\n"
+            "Only happens when the output exists and is non-empty; failed or\n"
+            "stopped files are never deleted. Combined with 'Replace Original\n"
+            "Files', the .old backup is removed as well. There is no undo."
+        )
+        file_layout.addWidget(self.controls['delete_source'])
         
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
@@ -908,9 +911,8 @@ class UIManager(QWidget):
                 label += f" | VMAF: {file.vmaf_score:.1f}"
             item = QListWidgetItem(label)
             item.setToolTip(file.filepath)
-            color = self._FILE_STATE_COLORS.get(getattr(file, 'status', 'pending'))
-            if color:
-                item.setBackground(QBrush(color))
+            item.setSizeHint(QSize(0, 32))
+            self._style_item(item, getattr(file, 'status', 'pending'))
             self.file_list.addItem(item)
 
     def update_file_count(self, count):
@@ -922,6 +924,11 @@ class UIManager(QWidget):
         'running': QColor(255, 244, 179),   # soft yellow
         'success': QColor(200, 240, 200),   # soft green
         'failed': QColor(250, 200, 200),    # soft red
+    }
+    _FILE_STATE_GLYPHS = {
+        'running': '▶  ',
+        'success': '✔  ',
+        'failed': '✖  ',
     }
 
     def update_progress(self, value, maximum):
@@ -997,14 +1004,29 @@ class UIManager(QWidget):
             tile.setText("--")
 
     def set_file_state(self, index: int, state: str):
-        """Colour a queue entry by processing state (and remember it on the file)"""
+        """Colour and mark a queue entry by processing state (and remember it on the file)"""
         files = getattr(self, '_files', [])
         if 0 <= index < len(files):
             files[index].status = state
         item = self.file_list.item(index)
+        if item:
+            self._style_item(item, state)
+            if state == 'running':
+                self.file_list.clearSelection()
+                self.file_list.scrollToItem(item)
+
+    def _style_item(self, item: 'QListWidgetItem', state: str):
+        """Apply background colour and a leading glyph for the given state"""
         color = self._FILE_STATE_COLORS.get(state)
-        if item and color:
+        if color:
             item.setBackground(QBrush(color))
+        glyph = self._FILE_STATE_GLYPHS.get(state, '')
+        text = item.text()
+        for g in self._FILE_STATE_GLYPHS.values():
+            if text.startswith(g):
+                text = text[len(g):]
+                break
+        item.setText(glyph + text)
 
     def set_file_vmaf(self, index: int, score: float):
         item = self.file_list.item(index)
@@ -1082,6 +1104,7 @@ class UIManager(QWidget):
             'transcode_audio': self.controls['transcode_audio'].isChecked(),
             'corrupt_fix': self.controls['corrupt_fix'].isChecked(),
             'replace_files': self.controls['replace_files'].isChecked(),
+            'delete_source': self.controls['delete_source'].isChecked(),
             'threads': self.controls['threads'].value(),
             'ffmpeg_extras': self.controls['ffmpeg_extras'].text(),
             'avisynth_extras': self.controls['avisynth_extras'].toPlainText(),
