@@ -17,6 +17,7 @@ from modules.process_manager import ProcessManager
 from modules.preset_manager import PresetManager
 from utils.ffmpeg_utils import check_ffmpeg_status
 from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
+from utils import childproc
 
 
 class MainWindow(QMainWindow):
@@ -202,6 +203,7 @@ class MainWindow(QMainWindow):
 def main():
     """Main entry point"""
     app = QApplication(sys.argv)
+    childproc.install_qt_hook(app)
     
     # Set application style
     app.setStyle('Fusion')

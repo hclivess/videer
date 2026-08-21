@@ -8,6 +8,7 @@ import shlex
 import shutil
 from typing import Dict, Any, Optional, List
 import subprocess
+from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM)
@@ -66,23 +67,16 @@ def find_ffprobe() -> Optional[str]:
     return None
 
 
-def _no_window_kwargs() -> Dict[str, Any]:
-    """Popen kwargs that suppress a console window on Windows"""
-    if os.name == 'nt':
-        return {'creationflags': subprocess.CREATE_NO_WINDOW}
-    return {}
-
-
 def probe_duration(filepath: str) -> Optional[float]:
     """Return media duration in seconds via ffprobe, or None if unavailable"""
     ffprobe = find_ffprobe()
     if not ffprobe or not os.path.exists(filepath):
         return None
     try:
-        result = subprocess.run(
+        result = childproc.run(
             [ffprobe, '-v', 'error', '-show_entries', 'format=duration',
              '-of', 'default=noprint_wrappers=1:nokey=1', filepath],
-            capture_output=True, text=True, timeout=30, **_no_window_kwargs())
+            text=True, timeout=30)
         value = result.stdout.strip().splitlines()
         return float(value[0]) if value else None
     except (subprocess.SubprocessError, ValueError, OSError):

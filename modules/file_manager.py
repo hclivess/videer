@@ -4,18 +4,12 @@ Handles file queue management and file operations
 """
 
 import os
-import re
 from typing import List, Optional
 from PySide6.QtCore import QObject, Signal
 
 from models.file_models import VideoFile, FileQueue, canonical_path
 from config import VIDEO_EXTENSIONS
-
-
-def _natural_sort_key(name: str):
-    """Sort key that orders embedded numbers numerically (1, 2, 10, 20)"""
-    return [int(part) if part.isdigit() else part.casefold()
-            for part in re.split(r'(\d+)', name)]
+from utils.naturalsort import natural_key, path_key
 
 
 class FileManager(QObject):
@@ -56,8 +50,8 @@ class FileManager(QObject):
             # Dropped folders: expand recursively to the video files they contain
             if os.path.isdir(filepath):
                 for root, dirs, entries in os.walk(filepath):
-                    dirs.sort(key=_natural_sort_key)
-                    for entry in sorted(entries, key=_natural_sort_key):
+                    dirs.sort(key=natural_key)
+                    for entry in sorted(entries, key=natural_key):
                         consider(os.path.join(root, entry))
                 continue
             consider(filepath)
@@ -66,7 +60,7 @@ class FileManager(QObject):
             # Multi-selects arrive in OS selection order (often lexicographic:
             # 1, 10, 2, 20) — order each added batch naturally instead
             if len(valid_files) > 1:
-                valid_files.sort(key=_natural_sort_key)
+                valid_files.sort(key=path_key)
             self.queue.add_files(valid_files)
             self._emit_updates()
 

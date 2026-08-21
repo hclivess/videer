@@ -17,6 +17,7 @@ from models.file_models import VideoFile
 from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration
 from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
+from utils import childproc
 from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS
 
 
@@ -228,14 +229,13 @@ class ProcessThread(QThread):
             bufsize=1,
         )
         if os.name == 'nt':
-            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             # Plugins that pull in runtime DLLs via LoadLibrary (fft3dfilter ->
             # libfftw3f-3.dll) resolve them through PATH, so expose plugins/.
             if self.avisynth_handler:
                 env = dict(os.environ)
                 env['PATH'] = self.avisynth_handler.plugins_path + os.pathsep + env.get('PATH', '')
                 kwargs['env'] = env
-        return subprocess.Popen(command, **kwargs)
+        return childproc.popen(command, **kwargs)
 
     @staticmethod
     def _to_float(value: str) -> Optional[float]:
@@ -306,6 +306,7 @@ class ProcessThread(QThread):
 
             return_code = process.wait()
         finally:
+            childproc.forget(process)
             self.current_process = None
             self.current_pid = None
 
@@ -456,21 +457,11 @@ class ProcessThread(QThread):
 
     def _kill_process(self):
         """Kill current FFmpeg process and children"""
-        if not self.current_pid:
-            return
-        try:
-            parent = psutil.Process(self.current_pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            parent.kill()
-        except psutil.NoSuchProcess:
-            pass
-        finally:
-            self.current_pid = None
-            self.current_process = None
+        process = self.current_process
+        if process is not None:
+            childproc.kill(process)
+        self.current_pid = None
+        self.current_process = None
 
 
 class ProcessManager(QObject):

@@ -9,6 +9,16 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.8.1
+
+- **Quitting kills everything we started**: every FFmpeg/ffprobe process goes through `utils/childproc.py` — killed on
+  normal quit, on Stop (including its children), and by the kernel if videer dies for any reason (Windows Job object,
+  Linux `PR_SET_PDEATHSIG`).
+- Duplicate queue entries are rejected: adding a file or folder that is already queued (same normalised absolute path)
+  is skipped and reported.
+- Natural sort everywhere files are collected or listed (`img2 < img10`, `Episode 9 < Episode 10`), via the shared
+  `utils/naturalsort.py`.
+
 ## Changes in 3.8
 
 - **Never a partial file**: FFmpeg now writes to `<name>.part.<ext>` and the file is renamed to its final name only
