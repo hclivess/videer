@@ -166,11 +166,25 @@ class ProcessThread(QThread):
                     file.add_error("Failed to create AviSynth script")
                     return False
 
+            temp_output = file.get_temp_output_path()
+            final_output = file.get_full_output_path()
             command = self.command_builder.build_main_command(
-                input_file, file.get_full_output_path(), self.settings.get('use_avisynth', False))
+                input_file, temp_output, self.settings.get('use_avisynth', False))
 
             return_code = self._execute_command(command, file, phase="Encoding")
-            return return_code == 0 and not self.should_stop
+            ok = return_code == 0 and not self.should_stop and self.file_ops.output_is_usable(temp_output)
+            if ok:
+                # only now does the file appear under its real name; a stopped / failed encode never does
+                if os.path.exists(final_output):
+                    os.remove(final_output)
+                os.replace(temp_output, final_output)
+            else:
+                try:
+                    if os.path.exists(temp_output):
+                        os.remove(temp_output)
+                except OSError:
+                    pass
+            return ok
 
         except Exception as e:
             file.add_error(f"Processing error: {str(e)}")

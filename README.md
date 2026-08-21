@@ -9,6 +9,12 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.8
+
+- **Never a partial file**: FFmpeg now writes to `<name>.part.<ext>` and the file is renamed to its final name only
+  when the encode completed and is non-empty. Stop or a failed encode removes the `.part` file.
+- Packaging switched to PyInstaller; CI runs a real encode on the frozen Linux build (`VIDEER_SELFTEST`).
+
 ## Why
 
 FFmpeg is a superior command line video encoding tool. Videer serves as a GUI for it.

@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """
-Build a self-contained videer distribution (no Python required on the target)
-using Nuitka, then package it as
+Build a self-contained videer distribution (no Python required on the target) using PyInstaller,
+then package it as
     dist/videer-<version>-<os>-<arch>.zip      (Windows)
     dist/videer-<version>-<os>-<arch>.tar.gz   (Linux / macOS, keeps exec bits)
 
 Usage:  python build.py            (run from the repository root)
-Needs:  pip install -r requirements.txt nuitka
-        Windows: MSVC or MinGW (Nuitka downloads MinGW when asked)
-        Linux:   gcc, patchelf (pip install patchelf)
-        macOS:   Xcode command-line tools
+Needs:  pip install -r requirements.txt pyinstaller
 """
-
 import glob
 import os
 import platform
@@ -40,63 +36,52 @@ def arch_tag() -> str:
     return {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine, machine)
 
 
-def nuitka_command() -> list:
+def pyinstaller_command() -> list:
     cmd = [
-        sys.executable, "-m", "nuitka",
-        "--standalone",
-        "--assume-yes-for-downloads",
-        "--enable-plugin=pyside6",
-        "--noinclude-qt-translations",
-        f"--output-dir={BUILD_DIR}",
-        f"--output-filename={APP_NAME}",
-        "--include-data-dir=plugins=plugins",
-        "--include-data-files=icon.ico=icon.ico",
-        f"--product-name={APP_NAME}",
-        f"--product-version={APP_VERSION}",
-        f"--file-version={APP_VERSION}",
-        "--file-description=FFmpeg batch GUI with AviSynth+ support",
-        "--copyright=MIT License",
+        sys.executable, "-m", "PyInstaller",
+        "--noconfirm", "--clean", "--onedir", "--windowed",
+        f"--name={APP_NAME}",
+        f"--distpath={os.path.join(BUILD_DIR, 'out')}",
+        f"--workpath={os.path.join(BUILD_DIR, 'work')}",
+        f"--specpath={BUILD_DIR}",
+        # trim Qt modules we never use
+        "--exclude-module=PySide6.QtWebEngineCore", "--exclude-module=PySide6.QtWebEngineWidgets",
+        "--exclude-module=PySide6.Qt3DCore", "--exclude-module=PySide6.QtQuick", "--exclude-module=PySide6.QtQml",
+        "--exclude-module=PySide6.QtMultimedia", "--exclude-module=PySide6.QtCharts", "--exclude-module=PySide6.QtPdf",
+        "--exclude-module=torch", "--exclude-module=tensorflow", "--exclude-module=tkinter",
+        f"--add-data={os.path.join(ROOT, 'icon.ico')}{os.pathsep}.",
+        f"--add-data={os.path.join(ROOT, 'plugins')}{os.pathsep}plugins",
+        "--copy-metadata=psutil",
     ]
-    system = platform.system()
-    if system == "Windows":
-        cmd += ["--windows-console-mode=disable", "--windows-icon-from-ico=icon.ico"]
-    elif system == "Darwin":
-        cmd += ["--macos-create-app-bundle", "--macos-app-icon=none",
-                f"--macos-app-name={APP_NAME}",
-                f"--macos-app-version={APP_VERSION}"]
-    cmd.append("main.py")
+    if platform.system() != "Darwin":
+        cmd.append(f"--icon={os.path.join(ROOT, 'icon.ico')}")
+    cmd.append(os.path.join(ROOT, "main.py"))
     return cmd
 
 
 def find_output_dir() -> str:
-    """Nuitka writes main.dist (or main.app on macOS with a bundle — an empty
-    main.dist may exist next to it, so prefer the bundle there)"""
+    out = os.path.join(BUILD_DIR, "out")
     if platform.system() == "Darwin":
-        patterns = ("main.app", f"{APP_NAME}.app", "*.app")
-    else:
-        patterns = ("main.dist", "*.dist")
-    for pattern in patterns:
-        matches = glob.glob(os.path.join(BUILD_DIR, pattern))
-        if matches:
-            return matches[0]
-    raise SystemExit("Nuitka output directory not found in build/")
+        app = os.path.join(out, f"{APP_NAME}.app")
+        if os.path.isdir(app):
+            return app
+    folder = os.path.join(out, APP_NAME)
+    if os.path.isdir(folder):
+        return folder
+    raise SystemExit("PyInstaller output directory not found in build/out")
 
 
 def package(out_dir: str) -> str:
     os.makedirs(DIST_DIR, exist_ok=True)
     stem = f"{APP_NAME}-{APP_VERSION}-{os_tag()}-{arch_tag()}"
-
     for name in EXTRA_FILES:
         src = os.path.join(ROOT, name)
         if os.path.exists(src):
-            # inside an .app bundle the payload lives in Contents/MacOS
-            dest_root = out_dir
-            if out_dir.endswith(".app"):
-                dest_root = os.path.join(out_dir, "Contents", "MacOS")
+            dest_root = os.path.join(out_dir, "Contents", "MacOS") if out_dir.endswith(".app") else out_dir
             shutil.copy2(src, os.path.join(dest_root, name))
-
+    os.makedirs(os.path.join(out_dir if not out_dir.endswith(".app") else os.path.join(out_dir, "Contents", "MacOS"),
+                             "presets"), exist_ok=True)
     top_name = f"{APP_NAME}.app" if out_dir.endswith(".app") else stem
-
     if platform.system() == "Windows":
         archive = os.path.join(DIST_DIR, stem + ".zip")
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -114,13 +99,11 @@ def package(out_dir: str) -> str:
 def main():
     os.chdir(ROOT)
     shutil.rmtree(BUILD_DIR, ignore_errors=True)
-    cmd = nuitka_command()
+    cmd = pyinstaller_command()
     print("Running:", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
-    out_dir = find_output_dir()
-    archive = package(out_dir)
-    size_mb = os.path.getsize(archive) / (1024 * 1024)
-    print(f"\nBuilt {archive} ({size_mb:.1f} MB)")
+    archive = package(find_output_dir())
+    print(f"\nBuilt {archive} ({os.path.getsize(archive) / (1024 * 1024):.1f} MB)")
 
 
 if __name__ == "__main__":

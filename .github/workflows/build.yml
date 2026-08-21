@@ -36,15 +36,24 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt nuitka zstandard ordered-set
+          python -m pip install -r requirements.txt pyinstaller
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y ccache patchelf libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1
-            python -m pip install patchelf
+            sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1
           fi
 
-      - name: Build with Nuitka
+      - name: Build with PyInstaller
         run: python build.py
+
+      - name: Smoke-test the frozen build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ffmpeg
+          ffmpeg -y -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -f lavfi -i sine=frequency=440 -t 3 -c:v libx264 -c:a aac /tmp/clip.mp4
+          mkdir -p /tmp/frozen && tar xzf dist/*.tar.gz -C /tmp/frozen
+          QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/tmp/clip.mp4 timeout 600 /tmp/frozen/*/videer
+          ls -la /tmp/clip_libx264_aac_crf30_abr96.mkv
+          test ! -e /tmp/clip_libx264_aac_crf30_abr96.part.mkv
 
       - uses: actions/upload-artifact@v4
         with:

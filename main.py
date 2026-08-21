@@ -215,8 +215,38 @@ def main():
     
     window = MainWindow()
     window.show()
-    
+    selftest = os.environ.get("VIDEER_SELFTEST")
+    if selftest:
+        _run_selftest(window, selftest)
     sys.exit(app.exec())
+
+
+def _run_selftest(window: "MainWindow", path: str):
+    """
+    Headless smoke test used by CI: encode one clip with libx264/aac and exit 0 only if the output exists under
+    its final name, is non-empty, and no .part file was left behind.
+    """
+    from PySide6.QtCore import QTimer
+    window.preset_manager.apply_settings({"video_codec": "libx264", "audio_codec": "aac", "crf": 30, "abr": 96,
+                                          "preset": "ultrafast", "output_format": "mkv", "replace_files": False,
+                                          "delete_source": False, "calculate_vmaf": False, "use_avisynth": False,
+                                          "transcode_video": False, "transcode_audio": False})
+    window.file_manager.add_files([path])
+    window.process_manager.status_updated.connect(lambda m: print("selftest:", m, flush=True))
+
+    def finished(ok, total):
+        files = window.file_manager.get_queue()
+        out = files[0].get_full_output_path() if files else ""
+        part = files[0].get_temp_output_path() if files else ""
+        good = (ok == total == 1 and os.path.isfile(out) and os.path.getsize(out) > 0 and not os.path.exists(part))
+        print(f"selftest: finished {ok}/{total}, output={out} exists={os.path.isfile(out)} part_left={os.path.exists(part)}"
+              f" : {'ok' if good else 'FAILED'}", flush=True)
+        QTimer.singleShot(0, lambda: sys.exit(0 if good else 1))
+    window.process_manager.processing_finished.disconnect(window.on_processing_finished)
+    window.process_manager.processing_finished.connect(finished)
+    QTimer.singleShot(300, lambda: window.process_manager.start_processing(
+        window.file_manager.get_queue(), window.ui_manager.get_current_settings()))
+    QTimer.singleShot(600_000, lambda: (print("selftest: timeout", flush=True), sys.exit(1)))
 
 
 def setup_dark_theme(app):

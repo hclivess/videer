@@ -127,10 +127,15 @@ class VideoFile:
         return f"_{mode.split(' ')[0]}"
 
     def get_full_output_path(self, output_dir: Optional[str] = None) -> str:
-        """Get full path for output file"""
+        """Final output path — it only ever exists once the encode has completed"""
         if output_dir:
             return os.path.join(output_dir, self.output_name)
         return os.path.join(self.directory, self.output_name)
+
+    def get_temp_output_path(self, output_dir: Optional[str] = None) -> str:
+        """Where FFmpeg writes while encoding: <name>.part.<ext> (same extension, so the container is inferred)"""
+        stem, ext = os.path.splitext(self.get_full_output_path(output_dir))
+        return f"{stem}.part{ext}"
     
     def get_file_size_mb(self) -> float:
         """Get file size in MB"""
@@ -154,6 +159,7 @@ class VideoFile:
     def cleanup_temp_files(self):
         """Remove temporary files created during processing"""
         temp_files = [
+            self.get_temp_output_path(),
             self.transcode_name,
             self.avs_file,
             self.ffindex_file,
