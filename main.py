@@ -119,9 +119,12 @@ class MainWindow(QMainWindow):
         self.ui_manager.set_processing_state(True)
     
     def stop_processing(self):
-        """Stop the current processing"""
+        """
+        Ask the run to stop. The UI is *not* switched back to idle here — that happens in
+        on_processing_finished, once the worker has actually unwound. Reporting "stopped" while FFmpeg is
+        still alive is what let a run keep the CPU busy behind a UI that claimed to be done.
+        """
         self.process_manager.stop_processing()
-        self.ui_manager.set_processing_state(False)
 
     def toggle_pause(self):
         """Pause or resume the current processing run"""
@@ -157,9 +160,9 @@ class MainWindow(QMainWindow):
             self.file_manager.remove_files(indices)
 
     def on_processing_finished(self, success_count, total_count):
-        """Handle processing completion"""
+        """Handle processing completion — the single place the UI returns to idle"""
         self.ui_manager.set_processing_state(False)
-        
+
         QMessageBox.information(
             self,
             "Processing Complete",

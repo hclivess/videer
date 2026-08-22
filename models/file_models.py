@@ -5,7 +5,42 @@ Handles file objects and their properties
 
 import os
 import logging
+import logging.handlers
+from collections import deque
 from typing import Optional, List, Dict, Any
+
+# A damaged source encoded with -err_detect can make FFmpeg emit an error line per packet. Keeping all of them
+# costs gigabytes of RAM per hour and drives the machine into swap, so keep a head (what went wrong first) and
+# a rolling tail (how it ended) and count the rest.
+MAX_ERRORS_HEAD = 200
+MAX_ERRORS_TAIL = 200
+
+# Same spew reaches the per-file log. Rotate so one bad input cannot fill the media drive overnight.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUPS = 2
+
+
+class BoundedFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    RotatingFileHandler that checks its size every CHECK_EVERY records instead of on every one.
+
+    The stock handler calls stream.tell() (and formats the record a second time) for each line written, which
+    roughly halves throughput on the exact workload this cap exists for — an encode logging an error per
+    packet. Amortising the check costs at most CHECK_EVERY lines of overshoot past maxBytes.
+    """
+
+    CHECK_EVERY = 256
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._since_check = 0
+
+    def shouldRollover(self, record):
+        self._since_check += 1
+        if self._since_check < self.CHECK_EVERY:
+            return False
+        self._since_check = 0
+        return super().shouldRollover(record)
 
 
 def canonical_path(filepath: str) -> str:
@@ -42,7 +77,9 @@ class VideoFile:
         # Processing state: 'pending' | 'running' | 'success' | 'failed'
         self.status = 'pending'
         self.has_error = False
-        self.error_messages: List[str] = []
+        self.error_messages: List[str] = []          # bounded head; see add_error / get_error_report
+        self._error_tail: deque = deque(maxlen=MAX_ERRORS_TAIL)
+        self.error_count = 0                         # total seen, including the ones not retained
         
         # Logger
         self.logger: Optional[logging.Logger] = None
@@ -64,22 +101,24 @@ class VideoFile:
         self.vmaf_score: Optional[float] = None
     
     def create_logger(self):
-        """Create a logger for this file"""
+        """Create a rotating logger for this file"""
         log_formatter = logging.Formatter(
             "%(asctime)s [%(levelname)-5.5s] %(message)s"
         )
-        
-        self.logger = logging.getLogger(f"file_{self.index}_{self.basename}")
-        self.logger.setLevel(logging.INFO)
+
+        # Instantiated directly rather than via getLogger(): the logging manager keeps every name it is asked
+        # for alive for the lifetime of the process, so a getLogger() per file leaks one logger per file.
+        self.close_logger()             # close, don't just drop: handlers.clear() leaks the open descriptor
+        self.logger = logging.Logger(f"videer.file.{self.index}", logging.INFO)
         self.logger.propagate = False   # keep per-file logs out of the root logger / stderr
-        self.logger.handlers.clear()
-        
-        # File handler
+
+        # Rotating file handler: an encode that logs an error per packet cannot fill the drive
         log_file = os.path.join(self.directory, f"{self.basename}.log")
-        file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+        file_handler = BoundedFileHandler(
+            log_file, mode='w', maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding='utf-8')
         file_handler.setFormatter(log_formatter)
         self.logger.addHandler(file_handler)
-        
+
         return self.logger
     
     def set_output_name(self, settings: Dict[str, Any]):
@@ -99,13 +138,14 @@ class VideoFile:
         self.output_name = (f"{self.basename}{codec_suffix}{quality_suffix}"
                             f"{resolution_suffix}.{output_format}")
         
-        # Set transcode name if needed
+        # Intermediates live next to the source, never in the process CWD: a relative name sends a raw AVI
+        # (~100 GB per hour of 1080p) into the install directory and makes two same-named sources collide.
         if settings.get('transcode_video') or settings.get('transcode_audio'):
-            self.transcode_name = f"{self.basename}.trans.avi"
-        
+            self.transcode_name = os.path.join(self.directory, f"{self.basename}.trans.avi")
+
         # Set AviSynth file if needed
         if settings.get('use_avisynth'):
-            self.avs_file = f"{self.basename}.avs"
+            self.avs_file = os.path.join(self.directory, f"{self.basename}.avs")
         
         # Set index files
         self.ffindex_file = f"{self.filepath}.ffindex"
@@ -145,11 +185,35 @@ class VideoFile:
             return 0.0
     
     def add_error(self, message: str):
-        """Add an error message"""
-        self.error_messages.append(message)
+        """
+        Record an error line. Retention is bounded: the first MAX_ERRORS_HEAD lines and the last
+        MAX_ERRORS_TAIL are kept, everything between them is counted and dropped. A damaged source can
+        otherwise produce millions of these and take the machine into swap.
+        """
         self.has_error = True
+        self.error_count += 1
+        if len(self.error_messages) < MAX_ERRORS_HEAD:
+            self.error_messages.append(message)
+        else:
+            self._error_tail.append(message)
         if self.logger:
             self.logger.error(message)
+
+    def get_error_report(self) -> str:
+        """Human-readable error summary: head, an elision marker, then the tail"""
+        if not self.error_count:
+            return ""
+        parts = list(self.error_messages)
+        dropped = self.error_count - len(self.error_messages) - len(self._error_tail)
+        if dropped > 0:
+            parts.append(f"... {dropped} further error lines omitted ...")
+        parts.extend(self._error_tail)
+        return '\n'.join(parts)
+
+    def clear_errors(self):
+        """Release retained error text (called once a file is done with)"""
+        self.error_messages = []
+        self._error_tail.clear()
     
     def log_info(self, message: str):
         """Log an info message"""
@@ -158,14 +222,19 @@ class VideoFile:
     
     def cleanup_temp_files(self):
         """Remove temporary files created during processing"""
-        temp_files = [
-            self.get_temp_output_path(),
+        temp_files = []
+        # output_name is unset when the file failed before set_output_name() ran; there is no .part to remove
+        # and building its path would raise, taking the rest of the cleanup with it.
+        if self.output_name:
+            temp_files.append(self.get_temp_output_path())
+        temp_files.extend([
             self.transcode_name,
             self.avs_file,
             self.ffindex_file,
             self.error_file
-        ]
-        
+        ])
+
+
         for file in temp_files:
             if file and os.path.exists(file):
                 try:

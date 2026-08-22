@@ -6,6 +6,7 @@ Handles FFmpeg process execution and monitoring
 import os
 import sys
 import time
+import threading
 import subprocess
 import re
 import psutil
@@ -19,6 +20,18 @@ from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
 from utils import childproc
 from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS
+
+
+# FFmpeg run with -progress pipe:1 reports continuously while it is working. Total silence for this long means
+# the step is wedged (a known AviSynth+ MT failure mode), not slow — kill it rather than let it hold the queue
+# and the CPU forever. Generous on purpose: a false positive costs the user an encode.
+STALL_TIMEOUT = 30 * 60
+
+# How long to let a process linger after it has closed its output before killing it.
+EXIT_TIMEOUT = 60
+
+# How long stop_processing() waits for the worker to unwind before letting it finish in the background.
+STOP_GRACE_MS = 15000
 
 
 def format_duration(seconds: Optional[float]) -> str:
@@ -71,6 +84,7 @@ class ProcessThread(QThread):
         self._pause_started: Optional[float] = None
         self.current_process: Optional[subprocess.Popen] = None
         self.current_pid: Optional[int] = None
+        self._current_psutil: Optional[psutil.Process] = None
         self.start_time: Optional[float] = None
         self._phase_start: Optional[float] = None
         self.success_count = 0
@@ -88,6 +102,27 @@ class ProcessThread(QThread):
     # Main loop
     # ------------------------------------------------------------------
     def run(self):
+        """
+        Thread entry point. The queue loop lives in _run_queue(); this wrapper exists so that
+        processing_finished is emitted on *every* exit path. It is the only signal that clears the app's
+        "processing" state — if an unexpected error escaped here, the UI would stay locked in a run that has
+        already ended, and closing the app would keep asking about a thread that is long dead.
+        """
+        try:
+            self._run_queue()
+        except BaseException as exc:                      # noqa: BLE001 - last line of defence for the thread
+            try:
+                self.info_signal.emit(f"Processing aborted: {type(exc).__name__}: {exc}")
+            except Exception:
+                pass
+        finally:
+            try:
+                total = self._pm.get_total_file_count()
+            except Exception:
+                total = 0
+            self.processing_finished.emit(self.success_count, total)
+
+    def _run_queue(self):
         """Main processing loop — pulls files dynamically from the shared queue"""
         self.start_time = time.time()
         self.success_count = 0
@@ -105,17 +140,25 @@ class ProcessThread(QThread):
                 break
 
             self._current_index = index
+            self._pm.set_worker_index(index)
             self._file_start_time = time.time()
             total_count = self._pm.get_total_file_count()
-
-            file.create_logger()
-            file.set_output_name(self.settings)
-            file.duration = probe_duration(file.filepath)
 
             self.file_started.emit(index)
             self.info_signal.emit(f"Processing {index + 1}/{total_count}: {file.filename}")
 
-            success = self._process_file(file)
+            # Preparing a file can fail on its own (read-only directory, locked log, over-long Windows path,
+            # a preset with a non-numeric size). That must fail this file, not kill the whole queue.
+            try:
+                file.create_logger()
+                file.set_output_name(self.settings)
+                file.duration = probe_duration(file.filepath)
+                prepared = True
+            except Exception as exc:
+                file.add_error(f"Could not prepare {file.filename}: {exc}")
+                prepared = False
+
+            success = self._process_file(file) if prepared else False
 
             if success:
                 self.success_count += 1
@@ -139,16 +182,20 @@ class ProcessThread(QThread):
                         if self.file_ops.delete_source(file.filepath, output_path, file.logger):
                             self.info_signal.emit(f"Deleted source: {file.filename}")
 
-            file.cleanup_temp_files()
+            try:
+                file.cleanup_temp_files()
+            except Exception as exc:
+                self.info_signal.emit(f"Cleanup failed for {file.filename}: {exc}")
             self._completed_wall_times.append(time.time() - self._file_start_time)
             self.file_finished.emit(index, success)
 
-            if file.error_messages:
-                self.info_signal.emit(f"Errors in {file.filename}:\n" + '\n'.join(file.error_messages))
+            if file.error_count:
+                self.info_signal.emit(f"Errors in {file.filename} ({file.error_count} total):\n"
+                                      + file.get_error_report())
+            # Retained error text has served its purpose; don't carry it for the rest of the batch
+            file.clear_errors()
 
             index += 1
-
-        self.processing_finished.emit(self.success_count, self._pm.get_total_file_count())
 
     def _process_file(self, file: VideoFile) -> bool:
         """Process a single file"""
@@ -264,17 +311,75 @@ class ProcessThread(QThread):
         # self.current_process while this loop is still draining stdout.
         self.current_process = process
         self.current_pid = process.pid
-        self._phase_start = time.time()
-        if self.paused:  # pause hit while the process was being spawned
-            self._signal_tree(suspend=True)
-        block: Dict[str, str] = {}
-        last_emit = 0.0
 
+        # Everything from here runs under the try: once the child exists, no path may leave this method
+        # without the finally having disposed of it.
         try:
-            for raw_line in process.stdout:
+            self._current_psutil = self._psutil_handle(process.pid)
+            self._phase_start = time.time()
+            if self.paused:  # pause hit while the process was being spawned
+                self._signal_tree(suspend=True)
+
+            # Reading FFmpeg's output happens on a helper thread, and this one becomes a watchdog. A blocking
+            # read notices should_stop only when the next line arrives — which for a wedged encoder is never.
+            # The interpreting work stays on the single reader thread so per-line cost is unchanged.
+            state = {'last_output': time.time(), 'eof': False}
+            pump = threading.Thread(target=self._pump,
+                                    args=(process, file, phase, duration, on_line, state),
+                                    name="ffmpeg-reader", daemon=True)
+            pump.start()
+
+            stalled = False
+            while not state['eof']:
                 if self.should_stop:
                     self._kill_process()
                     return 1
+                if self.paused:
+                    state['last_output'] = time.time()   # a suspended encoder is not a stalled one
+                elif STALL_TIMEOUT and time.time() - state['last_output'] > STALL_TIMEOUT:
+                    stalled = True
+                    break
+                time.sleep(0.2)
+
+            if stalled:
+                minutes = int(STALL_TIMEOUT // 60)
+                file.add_error(f"No output from FFmpeg for {minutes} minutes during {phase} — "
+                               f"treating it as wedged and stopping it")
+                self.info_signal.emit(f"{file.filename}: {phase} produced no output for {minutes} minutes; "
+                                      f"stopping that step")
+                self._kill_process()
+                return 1
+
+            pump.join(timeout=5)
+
+            # A closed stdout does not mean the process exited: an AviSynth+ MT teardown can spin its worker
+            # threads indefinitely after the last frame. Wait with a deadline, and never past a Stop.
+            return_code = self._wait_with_deadline(process, file)
+        finally:
+            # release(), never forget(): forgetting a still-running child hides it from both the Stop button
+            # and kill_all(), leaving an encoder burning every core with nothing able to reach it.
+            childproc.release(process)
+            self.current_process = None
+            self.current_pid = None
+            self._current_psutil = None
+
+        file.log_info(f"Process completed with return code: {return_code}")
+        return return_code
+
+    def _pump(self, process: subprocess.Popen, file: VideoFile, phase: str,
+              duration: Optional[float], on_line: Optional[Callable[[str], None]], state: Dict[str, Any]):
+        """
+        Read and interpret FFmpeg's output until EOF. Runs on a helper thread so that _run_monitored can stay
+        responsive to Stop and can notice a wedged process; the parsing itself is deliberately kept on this
+        one thread rather than handed line-by-line to another, which costs several times more per line.
+
+        `state` carries two things back: 'last_output' (the stall watchdog's clock) and 'eof'.
+        """
+        block: Dict[str, str] = {}
+        last_emit = 0.0
+        try:
+            for raw_line in process.stdout:
+                state['last_output'] = time.time()
 
                 line = raw_line.strip()
                 if not line:
@@ -303,15 +408,35 @@ class ProcessThread(QThread):
 
                 if on_line:
                     on_line(line)
-
-            return_code = process.wait()
+        except Exception as exc:
+            # Never let this thread die quietly: the watchdog would wait out the full stall timeout.
+            try:
+                file.log_info(f"Output reader stopped: {type(exc).__name__}: {exc}")
+            except Exception:
+                pass
         finally:
-            childproc.forget(process)
-            self.current_process = None
-            self.current_pid = None
+            state['eof'] = True
 
-        file.log_info(f"Process completed with return code: {return_code}")
-        return return_code
+    def _wait_with_deadline(self, process: subprocess.Popen, file: VideoFile) -> int:
+        """
+        Wait for the process to exit, re-checking should_stop, and give up on a process that will not go.
+        Returns its return code, or 1 if it had to be killed.
+        """
+        deadline = time.time() + EXIT_TIMEOUT
+        while True:
+            if self.should_stop:
+                self._kill_process()
+                return 1
+            try:
+                return process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                pass
+            if time.time() > deadline:
+                file.add_error(f"FFmpeg closed its output but did not exit within {int(EXIT_TIMEOUT)}s "
+                               f"— killing it")
+                self.info_signal.emit(f"{file.filename}: FFmpeg would not exit; killed it")
+                self._kill_process()
+                return 1
 
     def _emit_progress(self, file: VideoFile, phase: str, block: Dict[str, str],
                        duration: Optional[float]):
@@ -441,18 +566,32 @@ class ProcessThread(QThread):
         self._pause_started = None
         self.paused = False
 
+    @staticmethod
+    def _psutil_handle(pid: int) -> Optional[psutil.Process]:
+        """
+        psutil.Process identifies a process by pid *and* creation time, so a handle taken when we spawned the
+        child can never be confused with an unrelated process that later inherits the same pid. Looking the pid
+        up again at pause time can be — and suspending a random system process is its own kind of hang.
+        """
+        try:
+            return psutil.Process(pid)
+        except psutil.Error:
+            return None
+
     def _signal_tree(self, suspend: bool):
         """Suspend or resume the current FFmpeg process and its children"""
-        if not self.current_pid:
+        parent = self._current_psutil
+        if parent is None:
             return
         try:
-            parent = psutil.Process(self.current_pid)
+            if not parent.is_running():
+                return
             for proc in [parent] + parent.children(recursive=True):
                 try:
                     proc.suspend() if suspend else proc.resume()
-                except psutil.NoSuchProcess:
+                except psutil.Error:
                     pass
-        except psutil.NoSuchProcess:
+        except psutil.Error:
             pass
 
     def _kill_process(self):
@@ -462,6 +601,7 @@ class ProcessThread(QThread):
             childproc.kill(process)
         self.current_pid = None
         self.current_process = None
+        self._current_psutil = None
 
 
 class ProcessManager(QObject):
@@ -485,8 +625,22 @@ class ProcessManager(QObject):
         self._total_files = 0
         self._queue_mutex = QMutex()
         self._shared_files: List[VideoFile] = []
+        self._worker_index = -1
 
     # ---- shared queue --------------------------------------------------
+    def set_worker_index(self, index: int):
+        """
+        Called from the worker thread as it picks up each file. This — not the GUI-side
+        _current_file_index — is the authority for where the queue may be edited: _current_file_index is
+        written by a queued slot, so any modal dialog freezes it, and splicing against a stale value pushes
+        already-encoded files back into the pending tail to be encoded a second time.
+        """
+        self._queue_mutex.lock()
+        try:
+            self._worker_index = index
+        finally:
+            self._queue_mutex.unlock()
+
     def sync_pending(self, files: List[VideoFile]):
         """
         Thread-safe: make the not-yet-started tail of the running queue match
@@ -495,7 +649,7 @@ class ProcessManager(QObject):
         """
         self._queue_mutex.lock()
         try:
-            keep = self._current_file_index + 1
+            keep = self._worker_index + 1
             self._shared_files = self._shared_files[:keep] + list(files[keep:])
             self._total_files = len(self._shared_files)
         finally:
@@ -519,12 +673,24 @@ class ProcessManager(QObject):
 
     @property
     def current_file_index(self) -> int:
-        return self._current_file_index
+        """Where the worker actually is — safe to compare removal indices against."""
+        self._queue_mutex.lock()
+        try:
+            return self._worker_index
+        finally:
+            self._queue_mutex.unlock()
 
     # ---- lifecycle -----------------------------------------------------
     def start_processing(self, files: List[VideoFile], settings: Dict[str, Any]):
         """Start processing files with given settings"""
         if self._is_processing:
+            return
+
+        # A previous run whose worker has not finished unwinding still owns the shared queue and may still
+        # have an FFmpeg alive. Starting now would put two threads on the same queue, encoding into the same
+        # .part path.
+        if self.process_thread is not None and self.process_thread.isRunning():
+            self.status_updated.emit("Previous run is still stopping — try again in a moment")
             return
 
         if not find_ffmpeg():
@@ -536,6 +702,7 @@ class ProcessManager(QObject):
         try:
             self._shared_files = list(files)
             self._total_files = len(self._shared_files)
+            self._worker_index = -1
         finally:
             self._queue_mutex.unlock()
 
@@ -571,15 +738,26 @@ class ProcessManager(QObject):
         return bool(self.process_thread and self.process_thread.paused)
 
     def stop_processing(self):
-        """Stop current processing"""
-        if self.process_thread and self.process_thread.isRunning():
-            self.process_thread.stop()
-            self.process_thread.wait(5000)
-            if self.process_thread.isRunning():
-                self.process_thread.terminate()
-            self._is_processing = False
-            self.paused_state_changed.emit(False)
-            self.status_updated.emit("Processing stopped")
+        """
+        Ask the current run to stop and wait for it to actually unwind.
+
+        Deliberately no QThread.terminate(): terminate() returns before the thread has stopped (isRunning()
+        is still true on the next line) and on a Python worker it can land mid-bytecode, leaving the GIL or
+        childproc's lock held — which freezes the GUI while FFmpeg keeps running. Nor is _is_processing
+        cleared here: run() always emits processing_finished, and that is what ends the run. If the worker
+        needs longer than the grace period, it is left to finish in the background and the app stays honest
+        about still being busy.
+        """
+        if not (self.process_thread and self.process_thread.isRunning()):
+            return
+
+        self.paused_state_changed.emit(False)
+        self.status_updated.emit("Stopping…")
+        self.process_thread.stop()
+
+        if not self.process_thread.wait(STOP_GRACE_MS):
+            self.status_updated.emit(
+                "Still finishing the current step — the run will stop as soon as it can")
 
     def is_processing(self) -> bool:
         return self._is_processing
@@ -606,7 +784,17 @@ class ProcessManager(QObject):
             f"{snapshot['phase']} {snapshot['file_name']} — {pct}, ETA {eta}")
 
     def _on_info(self, message: str):
-        print(f"[INFO] {message}")
+        # A PyInstaller --windowed build has no stdout on Windows (sys.stdout is None), and a bare print()
+        # there raises inside a Qt slot. Fall back to the status line, which the user can actually see.
+        stream = sys.stdout
+        if stream is not None:
+            try:
+                stream.write(f"[INFO] {message}\n")
+                stream.flush()
+                return
+            except Exception:
+                pass
+        self.status_updated.emit(message.splitlines()[0] if message else "")
 
     def _on_file_started(self, index: int):
         self._current_file_index = index
@@ -620,6 +808,13 @@ class ProcessManager(QObject):
     def _on_processing_finished(self, success_count: int, total_count: int):
         self._is_processing = False
         self.paused_state_changed.emit(False)
+        # Drop the run's own copy of the queue; the UI and FileManager still hold what the user can see.
+        self._queue_mutex.lock()
+        try:
+            self._shared_files = []
+            self._worker_index = -1
+        finally:
+            self._queue_mutex.unlock()
         self.status_updated.emit(f"Completed: {success_count}/{total_count} files processed successfully")
         self.processing_finished.emit(success_count, total_count)
         self.progress_updated.emit(100, 100)

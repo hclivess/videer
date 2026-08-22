@@ -9,6 +9,35 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.9
+
+A run that finished could leave FFmpeg processes behind that videer could no longer see or stop — the queue reported
+"done" while every core stayed busy. This release closes that off and the paths around it.
+
+- **A finished queue means no encoders left running.** If anything went wrong while reading FFmpeg's output, the child
+  was dropped from process tracking *without being killed* — invisible to both Stop and the quit-time cleanup, and one
+  more was started for the next file. Teardown now kills before it forgets.
+- **Wedged FFmpeg processes are noticed and stopped.** Stop was only checked when a line of output happened to arrive,
+  and the wait for exit had no timeout, so a process that stopped producing output held the queue and the CPU forever.
+  There is now a stall watchdog (30 min of complete silence) and a 60 s deadline on exit after output closes.
+- **Stop no longer lies.** It waited 5 s, called `QThread.terminate()` — which returns before the thread has actually
+  stopped, and can land mid-bytecode holding the GIL — and then reported "stopped" while FFmpeg ran on. The run now
+  ends when the worker actually unwinds, and a new run cannot start on top of one still shutting down.
+- **A failing file can no longer wedge the app.** An error outside the per-file handler (read-only directory, locked
+  log, over-long Windows path) killed the worker silently, leaving the UI locked in "processing" forever — and the
+  close prompt asking about a thread that was long dead. Completion is now signalled on every exit path.
+- **Error output is bounded.** Every matching line was kept in memory and written to an unrotated log: roughly 3.7 GB
+  of RAM and 6.5 GB of disk per hour on a damaged source. Logs now rotate (15 MB per file at most) and error text is
+  capped at the first and last 200 lines with the rest counted.
+- **Editing the queue during a run is safe again.** The splice point came from a queued GUI slot, so any open dialog
+  froze it and already-encoded files could be pushed back into the pending tail and encoded a second time.
+- Raw intermediates and AviSynth scripts are written next to the source instead of the process working directory,
+  where a raw AVI (~100 GB per hour of 1080p) landed in the install folder and same-named sources collided.
+- QTGMC no longer oversubscribes the CPU: `Prefetch(N)` with `EdiThreads(E)` asked for N×E workers, so 16 cores meant
+  64. The budget is now divided rather than spent twice.
+- Pause identifies the process it suspends by handle rather than PID, so it cannot suspend an unrelated process that
+  inherited the PID; `libc` is resolved before forking; per-file loggers no longer leak.
+
 ## Changes in 3.8.1
 
 - **Quitting kills everything we started**: every FFmpeg/ffprobe process goes through `utils/childproc.py` — killed on

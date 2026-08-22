@@ -43,7 +43,8 @@ class AviSynthHandler:
         Returns True if successful
         """
         if not video_file.avs_file:
-            video_file.avs_file = f"{video_file.basename}.avs"
+            # Next to the source, never in the process CWD
+            video_file.avs_file = os.path.join(video_file.directory, f"{video_file.basename}.avs")
         
         try:
             with open(video_file.avs_file, "w") as avs:
@@ -124,14 +125,36 @@ class AviSynthHandler:
             avs_file.write(extras + '\n')
             avs_file.write('\n')
     
+    def _requested_threads(self) -> int:
+        """The user's CPU budget, defaulting to every core"""
+        try:
+            threads = int(self.settings.get('threads') or self.cpu_count)
+        except (TypeError, ValueError):
+            threads = self.cpu_count
+        return max(1, threads)
+
+    def _uses_qtgmc(self) -> bool:
+        return bool(self.settings.get('deinterlace', False)) and \
+            self.settings.get('deinterlacer', 'qtgmc') == 'qtgmc'
+
     def _edi_threads(self) -> int:
         """
         Threads for QTGMC's internal (nnedi3) threading. Prefetch() already runs
         several frames in parallel, so give each frame a small slice of the cores
         instead of threads*threads oversubscription.
         """
-        threads = int(self.settings.get('threads', self.cpu_count) or 1)
-        return max(1, min(4, threads // 2))
+        return max(1, min(4, self._requested_threads() // 2))
+
+    def _prefetch_threads(self) -> int:
+        """
+        How many frames to run in parallel. Concurrency here multiplies: every prefetched frame can run up to
+        EdiThreads nnedi3 threads of its own, so Prefetch(N) with EdiThreads(E) asks for N x E workers on top
+        of FFmpeg's own encoder threads. Divide the budget instead of spending it twice.
+        """
+        threads = self._requested_threads()
+        if self._uses_qtgmc():
+            return max(1, threads // self._edi_threads())
+        return threads
 
     def _write_deinterlacing(self, avs_file):
         """Write QTGMC deinterlacing section if enabled (ffmpeg handles yadif/bwdif)"""
@@ -163,7 +186,7 @@ class AviSynthHandler:
     
     def _write_prefetch(self, avs_file):
         """Write prefetch for multi-threading"""
-        threads = self.settings.get('threads', self.cpu_count)
+        threads = self._prefetch_threads()
         avs_file.write(f'# Enable multi-threaded processing\n')
         avs_file.write(f'Prefetch({threads})\n')
     

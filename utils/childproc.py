@@ -76,11 +76,32 @@ def register(proc: subprocess.Popen) -> subprocess.Popen:
     return proc
 
 
-def _die_with_parent():
-    """Linux: the kernel kills this child with SIGKILL the moment the parent dies — crash, SIGKILL, anything."""
+def _load_libc():
+    """
+    Resolve libc once, at import time, on the main thread. dlopen() is not async-signal-safe: calling it from
+    preexec_fn (i.e. in the forked child of a multi-threaded process) deadlocks if another thread happened to
+    hold the loader lock at fork time, and the parent then blocks forever in Popen.__init__.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
     try:
         import ctypes
-        ctypes.CDLL("libc.so.6").prctl(1, 9, 0, 0, 0)          # PR_SET_PDEATHSIG = 1, SIGKILL = 9
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl                                              # force symbol resolution before any fork
+        return libc
+    except Exception:
+        return None
+
+
+_libc = _load_libc()
+
+
+def _die_with_parent():
+    """Linux: the kernel kills this child with SIGKILL the moment the parent dies — crash, SIGKILL, anything."""
+    if _libc is None:
+        return
+    try:
+        _libc.prctl(1, 9, 0, 0, 0)                              # PR_SET_PDEATHSIG = 1, SIGKILL = 9
     except Exception:
         pass
 
@@ -89,7 +110,7 @@ def popen(*args, **kwargs) -> subprocess.Popen:
     """subprocess.Popen that is tracked, hidden on Windows, and dies with us on Windows (Job) and Linux (PDEATHSIG)."""
     if sys.platform == "win32":
         kwargs.setdefault("creationflags", CREATE_NO_WINDOW)
-    elif sys.platform.startswith("linux") and "preexec_fn" not in kwargs:
+    elif _libc is not None and "preexec_fn" not in kwargs:
         kwargs["preexec_fn"] = _die_with_parent
     return register(subprocess.Popen(*args, **kwargs))
 
@@ -139,6 +160,24 @@ def kill(proc: subprocess.Popen) -> None:
     except Exception:
         pass
     forget(proc)
+
+
+def release(proc: subprocess.Popen) -> None:
+    """
+    Stop tracking a child, killing it first if it somehow outlived the code that was watching it.
+
+    Always use this instead of forget() on a teardown path. forget() on a *live* child makes it invisible to
+    both the Stop button and kill_all() — an orphaned encoder that keeps every core busy long after the queue
+    has drained, with nothing left in the app able to reach it.
+    """
+    try:
+        alive = proc.poll() is None
+    except Exception:
+        alive = False
+    if alive:
+        kill(proc)
+    else:
+        forget(proc)
 
 
 def kill_all() -> int:
