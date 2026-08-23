@@ -242,20 +242,40 @@ class MainWindow(QMainWindow):
 
 def main():
     """Main entry point"""
+    if sys.platform == "win32":
+        # The taskbar button takes its icon from the process's Application User Model ID, not from the
+        # window: with none of its own the process is grouped under whatever launched it and shows that
+        # program's icon. Must happen before any window exists; no version in the id, so a pinned button
+        # survives an upgrade.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"hclivess.{APP_NAME}")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     childproc.install_qt_hook(app)
     
     # Set application style
     app.setStyle('Fusion')
 
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    # beside the frozen executable, inside a one-file bundle, or in the source tree - all three happen
+    for base in [os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else "",
+                 getattr(sys, "_MEIPASS", ""), os.path.dirname(os.path.abspath(__file__))]:
+        icon_path = os.path.join(base, 'icon.ico') if base else ''
+        if icon_path and os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            app.setWindowIcon(icon)
+            break
+    else:
+        icon = None
     
     # Optional: Enable dark theme
     # setup_dark_theme(app)
     
     window = MainWindow()
+    if icon is not None:
+        window.setWindowIcon(icon)      # some Qt and Windows combinations read it from the window
     window.show()
     selftest = os.environ.get("VIDEER_SELFTEST")
     if selftest:

@@ -9,6 +9,19 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.11
+
+- **The Windows taskbar shows the app's own icon.** The taskbar button takes its icon from the process's
+  Application User Model ID rather than from the window, and with none of its own the process was grouped
+  under whatever launched it and wore that program's icon. One is now set before any window exists, and it
+  carries no version number so a pinned button survives an upgrade.
+- **A real icon.** The app shipped a single 48×48 image; there is now a drawn icon at 16, 20, 24, 32, 40,
+  48, 64, 128 and 256 pixels, so every size Windows asks for is there rather than scaled from one.
+- The icon file is found beside the frozen executable, inside a one-file bundle or in the source tree,
+  instead of only where deriving the path from `__file__` happened to look, and the main window is given it
+  as well as the application.
+
+
 ## Changes in 3.10
 
 - **The queue survives a restart.** It is autosaved next to the application on every change and after every file,
