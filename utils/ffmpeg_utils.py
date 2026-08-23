@@ -214,9 +214,12 @@ class FFmpegCommandBuilder:
         # Add application metadata
         cmd.extend(['-metadata', 'comment=Made with videer'])
 
-        # Standard video settings (not applicable to stream copy / raw / ProRes)
-        if video_codec in ('libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc'):
+        # Standard video settings (not applicable to stream copy / raw / ProRes).
+        # NVENC gets its B-frame count from _add_nvenc_quality_settings instead.
+        if video_codec in ('libx264', 'libx265'):
             cmd.extend(['-bf', '2', '-flags', '+cgop'])
+        elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
+            cmd.extend(['-flags', '+cgop'])
         if video_codec not in ('copy', 'rawvideo', 'prores_ks'):
             cmd.extend(['-pix_fmt', 'yuv420p'])
 
@@ -249,12 +252,44 @@ class FFmpegCommandBuilder:
         elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
             cmd.extend(['-preset', NVENC_PRESET_MAPPING.get(preset_name, 'p4'),
                         '-tune', 'hq', '-rc', 'vbr'])
+            self._add_nvenc_quality_settings(cmd)
         elif video_codec == 'libsvtav1':
             cmd.extend(['-preset', SVTAV1_PRESET_MAPPING.get(preset_name, '6')])
         elif video_codec == 'libvpx-vp9':
             cmd.extend(['-deadline', 'good',
                         '-cpu-used', VP9_CPU_USED_MAPPING.get(preset_name, '2'),
                         '-row-mt', '1'])
+
+    def _add_nvenc_quality_settings(self, cmd: List[str]):
+        """
+        The quality knobs NVENC leaves switched off by default. FFmpeg ships `-rc-lookahead 0`,
+        `-spatial-aq false`, `-temporal-aq false` and `-multipass disabled`, so the plain
+        `-preset pN -tune hq -rc vbr -cq N` setup encodes with no lookahead, no adaptive quantisation and a
+        single pass — which is where most of NVENC's reputation for soft, detail-smeared output comes from.
+        These are the settings that recover it; every one of them costs encoding speed, so each is a toggle.
+        """
+        lookahead = int(self.settings.get('nvenc_lookahead', 32) or 0)
+        if lookahead > 0:
+            cmd.extend(['-rc-lookahead', str(lookahead)])
+
+        if self.settings.get('nvenc_aq', True):
+            cmd.extend(['-spatial-aq', '1',
+                        '-aq-strength', str(int(self.settings.get('nvenc_aq_strength', 8)))])
+            # Temporal AQ distributes bits across the lookahead window; without one it does nothing and
+            # older drivers reject the combination outright.
+            if lookahead > 0:
+                cmd.extend(['-temporal-aq', '1'])
+
+        multipass = self.settings.get('nvenc_multipass', 'fullres')
+        if multipass in ('qres', 'fullres'):
+            cmd.extend(['-multipass', multipass])
+
+        bframes = int(self.settings.get('nvenc_bframes', 3))
+        cmd.extend(['-bf', str(bframes)])
+        # B-frames as reference needs at least two of them, and the hardware for it arrived with Turing —
+        # older cards report the capability as unsupported and the encoder refuses to open.
+        if bframes >= 2 and self.settings.get('nvenc_b_ref', True):
+            cmd.extend(['-b_ref_mode', 'middle'])
 
     def _add_video_codec_settings(self, cmd: List[str]):
         """Add video codec settings to command"""

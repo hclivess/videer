@@ -9,6 +9,25 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.10
+
+- **The queue survives a restart.** It is autosaved next to the application on every change and after every file,
+  and restored on the next start with the already-encoded files left out — a crash or a power cut now costs at most
+  the file that was in flight. **Save Queue / Load Queue** (`Ctrl+S` / `Ctrl+L`) write the same format to a file you
+  keep: file order, per-file state and a snapshot of the encoding settings.
+- **Drag and drop works again during a run** — and everywhere on the window. The file list never implemented
+  `dragMoveEvent`, so the inherited handler asked the *list model* whether it could accept `text/uri-list`; it can't,
+  the platform cancelled the drag mid-flight and no drop ever arrived. Starting a run then set `NoDragDrop`, which
+  switches drops off at the viewport, and the `setAcceptDrops(True)` after it only covered half of that (`DropOnly`
+  is what that code wanted). The main window had `setAcceptDrops(True)` and no handlers at all, so every drop that
+  missed the list rectangle was discarded.
+- **NVENC is no longer driven with its quality features switched off.** FFmpeg's defaults are `-rc-lookahead 0`,
+  `-spatial-aq false`, `-temporal-aq false` and `-multipass disabled`, so the old `-preset pN -tune hq -rc vbr -cq N`
+  command encoded with no lookahead, no adaptive quantisation and a single pass — most of NVENC's reputation for
+  soft, detail-smeared output. Lookahead, spatial + temporal AQ, full-resolution multi-pass and B-frames-as-reference
+  are now on by default, each a toggle in **Advanced ▸ NVIDIA NVENC Quality** since they all cost encoding speed.
+  B-frames as reference needs Turing (RTX 20xx / GTX 16xx) or newer.
+
 ## Changes in 3.9
 
 A run that finished could leave FFmpeg processes behind that videer could no longer see or stop — the queue reported
@@ -76,12 +95,22 @@ are running into issues, you should try with ffms2 enabled.
   restarting; files already processed or in progress cannot be removed
 - Drag entries to reorder; each entry is coloured by state (▶ running, ✔ done, ✖ failed) and shows its VMAF score
   when enabled
+- **Save Queue / Load Queue** (`Ctrl+S` / `Ctrl+L`): write the queue — file order, per-file state and a snapshot of
+  the current encoding settings — to a `.json` file, and load it back later to replace or extend the queue. On load
+  you choose whether to skip the files already marked done and whether to apply the settings stored with the queue;
+  files that have moved or been deleted are reported and skipped.
+- **The queue survives a restart**: it is autosaved to `queue.json` next to the application on every change and after
+  every file, and restored on the next start with the already-encoded files left out — a crash or a power cut costs
+  at most the file that was in flight
 - **Pause / Resume** the whole run (suspends FFmpeg and its children, ETAs are corrected for the pause) and **Stop**
 
 ### Encoding
 
 - Video: H.264 (x264), H.265/HEVC (x265), AV1 (SVT-AV1), VP9, NVIDIA NVENC H.264/HEVC (`p1`–`p7` presets), ProRes,
   raw, or stream copy; CRF quality and per-encoder speed presets
+- NVENC quality options (Advanced tab): rate-control lookahead, spatial + temporal adaptive quantisation with
+  strength, quarter- or full-resolution multi-pass, B-frame count and B-frames-as-reference. All on by default —
+  FFmpeg ships them off — and each can be turned back off when throughput matters more than quality
 - Audio: AAC, MP3, Opus, AC3, FLAC, PCM, or stream copy; bitrate control and optional stereo downmix
 - Containers: MKV (the only one that carries `pgssub`), MP4, AVI, MOV, WebM
 - Deinterlacer choice: `QTGMC` (AviSynth+, Windows) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order

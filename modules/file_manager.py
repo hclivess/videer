@@ -24,12 +24,14 @@ class FileManager(QObject):
         super().__init__()
         self.queue = FileQueue()
     
-    def add_files(self, filepaths: List[str]) -> int:
+    def add_files(self, filepaths: List[str], preserve_order: bool = False) -> int:
         """
         Add files to the queue, skipping duplicates.
         A file counts as a duplicate if it is already queued *or* appears twice
         in the same batch — compared by resolved, case-normalized path, so
         `C:\\Video\\a.mkv`, `c:/video/A.MKV` and a symlink to it are all one file.
+        With preserve_order the batch keeps the order it was given (a queue restored
+        from a saved file must come back in the order the user arranged it).
         Returns number of files added.
         """
         valid_files = []
@@ -59,7 +61,7 @@ class FileManager(QObject):
         if valid_files:
             # Multi-selects arrive in OS selection order (often lexicographic:
             # 1, 10, 2, 20) — order each added batch naturally instead
-            if len(valid_files) > 1:
+            if len(valid_files) > 1 and not preserve_order:
                 valid_files.sort(key=path_key)
             self.queue.add_files(valid_files)
             self._emit_updates()
@@ -107,6 +109,10 @@ class FileManager(QObject):
         self.queue.clear()
         self._emit_updates()
     
+    def refresh(self):
+        """Re-emit the queue (used after mutating files in place, e.g. restoring saved statuses)"""
+        self._emit_updates()
+
     def get_queue(self) -> List[VideoFile]:
         """Get all files in the queue"""
         return self.queue.get_all()

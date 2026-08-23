@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
                               QSizePolicy, QMessageBox)
 from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
-from PySide6.QtGui import QAction, QIcon, QDragEnterEvent, QDropEvent, QFont, QColor, QBrush
+from PySide6.QtGui import (QAction, QIcon, QDragEnterEvent, QDragMoveEvent, QDropEvent,
+                           QFont, QColor, QBrush)
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS,
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS,
@@ -50,16 +51,27 @@ class FileListWidget(QListWidget):
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
-            event.accept()
+            event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
-    
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        """
+        Without this the drag is refused mid-flight and no drop ever arrives: the inherited handler asks the
+        *list model* whether it can take the data, and QListWidget's model only advertises its own internal
+        item format — never `text/uri-list`. Dropping files from the file manager has to be accepted here.
+        Internal drags (reordering) carry the model's own format and go to the base class, which draws the
+        drop indicator.
+        """
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
     def dropEvent(self, event: QDropEvent):
         if event.mimeData().hasUrls():
-            event.accept()
-            links = []
-            for url in event.mimeData().urls():
-                links.append(url.toLocalFile())
+            event.acceptProposedAction()
+            links = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
             self.files_dropped.emit(links)
         else:
             super().dropEvent(event)
@@ -98,6 +110,10 @@ class UIManager(QWidget):
         
         self._add_action(file_menu, 'Add Files', 'Ctrl+O', self._on_add_files)
         self._add_action(file_menu, 'Add Folder', 'Ctrl+Shift+O', self._on_add_folder)
+        file_menu.addSeparator()
+        qm = self.main_window.queue_manager
+        self._add_action(file_menu, 'Save Queue…', 'Ctrl+S', qm.save_queue)
+        self._add_action(file_menu, 'Load Queue…', 'Ctrl+L', qm.load_queue)
         file_menu.addSeparator()
         self._add_action(file_menu, 'Clear Queue', None, self._on_clear_queue)
         file_menu.addSeparator()
@@ -189,11 +205,21 @@ class UIManager(QWidget):
         
         self.controls['clear_files'] = QPushButton("Clear All")
         self.controls['clear_files'].clicked.connect(self._on_clear_queue)
-        
+
+        self.controls['save_queue'] = QPushButton("Save Queue")
+        self.controls['save_queue'].setToolTip("Save this queue to a file (File ▸ Load Queue restores it)")
+        self.controls['save_queue'].clicked.connect(self.main_window.queue_manager.save_queue)
+
+        self.controls['load_queue'] = QPushButton("Load Queue")
+        self.controls['load_queue'].setToolTip("Replace or extend the queue from a saved queue file")
+        self.controls['load_queue'].clicked.connect(self.main_window.queue_manager.load_queue)
+
         file_controls.addWidget(self.controls['add_files'])
         file_controls.addWidget(self.controls['add_folder'])
         file_controls.addWidget(self.controls['remove_files'])
         file_controls.addWidget(self.controls['clear_files'])
+        file_controls.addWidget(self.controls['save_queue'])
+        file_controls.addWidget(self.controls['load_queue'])
         
         files_layout.addLayout(file_controls)
         files_group.setLayout(files_layout)
@@ -391,7 +417,13 @@ class UIManager(QWidget):
         self.tabs.addTab(self._create_processing_tab(), "Processing")
         self.tabs.addTab(self._create_advanced_tab(), "Advanced")
         self.tabs.addTab(self._create_output_tab(), "Output")
-        
+
+        # Connected here, not in the Video tab: the NVENC group lives on the Advanced tab, which is built
+        # after the codec radios
+        self.codec_groups['video'].buttonToggled.connect(
+            lambda *_: self._update_nvenc_group_enabled())
+        self._update_nvenc_group_enabled()
+
         layout.addWidget(self.tabs)
         
         return panel
@@ -713,6 +745,9 @@ class UIManager(QWidget):
         fixes_group.setLayout(fixes_layout)
         layout.addWidget(fixes_group)
         
+        # NVENC quality options
+        layout.addWidget(self._create_nvenc_group())
+
         # FFmpeg extras
         ffmpeg_group = QGroupBox("FFmpeg Options")
         ffmpeg_layout = QVBoxLayout()
@@ -741,6 +776,81 @@ class UIManager(QWidget):
         widget.setLayout(layout)
         return widget
     
+    def _create_nvenc_group(self) -> QGroupBox:
+        """
+        NVENC quality options. FFmpeg's defaults leave lookahead, adaptive quantisation and multi-pass off,
+        which is most of the quality gap against x264/x265. These are on by default and cost encoding speed;
+        the group is only enabled while an NVENC codec is selected.
+        """
+        self.nvenc_group = QGroupBox("NVIDIA NVENC Quality")
+        grid = QGridLayout()
+
+        self.controls['nvenc_aq'] = QCheckBox("Adaptive quantisation (spatial + temporal)")
+        self.controls['nvenc_aq'].setChecked(True)
+        self.controls['nvenc_aq'].setToolTip(
+            "Spends bits where the eye looks — flat gradients and dark areas stop banding.\n"
+            "Temporal AQ additionally needs a lookahead above 0.")
+        self.controls['nvenc_aq'].toggled.connect(self._on_nvenc_aq_toggled)
+        grid.addWidget(self.controls['nvenc_aq'], 0, 0, 1, 2)
+
+        grid.addWidget(QLabel("AQ Strength:"), 1, 0)
+        self.controls['nvenc_aq_strength'] = QSpinBox()
+        self.controls['nvenc_aq_strength'].setRange(1, 15)
+        self.controls['nvenc_aq_strength'].setValue(8)
+        self.controls['nvenc_aq_strength'].setToolTip("1 = subtle, 15 = aggressive. 8 is NVENC's own default.")
+        grid.addWidget(self.controls['nvenc_aq_strength'], 1, 1)
+
+        grid.addWidget(QLabel("Lookahead:"), 2, 0)
+        self.controls['nvenc_lookahead'] = QSpinBox()
+        self.controls['nvenc_lookahead'].setRange(0, 64)
+        self.controls['nvenc_lookahead'].setValue(32)
+        self.controls['nvenc_lookahead'].setSuffix(" frames")
+        self.controls['nvenc_lookahead'].setToolTip(
+            "Frames the rate control may look ahead before deciding bit allocation.\n"
+            "0 disables it (FFmpeg's default) and also disables temporal AQ.")
+        grid.addWidget(self.controls['nvenc_lookahead'], 2, 1)
+
+        grid.addWidget(QLabel("Multi-pass:"), 3, 0)
+        self.controls['nvenc_multipass'] = QComboBox()
+        for label, value in (("Full resolution (best quality)", "fullres"),
+                             ("Quarter resolution (faster)", "qres"),
+                             ("Disabled (fastest)", "disabled")):
+            self.controls['nvenc_multipass'].addItem(label, value)
+        self.controls['nvenc_multipass'].setToolTip(
+            "Two-pass rate control inside the encoder. The largest single gain at low bitrates.")
+        grid.addWidget(self.controls['nvenc_multipass'], 3, 1)
+
+        grid.addWidget(QLabel("B-frames:"), 4, 0)
+        self.controls['nvenc_bframes'] = QSpinBox()
+        self.controls['nvenc_bframes'].setRange(0, 4)
+        self.controls['nvenc_bframes'].setValue(3)
+        self.controls['nvenc_bframes'].valueChanged.connect(self._on_nvenc_bframes_changed)
+        grid.addWidget(self.controls['nvenc_bframes'], 4, 1)
+
+        self.controls['nvenc_b_ref'] = QCheckBox("Use B-frames as reference (Turing / RTX 20xx or newer)")
+        self.controls['nvenc_b_ref'].setChecked(True)
+        self.controls['nvenc_b_ref'].setToolTip(
+            "Clear worth on HEVC, but the hardware arrived with Turing —\n"
+            "on Pascal and older the encoder refuses to open. Needs at least 2 B-frames.")
+        grid.addWidget(self.controls['nvenc_b_ref'], 5, 0, 1, 2)
+
+        self.nvenc_group.setLayout(grid)
+        self._on_nvenc_aq_toggled(True)
+        self._update_nvenc_group_enabled()
+        return self.nvenc_group
+
+    def _on_nvenc_aq_toggled(self, checked: bool):
+        self.controls['nvenc_aq_strength'].setEnabled(checked)
+
+    def _on_nvenc_bframes_changed(self, value: int):
+        """B-frames as reference is meaningless below two B-frames"""
+        self.controls['nvenc_b_ref'].setEnabled(value >= 2)
+
+    def _update_nvenc_group_enabled(self):
+        """Grey the group out unless one of the NVENC encoders is selected"""
+        codec = self._get_selected_codec('video')
+        self.nvenc_group.setEnabled(codec in ('h264_nvenc', 'hevc_nvenc'))
+
     def _create_output_tab(self):
         """Create output settings tab"""
         widget = QWidget()
@@ -1081,16 +1191,16 @@ class UIManager(QWidget):
         self.controls['add_folder'].setEnabled(True)       # always enabled
         self.controls['remove_files'].setEnabled(True)     # always enabled
         self.controls['clear_files'].setEnabled(not is_processing)  # disable during processing
+        self.controls['save_queue'].setEnabled(True)                # snapshot the queue any time
+        self.controls['load_queue'].setEnabled(not is_processing)   # replacing a running queue is unsafe
         self.tabs.setEnabled(not is_processing)             # settings stay locked
 
-        # Disable internal drag-drop reordering during processing (prevents index corruption)
-        # but keep external file drops working
-        if is_processing:
-            self.file_list.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
-            self.file_list.setAcceptDrops(True)
-        else:
-            self.file_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-            self.file_list.setAcceptDrops(True)
+        # Disable internal drag-drop reordering during processing (prevents index corruption) but keep
+        # external file drops working. DropOnly says exactly that; NoDragDrop turns drops off at the viewport
+        # and the setAcceptDrops(True) that followed it only papered over half of that.
+        self.file_list.setDragDropMode(QListWidget.DragDropMode.DropOnly if is_processing
+                                       else QListWidget.DragDropMode.InternalMove)
+        self.file_list.setAcceptDrops(True)
     
     def get_current_settings(self) -> Dict[str, Any]:
         """Get all current settings"""
@@ -1125,7 +1235,13 @@ class UIManager(QWidget):
             'custom_height': self.controls['custom_height'].value(),
             'no_upscale': self.controls['no_upscale'].isChecked(),
             'scale_algorithm': self.controls['scale_algorithm'].currentText(),
-            'calculate_vmaf': self.controls['calculate_vmaf'].isChecked()
+            'calculate_vmaf': self.controls['calculate_vmaf'].isChecked(),
+            'nvenc_aq': self.controls['nvenc_aq'].isChecked(),
+            'nvenc_aq_strength': self.controls['nvenc_aq_strength'].value(),
+            'nvenc_lookahead': self.controls['nvenc_lookahead'].value(),
+            'nvenc_multipass': self.controls['nvenc_multipass'].currentData(),
+            'nvenc_bframes': self.controls['nvenc_bframes'].value(),
+            'nvenc_b_ref': self.controls['nvenc_b_ref'].isChecked()
         }
         
         # Get PAR handling mode
@@ -1156,7 +1272,8 @@ class UIManager(QWidget):
     
     def load_settings(self, qsettings: QSettings):
         """Load all settings from QSettings"""
-        int_keys = ('crf', 'abr', 'threads', 'custom_width', 'custom_height')
+        int_keys = ('crf', 'abr', 'threads', 'custom_width', 'custom_height',
+                    'nvenc_aq_strength', 'nvenc_lookahead', 'nvenc_bframes')
         settings = {}
         for key in qsettings.allKeys():
             value = qsettings.value(key)

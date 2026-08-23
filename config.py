@@ -4,11 +4,12 @@ Contains all constants and default settings
 """
 
 import os
+import sys
 import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.9"
+APP_VERSION = "3.10"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -203,11 +204,29 @@ DEFAULT_SETTINGS = {
     "custom_height": 0,
     "no_upscale": True,
     "scale_algorithm": DEFAULT_SCALE_ALGORITHM,
-    "calculate_vmaf": False
+    "calculate_vmaf": False,
+    # NVENC quality options — FFmpeg's own defaults for these are all "off"
+    "nvenc_aq": True,
+    "nvenc_aq_strength": 8,
+    "nvenc_lookahead": 32,
+    "nvenc_multipass": "fullres",
+    "nvenc_bframes": 3,
+    "nvenc_b_ref": True
 }
 
-# Path to user defaults file (next to this config file, i.e. app directory)
-DEFAULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults.json")
+# Directory the app keeps its user-writable state in. In a PyInstaller build __file__ points inside the
+# temporary extraction directory, which is wiped on exit — anything written there would not survive a
+# restart — so use the directory the executable itself lives in.
+APP_DIR = (os.path.dirname(os.path.abspath(sys.executable))
+           if getattr(sys, 'frozen', False)
+           else os.path.dirname(os.path.abspath(__file__)))
+
+# Path to user defaults file (in the app directory)
+DEFAULTS_FILE = os.path.join(APP_DIR, "defaults.json")
+
+# Queue autosave: rewritten whenever the queue changes, restored on the next start
+QUEUE_AUTOSAVE_FILE = os.path.join(APP_DIR, "queue.json")
+QUEUE_FILE_FORMAT = 1
 
 # Preset configurations
 QUALITY_PRESETS = {

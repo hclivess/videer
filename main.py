@@ -8,13 +8,14 @@ import sys
 import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QPalette, QColor, QIcon
+from PySide6.QtGui import QPalette, QColor, QIcon, QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 # Import modules
 from modules.ui_manager import UIManager
 from modules.file_manager import FileManager
 from modules.process_manager import ProcessManager
 from modules.preset_manager import PresetManager
+from modules.queue_manager import QueueManager
 from utils.ffmpeg_utils import check_ffmpeg_status
 from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
 from utils import childproc
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
         self.file_manager = FileManager()
         self.process_manager = ProcessManager(self)
         self.preset_manager = PresetManager(self)
+        self.queue_manager = QueueManager(self)   # before the UI: the File menu binds to it
         self.ui_manager = UIManager(self)
         
         # Setup UI
@@ -47,6 +49,9 @@ class MainWindow(QMainWindow):
         
         # Load saved settings
         self.load_settings()
+
+        # Put back the queue from the previous session (skipping what already encoded)
+        self.queue_manager.restore_autosave()
         
         # Check FFmpeg status
         self.check_dependencies()
@@ -78,6 +83,11 @@ class MainWindow(QMainWindow):
 
         # Route newly-added files to the running process queue
         self.file_manager.files_updated.connect(self._on_files_updated_during_processing)
+
+        # Keep the on-disk queue snapshot current: additions, removals, reordering and per-file results all
+        # land in it, so a crash or a power cut costs at most the file that was in flight.
+        self.file_manager.files_updated.connect(lambda _files: self.queue_manager.autosave())
+        self.process_manager.file_state_changed.connect(lambda *_: self.queue_manager.autosave())
     
     def check_dependencies(self):
         """Check if required dependencies are available"""
@@ -133,6 +143,32 @@ class MainWindow(QMainWindow):
         else:
             self.process_manager.pause_processing()
     
+    # ---- drag & drop onto the window ------------------------------------
+    # setAcceptDrops(True) on its own only makes the window *look* like a drop target: without these
+    # handlers every drop that misses the file list is discarded. All three are needed — a drag whose
+    # dragMoveEvent is not accepted is refused by the platform and never produces a drop.
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        """Files dropped anywhere on the window join the queue — during a run too (they are appended)"""
+        if not event.mimeData().hasUrls():
+            super().dropEvent(event)
+            return
+        event.acceptProposedAction()
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        if paths:
+            self.file_manager.add_files(paths)
+
     def _on_files_updated_during_processing(self, files):
         """Keep the running queue's pending tail in sync with the UI queue"""
         if self.process_manager.is_processing():
@@ -200,6 +236,7 @@ class MainWindow(QMainWindow):
             self.process_manager.stop_processing()
         
         self.save_settings()
+        self.queue_manager.autosave()
         event.accept()
 
 
