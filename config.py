@@ -9,7 +9,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.11"
+APP_VERSION = "3.12"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -166,6 +166,63 @@ DEFAULT_CRF = 23
 DEFAULT_ABR = 256
 DEFAULT_PRESET = "Medium"
 DEFAULT_FORMAT = "MKV"
+
+# ------------------------------------------------------------------
+# Quality matching: find the CRF that keeps the source's quality
+# ------------------------------------------------------------------
+# The search is driven by a full-reference metric — the encode is compared against the source itself, so the
+# answer is "how much of *this* file survived", not a bitrate guess that ignores what the content is.
+# VMAF is the metric that means the same thing across content (its scale is trained on subjective scores);
+# SSIM is the fallback for FFmpeg builds that ship without libvmaf, where the same target is far less exact.
+QUALITY_METRICS = {
+    "vmaf": {
+        "label": "VMAF",
+        "filter": "libvmaf",
+        "targets": [
+            ("Visually lossless — 97", 97.0),
+            ("Transparent — 95 (recommended)", 95.0),
+            ("High — 93", 93.0),
+            ("Good — 90", 90.0),
+        ],
+        "default_target": 95.0,
+        "range": (60.0, 100.0),
+        "decimals": 1,
+        "step": 0.5,
+    },
+    "ssim": {
+        "label": "SSIM",
+        "filter": "ssim",
+        "targets": [
+            ("Visually lossless — 0.990", 0.990),
+            ("Transparent — 0.985", 0.985),
+            ("High — 0.980 (recommended)", 0.980),
+            ("Good — 0.970", 0.970),
+        ],
+        "default_target": 0.980,
+        "range": (0.800, 1.000),
+        "decimals": 3,
+        "step": 0.001,
+    },
+}
+DEFAULT_QUALITY_METRIC = "vmaf"
+
+# Sampling: short clips spread across the file rather than one encode of the whole thing. The margin keeps
+# the search away from intros, logos and credits, which compress nothing like the actual content.
+QUALITY_SAMPLE_COUNT = 3
+QUALITY_SAMPLE_SECONDS = 10
+QUALITY_SAMPLE_MARGIN = 0.05
+
+# Where the CRF/CQ search starts per encoder. Deliberately narrower than each encoder's full scale: outside
+# these bounds the answer is never "the best trade-off", and every extra step costs a probe encode.
+QUALITY_SEARCH_RANGE = {
+    "libx264": (14, 34),
+    "libx265": (16, 36),
+    "h264_nvenc": (14, 38),
+    "hevc_nvenc": (16, 40),
+    "libsvtav1": (18, 50),
+    "libvpx-vp9": (18, 50),
+}
+DEFAULT_QUALITY_SEARCH_RANGE = (16, 36)
 
 # Thread settings
 MAX_THREADS = multiprocessing.cpu_count()

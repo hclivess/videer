@@ -9,6 +9,29 @@ existence. Including AI and DaVinci Studio.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.12
+
+- **Match Source Quality** (`Ctrl+M`, or the button under the CRF slider) finds the CRF this particular source
+  actually needs, instead of leaving you to guess one. It encodes a few short samples of the real file at
+  candidate CRF values, scores each against the original with VMAF, and bisects to the **highest** CRF that
+  still meets the quality you asked for — highest, because among the settings that keep the quality, the
+  largest CRF is the smallest file. A 20-step range costs about five probes of a few seconds of video each.
+- Targets are named rather than numeric: *visually lossless* (VMAF 97), *transparent* (95, the default),
+  *high* (93), *good* (90), or any value you type. Sample count and length and the CRF range to search are
+  yours to set; the range is remembered per encoder, because AV1's CRF scale is not x265's.
+- Every probe is reported as it finishes — CRF, score, estimated size of the finished video stream, and what
+  that is as a share of the source — so what you are choosing between is visible, not just the answer.
+- It says when re-encoding is not worth doing: a target no CRF in the range could reach means a grainy or
+  already heavily compressed source, and an estimate no smaller than the original means stream copy is the
+  better choice.
+- The search uses the encoder, speed preset and filters currently selected, and is unavailable while the
+  queue is running — probe encodes competing with the queue for the CPU would measure neither honestly.
+- Needs an FFmpeg built with `libvmaf`; builds without it (Ubuntu's stock package, among others) fall back to
+  SSIM and say so in the dialog.
+- The post-encode VMAF score no longer decodes the audio track: without `-an` FFmpeg was selecting an audio
+  stream and encoding it into the null muxer for the whole length of the comparison.
+
+
 ## Changes in 3.11
 
 - **The Windows taskbar shows the app's own icon.** The taskbar button takes its icon from the process's
@@ -138,6 +161,23 @@ are running into issues, you should try with ffms2 enabled.
 - Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1
   presets; `defaults.json` support for your own startup defaults
 
+### Quality matching
+
+- **Match Source Quality…** (`Ctrl+M`, or the button under the CRF slider) answers the question a CRF number
+  cannot: how much compression *this* source will take before it starts to look worse. It encodes a few short
+  samples of the real file at candidate CRFs, scores each against the original with VMAF, and bisects to the
+  **highest** CRF that still meets the quality you asked for — highest, because among the settings that keep the
+  quality, the largest CRF is the smallest file
+- Targets are named rather than numeric: *visually lossless* (VMAF 97), *transparent* (95, the default), *high*
+  (93), *good* (90), or any value you type. Sample count and length, and the CRF range to search, are yours to set;
+  the range is remembered per encoder, because AV1's CRF scale is not x265's
+- Every probe is reported as it finishes — CRF, score, estimated size of the finished video stream and what that
+  is as a share of the source — so the trade-off you are choosing between is visible, not just the answer
+- It says when re-encoding is not worth it: a target no CRF in the range could reach means a grainy or already
+  heavily compressed source, and an estimate no smaller than the original means stream copy is the better choice
+- Uses the encoder, speed preset and filters currently selected, so the answer is for the encode you are about to
+  run. Needs an FFmpeg with `libvmaf`; builds without it fall back to SSIM, and say so
+
 ### File handling
 
 - Output is written next to the source as `<name>_<vcodec>_<acodec>_crf<N>_abr<N>[_<res>].<ext>`; timestamps are
@@ -157,7 +197,8 @@ are running into issues, you should try with ffms2 enabled.
   machine-readable `-progress` output
 - Settings sanity check before starting (container/codec mismatches, ignored options, missing AviSynth plugins,
   destructive options)
-- Opt-in VMAF score after encoding (requires `libvmaf` in FFmpeg)
+- Opt-in VMAF score after encoding (requires `libvmaf` in FFmpeg), and a VMAF-driven CRF search
+  before it — see *Quality matching* above
 - Cross-platform: runs on Windows, Linux and macOS (AviSynth+/QTGMC features are Windows-only); no shell or
   PowerShell calls
 

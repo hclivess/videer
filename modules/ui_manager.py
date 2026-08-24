@@ -21,6 +21,7 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
                    QUALITY_PRESETS, APP_NAME, APP_VERSION)
 from modules.process_manager import format_duration, format_size
+from modules.quality_analyzer import QualityMatchDialog
 
 
 class FileListWidget(QListWidget):
@@ -141,6 +142,10 @@ class UIManager(QWidget):
         presets_menu.addSeparator()
         self._add_action(presets_menu, 'Save Current as Defaults', None, pm.save_as_defaults)
         self._add_action(presets_menu, 'Reset to Factory Defaults', None, pm.reset_defaults)
+
+        # Tools menu
+        tools_menu = menubar.addMenu('Tools')
+        self._add_action(tools_menu, 'Match Source Quality…', 'Ctrl+M', self.open_quality_match)
 
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -478,7 +483,16 @@ class UIManager(QWidget):
         crf_layout.addWidget(self.controls['crf_slider'])
         crf_layout.addWidget(self.controls['crf'])
         quality_layout.addWidget(crf_widget, 1, 1)
-        
+
+        self.controls['match_quality'] = QPushButton("Match Source Quality…")
+        self.controls['match_quality'].setToolTip(
+            "Measure what CRF this source actually needs.\n"
+            "Encodes short samples at several CRF values, scores each one against the original,\n"
+            "and reports the highest CRF — the smallest file — that still keeps the quality you ask for."
+        )
+        self.controls['match_quality'].clicked.connect(self.open_quality_match)
+        quality_layout.addWidget(self.controls['match_quality'], 2, 0, 1, 2)
+
         quality_group.setLayout(quality_layout)
         layout.addWidget(quality_group)
 
@@ -1002,6 +1016,16 @@ class UIManager(QWidget):
         """Clear file queue"""
         self.queue_cleared.emit()
     
+    def open_quality_match(self):
+        """Open the CRF search. Never during a run: probe encodes would compete with the queue for the CPU."""
+        if self.main_window.process_manager.is_processing():
+            QMessageBox.information(
+                self.main_window, "Busy",
+                "Finish or stop the queue first — the search needs the machine to itself to time and "
+                "measure its probe encodes.")
+            return
+        QualityMatchDialog(self.main_window).exec()
+
     def _show_about(self):
         """Show about dialog"""
         QMessageBox.about(
@@ -1193,6 +1217,7 @@ class UIManager(QWidget):
         self.controls['clear_files'].setEnabled(not is_processing)  # disable during processing
         self.controls['save_queue'].setEnabled(True)                # snapshot the queue any time
         self.controls['load_queue'].setEnabled(not is_processing)   # replacing a running queue is unsafe
+        self.controls['match_quality'].setEnabled(not is_processing)  # probe encodes would fight the queue
         self.tabs.setEnabled(not is_processing)             # settings stay locked
 
         # Disable internal drag-drop reordering during processing (prevents index corruption) but keep

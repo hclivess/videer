@@ -3,6 +3,7 @@ FFmpeg utilities for videer
 Handles FFmpeg command generation and execution
 """
 
+import json
 import os
 import shlex
 import shutil
@@ -81,6 +82,96 @@ def probe_duration(filepath: str) -> Optional[float]:
         return float(value[0]) if value else None
     except (subprocess.SubprocessError, ValueError, OSError):
         return None
+
+
+# Encoders whose quality is a single CRF/CQ number — the ones a quality search can tune. ProRes, rawvideo
+# and stream copy have no such knob, so there is nothing for the search to move.
+CRF_ENCODERS = ('libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'libsvtav1', 'libvpx-vp9')
+
+_filters_cache: Optional[set] = None
+
+
+def ffmpeg_filters(refresh: bool = False) -> set:
+    """Names of the filters this FFmpeg build has (cached). Empty when the build could not be asked."""
+    global _filters_cache
+    if _filters_cache is not None and not refresh:
+        return _filters_cache
+
+    names = set()
+    ffmpeg = find_ffmpeg()
+    if ffmpeg:
+        try:
+            result = childproc.run([ffmpeg, '-hide_banner', '-filters'], text=True, timeout=30)
+            for line in (result.stdout or '').splitlines():
+                # " TS. name  VV->V  description"; the legend lines above the table have '=' where the name is
+                parts = line.split()
+                if len(parts) >= 3 and parts[1] != '=' and '->' in parts[2]:
+                    names.add(parts[1])
+        except (subprocess.SubprocessError, OSError):
+            pass
+    _filters_cache = names
+    return names
+
+
+def ffmpeg_has_filter(name: str) -> bool:
+    """
+    Whether the FFmpeg in use provides a filter. An FFmpeg that could not be asked at all (missing, or
+    -filters failed) answers True: better to try the command and report FFmpeg's own error than to disable a
+    feature on the strength of a failed probe.
+    """
+    filters = ffmpeg_filters()
+    return name in filters if filters else True
+
+
+def probe_media_info(filepath: str) -> Dict[str, Any]:
+    """Duration, size and first-video-stream properties, best effort — every field may be None."""
+    info: Dict[str, Any] = {'duration': None, 'size': None, 'width': None, 'height': None,
+                            'video_bitrate': None, 'total_bitrate': None, 'codec': None, 'fps': None}
+    try:
+        info['size'] = os.path.getsize(filepath)
+    except OSError:
+        pass
+
+    ffprobe = find_ffprobe()
+    if not ffprobe or not os.path.exists(filepath):
+        return info
+
+    try:
+        result = childproc.run(
+            [ffprobe, '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'format=duration,bit_rate:'
+                              'stream=width,height,bit_rate,codec_name,avg_frame_rate',
+             '-of', 'json', filepath],
+            text=True, timeout=30)
+        data = json.loads(result.stdout or '{}')
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return info
+
+    def number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    fmt = data.get('format') or {}
+    info['duration'] = number(fmt.get('duration'))
+    info['total_bitrate'] = number(fmt.get('bit_rate'))
+
+    streams = data.get('streams') or []
+    if streams:
+        stream = streams[0]
+        info['codec'] = stream.get('codec_name')
+        info['width'] = int(stream['width']) if str(stream.get('width', '')).isdigit() else None
+        info['height'] = int(stream['height']) if str(stream.get('height', '')).isdigit() else None
+        info['video_bitrate'] = number(stream.get('bit_rate'))
+        rate = (stream.get('avg_frame_rate') or '').split('/')
+        if len(rate) == 2 and number(rate[0]) and number(rate[1]):
+            info['fps'] = number(rate[0]) / number(rate[1])
+
+    # A container that stores no per-stream bitrate (Matroska usually does not) still tells us the total
+    if info['video_bitrate'] is None and info['total_bitrate'] is None and info['size'] and info['duration']:
+        info['total_bitrate'] = info['size'] * 8 / info['duration']
+    return info
 
 
 class FFmpegCommandBuilder:
@@ -443,15 +534,78 @@ class FFmpegCommandBuilder:
         if dar and self.settings.get('par_handling', 'metadata') != 'resample':
             cmd.extend(['-aspect', dar])
 
-    def build_vmaf_command(self, encoded_file, original_file):
-        """Build FFmpeg command to calculate VMAF score"""
+    # Full-reference metrics the app can measure with, and the filter that computes each
+    METRIC_FILTERS = {'vmaf': 'libvmaf', 'ssim': 'ssim'}
+
+    def build_sample_encode_command(self, input_file: str, output_file: str,
+                                    start: float, duration: float) -> List[str]:
+        """
+        Encode one short segment of the source with the settings currently selected — the probe a quality
+        search measures. Everything that moves quality is kept (encoder, speed preset, CQ/CRF, NVENC options,
+        the filter chain); everything that does not is dropped, because each probe is encoded several times:
+        no audio, no subtitles, no metadata, and always Matroska regardless of the chosen container.
+        """
+        cmd = self._base_command(err_detect=False)
+        video_codec = self.settings.get('video_codec', 'libx265')
+        if video_codec in ("hevc_nvenc", "h264_nvenc"):
+            cmd.extend(['-hwaccel', 'cuda'])
+
+        # -ss before -i: FFmpeg seeks to the preceding keyframe and decodes forward to the exact timestamp,
+        # so the segment starts on the same frame the reference side of the metric will start on.
+        cmd.extend(['-ss', f'{start:.3f}', '-t', f'{duration:.3f}', '-i', input_file, '-y'])
+
+        threads = int(self.settings.get('threads') or 0)
+        if threads > 0:
+            cmd.extend(['-threads', str(threads)])
+
+        self._add_speed_preset(cmd, video_codec)
+        cmd.extend(['-map', '0:v:0', '-an', '-sn', '-dn'])
+        self._add_video_codec_settings(cmd)
+
+        vf_filters = self.build_video_filters()
+        if vf_filters:
+            cmd.extend(['-vf', ','.join(vf_filters)])
+
+        if video_codec in ('libx264', 'libx265'):
+            cmd.extend(['-bf', '2', '-flags', '+cgop'])
+        elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
+            cmd.extend(['-flags', '+cgop'])
+        cmd.extend(['-pix_fmt', 'yuv420p'])
+
+        cmd.extend(['-f', 'matroska', output_file])
+        return cmd
+
+    def build_metric_command(self, encoded_file: str, original_file: str, metric: str = 'vmaf',
+                             start: Optional[float] = None, duration: Optional[float] = None,
+                             threads: int = 0) -> List[str]:
+        """
+        Compare an encode against its source with a full-reference metric. start/duration cut the same
+        segment out of the reference that the encode was made from; without them the whole file is scored.
+        """
         cmd = self._base_command(err_detect=False)
         cmd.extend(['-i', encoded_file])   # distorted
+        if start is not None:
+            cmd.extend(['-ss', f'{start:.3f}'])
+        if duration is not None:
+            cmd.extend(['-t', f'{duration:.3f}'])
         cmd.extend(['-i', original_file])  # reference
+
+        filter_name = self.METRIC_FILTERS.get(metric, 'libvmaf')
+        if filter_name == 'libvmaf' and threads > 0:
+            # libvmaf is single-threaded by default and is then slower than the encode it is scoring
+            filter_name = f'libvmaf=n_threads={threads}'
+
         # Align timestamps and scale the encode back to the reference size so
-        # VMAF works after resolution/PAR changes.
+        # the comparison works after resolution/PAR changes.
         graph = ('[0:v]setpts=PTS-STARTPTS[d];[1:v]setpts=PTS-STARTPTS[r];'
-                 '[d][r]scale2ref=flags=bicubic[ds][rs];[ds][rs]libvmaf')
+                 f'[d][r]scale2ref=flags=bicubic[ds][rs];[ds][rs]{filter_name}')
         cmd.extend(['-lavfi', graph])
-        cmd.extend(['-f', 'null', '-'])
+        # Nothing but the metric is wanted: without -an FFmpeg still selects an audio stream and decodes it
+        # into the null muxer for the whole comparison.
+        cmd.extend(['-an', '-sn', '-f', 'null', '-'])
+        return cmd
+
+    def build_vmaf_command(self, encoded_file, original_file):
+        """Build FFmpeg command to calculate VMAF score for a finished encode"""
+        cmd = self.build_metric_command(encoded_file, original_file, 'vmaf')
         return cmd
