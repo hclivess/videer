@@ -3,13 +3,13 @@ UI Manager for videer
 Handles all UI creation and management
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                               QCheckBox, QRadioButton, QPushButton, QLineEdit, 
                               QSlider, QTextEdit, QFileDialog, QButtonGroup, 
                               QGroupBox, QListWidget, QStyle, QProgressBar, 
                               QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
-                              QTabWidget, QSpinBox, QComboBox, QGridLayout, QFrame,
+                              QTabWidget, QSpinBox, QDoubleSpinBox, QComboBox, QGridLayout, QFrame,
                               QSizePolicy, QMessageBox)
 from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
 from PySide6.QtGui import (QAction, QIcon, QDragEnterEvent, QDragMoveEvent, QDropEvent,
@@ -19,9 +19,12 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS,
                    RESOLUTION_PRESETS, SCALE_ALGORITHMS, DEFAULT_SCALE_ALGORITHM,
                    DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
-                   QUALITY_PRESETS, APP_NAME, APP_VERSION)
+                   QUALITY_PRESETS, APP_NAME, APP_VERSION, QUALITY_POOLS,
+                   QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC,
+                   DEFAULT_QUALITY_POOL)
 from modules.process_manager import format_duration, format_size
-from modules.quality_analyzer import QualityMatchDialog
+from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
+                                      format_score, metric_spec, resolved_search_range)
 
 
 class FileListWidget(QListWidget):
@@ -420,6 +423,7 @@ class UIManager(QWidget):
         self.tabs.addTab(self._create_video_tab(), "Video")
         self.tabs.addTab(self._create_audio_tab(), "Audio")
         self.tabs.addTab(self._create_processing_tab(), "Processing")
+        self.tabs.addTab(self._create_quality_tab(), "Quality")
         self.tabs.addTab(self._create_advanced_tab(), "Advanced")
         self.tabs.addTab(self._create_output_tab(), "Output")
 
@@ -725,6 +729,263 @@ class UIManager(QWidget):
         widget.setLayout(layout)
         return widget
     
+    def _create_quality_tab(self):
+        """
+        Everything that decides what "the same quality" means. One place, because the same metric, target and
+        pooling drive three things: the one-file search in the dialog, the per-file search the queue runs, and
+        the score each finished encode is verified with.
+        """
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # ---- what quality means -------------------------------------
+        metric_group = QGroupBox("Quality Metric")
+        metric_layout = QGridLayout()
+
+        metric_layout.addWidget(QLabel("Metric:"), 0, 0)
+        self.controls['quality_metric'] = QComboBox()
+        fill_metric_combo(self.controls['quality_metric'])
+        self.controls['quality_metric'].currentIndexChanged.connect(self._on_quality_metric_changed)
+        metric_layout.addWidget(self.controls['quality_metric'], 0, 1)
+
+        self.quality_metric_note = QLabel()
+        self.quality_metric_note.setWordWrap(True)
+        self.quality_metric_note.setStyleSheet("color: #666; font-size: 11px;")
+        metric_layout.addWidget(self.quality_metric_note, 1, 0, 1, 2)
+
+        metric_layout.addWidget(QLabel("Target:"), 2, 0)
+        target_widget = QWidget()
+        target_layout = QHBoxLayout(target_widget)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        self.controls['quality_target_preset'] = QComboBox()
+        self.controls['quality_target_preset'].currentIndexChanged.connect(self._on_quality_preset_changed)
+        self.controls['quality_target'] = QDoubleSpinBox()
+        self.controls['quality_target'].valueChanged.connect(self._on_quality_target_changed)
+        target_layout.addWidget(self.controls['quality_target_preset'], 1)
+        target_layout.addWidget(self.controls['quality_target'])
+        metric_layout.addWidget(target_widget, 2, 1)
+
+        metric_layout.addWidget(QLabel("Pool frames by:"), 3, 0)
+        self.controls['quality_pool'] = QComboBox()
+        for label, key in QUALITY_POOLS:
+            self.controls['quality_pool'].addItem(label, key)
+        self.controls['quality_pool'].setToolTip(
+            "How per-frame scores become one number.\n"
+            "The mean averages the worst scenes away — twenty bad seconds in ten good minutes barely move it.\n"
+            "A low percentile or the minimum steers by those scenes instead, which is the honest choice when\n"
+            "an encode looks worse than its score promised."
+        )
+        metric_layout.addWidget(self.controls['quality_pool'], 3, 1)
+
+        metric_group.setLayout(metric_layout)
+        layout.addWidget(metric_group)
+
+        # ---- per-file matching --------------------------------------
+        match_group = QGroupBox("Automatic CRF Matching")
+        match_layout = QVBoxLayout()
+
+        self.controls['auto_match_quality'] = QCheckBox(
+            "Find each file's own CRF before encoding it")
+        self.controls['auto_match_quality'].setStyleSheet("font-weight: bold;")
+        self.controls['auto_match_quality'].setToolTip(
+            "Run the quality search on every file in the queue and encode each one at the CRF it needs.\n"
+            "A clean cartoon and a grainy film print do not want the same number, and a batch encoded at one\n"
+            "CRF gets one of them wrong.\n\n"
+            "Costs a few probe encodes per file before its real encode starts."
+        )
+        self.controls['auto_match_quality'].toggled.connect(self._on_auto_match_toggled)
+        match_layout.addWidget(self.controls['auto_match_quality'])
+
+        explain = QLabel(
+            "Each file is sampled, searched and encoded at its own CRF — the queue's CRF slider becomes the "
+            "fallback for files the search cannot answer for. The chosen CRF is shown next to the file and "
+            "written to its log.")
+        explain.setWordWrap(True)
+        explain.setStyleSheet("color: #666; font-size: 11px;")
+        match_layout.addWidget(explain)
+
+        sample_row = QWidget()
+        sample_layout = QHBoxLayout(sample_row)
+        sample_layout.setContentsMargins(0, 0, 0, 0)
+        sample_layout.addWidget(QLabel("Sampling:"))
+        self.controls['quality_samples'] = QSpinBox()
+        self.controls['quality_samples'].setRange(1, 10)
+        self.controls['quality_samples'].setValue(QUALITY_SAMPLE_COUNT)
+        self.controls['quality_samples'].setToolTip(
+            "How many places in each file to measure. More samples describe a varied source better;\n"
+            "each one multiplies the time the search takes.")
+        self.controls['quality_sample_seconds'] = QSpinBox()
+        self.controls['quality_sample_seconds'].setRange(2, 120)
+        self.controls['quality_sample_seconds'].setSuffix(" s")
+        self.controls['quality_sample_seconds'].setValue(QUALITY_SAMPLE_SECONDS)
+        sample_layout.addWidget(self.controls['quality_samples'])
+        sample_layout.addWidget(QLabel("samples of"))
+        sample_layout.addWidget(self.controls['quality_sample_seconds'])
+        sample_layout.addSpacing(16)
+
+        sample_layout.addWidget(QLabel("CRF range:"))
+        self.controls['quality_crf_low'] = QSpinBox()
+        self.controls['quality_crf_low'].setRange(0, 63)
+        self.controls['quality_crf_low'].setSpecialValueText("auto")
+        self.controls['quality_crf_high'] = QSpinBox()
+        self.controls['quality_crf_high'].setRange(0, 63)
+        self.controls['quality_crf_high'].setSpecialValueText("auto")
+        for spin in ('quality_crf_low', 'quality_crf_high'):
+            self.controls[spin].setToolTip(
+                "The CRF window to search. Leave both on 'auto' to use the range that suits the selected\n"
+                "encoder — AV1's CRF scale is not x265's.")
+        sample_layout.addWidget(self.controls['quality_crf_low'])
+        sample_layout.addWidget(QLabel("to"))
+        sample_layout.addWidget(self.controls['quality_crf_high'])
+        sample_layout.addStretch()
+        match_layout.addWidget(sample_row)
+
+        single_row = QHBoxLayout()
+        self.controls['match_quality_tab'] = QPushButton("Match one file now…")
+        self.controls['match_quality_tab'].setToolTip(
+            "Run the search on a single file and see every probe, before committing the whole queue to it.")
+        self.controls['match_quality_tab'].clicked.connect(self.open_quality_match)
+        single_row.addWidget(self.controls['match_quality_tab'])
+        single_row.addStretch()
+        match_layout.addLayout(single_row)
+
+        match_group.setLayout(match_layout)
+        layout.addWidget(match_group)
+
+        # ---- verification -------------------------------------------
+        verify_group = QGroupBox("Verification")
+        verify_layout = QVBoxLayout()
+
+        # Control key kept as 'calculate_vmaf' so presets and defaults.json written by older versions
+        # still switch the right thing on.
+        self.controls['calculate_vmaf'] = QCheckBox("Score every finished encode against its source")
+        self.controls['calculate_vmaf'].setToolTip(
+            "After each file is encoded, compare it with the original using the metric above and show the\n"
+            "score next to the file in the queue. Skipped when the video stream is copied."
+        )
+        verify_layout.addWidget(self.controls['calculate_vmaf'])
+
+        verify_note = QLabel(
+            "Measures the whole file, not samples, so it costs roughly one extra pass over each encode.")
+        verify_note.setWordWrap(True)
+        verify_note.setStyleSheet("color: #666; font-size: 11px;")
+        verify_layout.addWidget(verify_note)
+
+        verify_group.setLayout(verify_layout)
+        layout.addWidget(verify_group)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+
+        self._quality_targets_seen: Dict[str, float] = {}
+        self._syncing_quality_target = False
+        self._select_quality_metric(choose_metric(DEFAULT_QUALITY_METRIC))
+        pool_index = self.controls['quality_pool'].findData(DEFAULT_QUALITY_POOL)
+        self.controls['quality_pool'].setCurrentIndex(max(0, pool_index))
+        self._on_auto_match_toggled(False)
+        return widget
+
+    # ---- Quality tab behaviour -------------------------------------------
+    def _select_quality_metric(self, metric: str):
+        """
+        Point the metric combo at a metric and rebuild the target controls around its scale.
+
+        The rebuild is left to the combo's own handler wherever the index actually moves. Doing it here as
+        well would re-run it with no remembered value and overwrite the target the user last set for this
+        metric with the factory one.
+        """
+        combo = self.controls['quality_metric']
+        index = combo.findData(metric)
+        if index < 0:
+            return
+        if combo.currentIndex() != index:
+            combo.setCurrentIndex(index)          # _on_quality_metric_changed rebuilds the target controls
+        elif getattr(self, '_current_quality_metric', None) != metric:
+            # Already the current index, so no signal is coming — the first call is exactly this case.
+            self._current_quality_metric = metric
+            self._configure_quality_target(metric, self._quality_targets_seen.get(metric))
+
+    def _configure_quality_target(self, metric: str, value: Optional[float] = None):
+        """0-100, 0-1 and decibels share no numbers: the target control is rebuilt per metric"""
+        spec = metric_spec(metric)
+        preset = self.controls['quality_target_preset']
+        spin = self.controls['quality_target']
+
+        self._syncing_quality_target = True
+        preset.clear()
+        for label, target in spec['targets']:
+            preset.addItem(label, target)
+        preset.addItem("Custom", None)
+        spin.setRange(*spec['range'])
+        spin.setDecimals(spec['decimals'])
+        spin.setSingleStep(spec['step'])
+        spin.setSuffix(spec['unit'])
+        self.quality_metric_note.setText(spec['note'])
+        self._syncing_quality_target = False
+
+        spin.setValue(value if value is not None else spec['default_target'])
+        self._match_quality_preset()
+
+    def _on_quality_metric_changed(self, _index):
+        metric = self.controls['quality_metric'].currentData()
+        if not metric:
+            return
+        previous = getattr(self, '_current_quality_metric', None)
+        if previous == metric:
+            return
+        if previous:
+            self._quality_targets_seen[previous] = self.controls['quality_target'].value()
+        self._current_quality_metric = metric
+        self._configure_quality_target(metric, self._quality_targets_seen.get(metric))
+
+    def _on_quality_preset_changed(self, _index):
+        if self._syncing_quality_target:
+            return
+        value = self.controls['quality_target_preset'].currentData()
+        if value is not None:
+            self._syncing_quality_target = True
+            self.controls['quality_target'].setValue(float(value))
+            self._syncing_quality_target = False
+
+    def _on_quality_target_changed(self, _value):
+        if self._syncing_quality_target:
+            return
+        self._match_quality_preset()
+
+    def _match_quality_preset(self):
+        """Show the named target whose value is in the box, or Custom"""
+        preset = self.controls['quality_target_preset']
+        self._syncing_quality_target = True
+        index = preset.count() - 1
+        for i in range(preset.count()):
+            data = preset.itemData(i)
+            if data is not None and abs(float(data) - self.controls['quality_target'].value()) < 1e-9:
+                index = i
+                break
+        preset.setCurrentIndex(index)
+        self._syncing_quality_target = False
+
+    def _on_auto_match_toggled(self, checked: bool):
+        """The sampling controls only do anything when something is going to sample"""
+        for key in ('quality_samples', 'quality_sample_seconds',
+                    'quality_crf_low', 'quality_crf_high'):
+            self.controls[key].setEnabled(checked)
+
+    def apply_quality_settings(self, settings: Dict[str, Any]):
+        """Write quality choices back into the tab — used by the dialog when a result is applied"""
+        if 'quality_metric' in settings:
+            self._select_quality_metric(settings['quality_metric'])
+        if 'quality_target' in settings:
+            self.controls['quality_target'].setValue(float(settings['quality_target']))
+        if 'quality_pool' in settings:
+            index = self.controls['quality_pool'].findData(settings['quality_pool'])
+            if index >= 0:
+                self.controls['quality_pool'].setCurrentIndex(index)
+        for key in ('quality_samples', 'quality_sample_seconds',
+                    'quality_crf_low', 'quality_crf_high'):
+            if key in settings:
+                self.controls[key].setValue(int(settings[key]))
+
     def _create_advanced_tab(self):
         """Create advanced settings tab"""
         widget = QWidget()
@@ -909,21 +1170,6 @@ class UIManager(QWidget):
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
 
-        # Quality analysis
-        quality_group = QGroupBox("Quality Analysis")
-        quality_layout = QVBoxLayout()
-
-        self.controls['calculate_vmaf'] = QCheckBox("Calculate VMAF Score After Encoding")
-        self.controls['calculate_vmaf'].setToolTip(
-            "Run Netflix VMAF (Video Multi-Method Assessment Fusion) after encoding.\n"
-            "Compares the encoded output against the original to produce a 0-100 quality score.\n"
-            "Requires libvmaf support in FFmpeg. Skipped when video codec is 'copy'."
-        )
-        quality_layout.addWidget(self.controls['calculate_vmaf'])
-
-        quality_group.setLayout(quality_layout)
-        layout.addWidget(quality_group)
-
         layout.addStretch()
         widget.setLayout(layout)
         return widget
@@ -1049,8 +1295,10 @@ class UIManager(QWidget):
         self.file_list.clear()
         for file in files:
             label = f"{file.filename} ({file.get_file_size_mb():.1f} MB)"
+            if getattr(file, 'matched_crf', None) is not None:
+                label += f" | CRF {file.matched_crf}"
             if file.vmaf_score is not None:
-                label += f" | VMAF: {file.vmaf_score:.1f}"
+                label += f" | {format_score(getattr(file, 'quality_metric', None) or 'vmaf', file.vmaf_score)}"
             item = QListWidgetItem(label)
             item.setToolTip(file.filepath)
             item.setSizeHint(QSize(0, 32))
@@ -1170,10 +1418,17 @@ class UIManager(QWidget):
                 break
         item.setText(glyph + text)
 
-    def set_file_vmaf(self, index: int, score: float):
+    def set_file_vmaf(self, index: int, score: float, metric: str = 'vmaf'):
+        """Show a finished file's quality score, named after whichever metric produced it"""
         item = self.file_list.item(index)
         if item:
-            item.setText(f"{item.text()} | VMAF: {score:.1f}")
+            item.setText(f"{item.text()} | {format_score(metric, score)}")
+
+    def set_file_matched_crf(self, index: int, crf: int):
+        """Show the CRF the per-file search picked, as soon as it is known"""
+        item = self.file_list.item(index)
+        if item and f"| CRF {crf}" not in item.text():
+            item.setText(f"{item.text()} | CRF {crf}")
 
     def update_ffmpeg_status(self, available):
         """Update FFmpeg status in status bar"""
@@ -1218,6 +1473,7 @@ class UIManager(QWidget):
         self.controls['save_queue'].setEnabled(True)                # snapshot the queue any time
         self.controls['load_queue'].setEnabled(not is_processing)   # replacing a running queue is unsafe
         self.controls['match_quality'].setEnabled(not is_processing)  # probe encodes would fight the queue
+        self.controls['match_quality_tab'].setEnabled(not is_processing)
         self.tabs.setEnabled(not is_processing)             # settings stay locked
 
         # Disable internal drag-drop reordering during processing (prevents index corruption) but keep
@@ -1261,6 +1517,14 @@ class UIManager(QWidget):
             'no_upscale': self.controls['no_upscale'].isChecked(),
             'scale_algorithm': self.controls['scale_algorithm'].currentText(),
             'calculate_vmaf': self.controls['calculate_vmaf'].isChecked(),
+            'auto_match_quality': self.controls['auto_match_quality'].isChecked(),
+            'quality_metric': self.controls['quality_metric'].currentData(),
+            'quality_target': self.controls['quality_target'].value(),
+            'quality_pool': self.controls['quality_pool'].currentData(),
+            'quality_samples': self.controls['quality_samples'].value(),
+            'quality_sample_seconds': self.controls['quality_sample_seconds'].value(),
+            'quality_crf_low': self.controls['quality_crf_low'].value(),
+            'quality_crf_high': self.controls['quality_crf_high'].value(),
             'nvenc_aq': self.controls['nvenc_aq'].isChecked(),
             'nvenc_aq_strength': self.controls['nvenc_aq_strength'].value(),
             'nvenc_lookahead': self.controls['nvenc_lookahead'].value(),
@@ -1298,7 +1562,10 @@ class UIManager(QWidget):
     def load_settings(self, qsettings: QSettings):
         """Load all settings from QSettings"""
         int_keys = ('crf', 'abr', 'threads', 'custom_width', 'custom_height',
-                    'nvenc_aq_strength', 'nvenc_lookahead', 'nvenc_bframes')
+                    'nvenc_aq_strength', 'nvenc_lookahead', 'nvenc_bframes',
+                    'quality_samples', 'quality_sample_seconds',
+                    'quality_crf_low', 'quality_crf_high')
+        float_keys = ('quality_target',)
         settings = {}
         for key in qsettings.allKeys():
             value = qsettings.value(key)
@@ -1309,6 +1576,8 @@ class UIManager(QWidget):
                 value = value.lower() == 'true'
             elif key in int_keys:
                 value = int(value)
+            elif key in float_keys:
+                value = float(value)
             settings[key] = value
         if settings:
             self.main_window.preset_manager.apply_settings(settings)

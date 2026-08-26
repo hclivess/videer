@@ -9,7 +9,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.12"
+APP_VERSION = "3.13"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -172,39 +172,155 @@ DEFAULT_FORMAT = "MKV"
 # ------------------------------------------------------------------
 # The search is driven by a full-reference metric — the encode is compared against the source itself, so the
 # answer is "how much of *this* file survived", not a bitrate guess that ignores what the content is.
-# VMAF is the metric that means the same thing across content (its scale is trained on subjective scores);
-# SSIM is the fallback for FFmpeg builds that ship without libvmaf, where the same target is far less exact.
+#
+# No metric is the truth. VMAF is the one trained against human scores, but it was trained for 1080p viewed
+# from three screen-heights away, so it reads high on 4K and on sources far from that setup, and it can be
+# talked up by anything that adds apparent sharpness. The alternatives disagree in useful ways: NEG removes
+# the enhancement gain, the 4K model re-anchors the scale for UHD, MS-SSIM and SSIM are structural rather
+# than trained, and PSNR/XPSNR are pure signal error. Pick the one whose bias you understand.
+#
+# 'family' says how a score is read back: 'libvmaf' writes a CSV log with one row per frame and the value in
+# the named column; 'stats' writes a per-frame stats file that 'frame_re' pulls the value out of. Both also
+# print a summary line, matched by 'summary_re', which is the fallback when the log cannot be read.
 QUALITY_METRICS = {
     "vmaf": {
         "label": "VMAF",
         "filter": "libvmaf",
-        "targets": [
-            ("Visually lossless — 97", 97.0),
-            ("Transparent — 95 (recommended)", 95.0),
-            ("High — 93", 93.0),
-            ("Good — 90", 90.0),
-        ],
+        "family": "libvmaf",
+        # Deliberately no model argument: this *is* libvmaf's default model, and naming it would break the
+        # older builds whose filter has no `model` option at all. The variants below need that option and
+        # are opt-in, so they can require it.
+        "args": {},
+        "column": "vmaf",
+        "summary_re": r"VMAF score\s*[:=]\s*([\d.]+)",
+        "targets": [("Visually lossless — 97", 97.0), ("Transparent — 95 (recommended)", 95.0),
+                    ("High — 93", 93.0), ("Good — 90", 90.0)],
         "default_target": 95.0,
-        "range": (60.0, 100.0),
+        "range": (30.0, 100.0),
         "decimals": 1,
         "step": 0.5,
+        "unit": "",
+        "note": "Netflix's trained metric, on a 0-100 scale anchored to 1080p viewing. The default choice, "
+                "and the one whose numbers other people's numbers can be compared with.",
+    },
+    "vmaf_neg": {
+        "label": "VMAF NEG",
+        "filter": "libvmaf",
+        "family": "libvmaf",
+        "args": {"model": "version=vmaf_v0.6.1neg"},
+        "column": "vmaf",
+        "summary_re": r"VMAF score\s*[:=]\s*([\d.]+)",
+        "targets": [("Visually lossless — 96", 96.0), ("Transparent — 93 (recommended)", 93.0),
+                    ("High — 91", 91.0), ("Good — 88", 88.0)],
+        "default_target": 93.0,
+        "range": (30.0, 100.0),
+        "decimals": 1,
+        "step": 0.5,
+        "unit": "",
+        "note": "VMAF with the enhancement gain removed: sharpening and contrast tricks that flatter plain "
+                "VMAF earn nothing here. Scores a point or two lower than VMAF for the same encode, and is "
+                "the stricter answer when plain VMAF looks too generous.",
+    },
+    "vmaf_4k": {
+        "label": "VMAF 4K",
+        "filter": "libvmaf",
+        "family": "libvmaf",
+        "args": {"model": "version=vmaf_4k_v0.6.1"},
+        "column": "vmaf",
+        "summary_re": r"VMAF score\s*[:=]\s*([\d.]+)",
+        "targets": [("Visually lossless — 97", 97.0), ("Transparent — 95 (recommended)", 95.0),
+                    ("High — 93", 93.0), ("Good — 90", 90.0)],
+        "default_target": 95.0,
+        "range": (30.0, 100.0),
+        "decimals": 1,
+        "step": 0.5,
+        "unit": "",
+        "note": "The VMAF model trained for 4K displays at 1.5 screen-heights. Use it for UHD sources; on "
+                "smaller ones it reads several points higher than it should.",
+    },
+    "ms_ssim": {
+        "label": "MS-SSIM",
+        "filter": "libvmaf",
+        "family": "libvmaf",
+        "args": {"model": "version=vmaf_v0.6.1", "feature": "name=float_ms_ssim"},
+        "column": "float_ms_ssim",
+        "summary_re": None,
+        "targets": [("Visually lossless — 0.995", 0.995), ("Transparent — 0.990 (recommended)", 0.990),
+                    ("High — 0.985", 0.985), ("Good — 0.980", 0.980)],
+        "default_target": 0.990,
+        "range": (0.500, 1.000),
+        "decimals": 4,
+        "step": 0.001,
+        "unit": "",
+        "note": "Multi-scale structural similarity: measured, not trained, and judged at several scales at "
+                "once. Tracks perceived quality better than plain SSIM and cannot be gamed by sharpening.",
     },
     "ssim": {
         "label": "SSIM",
         "filter": "ssim",
-        "targets": [
-            ("Visually lossless — 0.990", 0.990),
-            ("Transparent — 0.985", 0.985),
-            ("High — 0.980 (recommended)", 0.980),
-            ("Good — 0.970", 0.970),
-        ],
+        "family": "stats",
+        "args": {},
+        "frame_re": r"\bAll:\s*([\d.]+)",
+        "summary_re": r"SSIM\b.*?\bAll\s*[:=]\s*([\d.]+)",
+        "targets": [("Visually lossless — 0.990", 0.990), ("Transparent — 0.985", 0.985),
+                    ("High — 0.980 (recommended)", 0.980), ("Good — 0.970", 0.970)],
         "default_target": 0.980,
-        "range": (0.800, 1.000),
-        "decimals": 3,
+        "range": (0.500, 1.000),
+        "decimals": 4,
         "step": 0.001,
+        "unit": "",
+        "note": "Structural similarity on the luma and chroma planes. Always available — it needs no libvmaf "
+                "— but grain drags it down hard, so its targets mean less on noisy sources.",
+    },
+    "psnr": {
+        "label": "PSNR",
+        "filter": "psnr",
+        "family": "stats",
+        "args": {},
+        "frame_re": r"psnr_avg:\s*([\d.]+|inf)",
+        "summary_re": r"PSNR\b.*?\baverage\s*[:=]\s*([\d.]+)",
+        "targets": [("Visually lossless — 45 dB", 45.0), ("Transparent — 42 dB (recommended)", 42.0),
+                    ("High — 40 dB", 40.0), ("Good — 38 dB", 38.0)],
+        "default_target": 42.0,
+        "range": (20.0, 70.0),
+        "decimals": 2,
+        "step": 0.5,
+        "unit": " dB",
+        "note": "Plain signal error in decibels. It knows nothing about what the eye notices, and the dB that "
+                "counts as good moves with the content — useful as a familiar sanity check, not as a target.",
+    },
+    "xpsnr": {
+        "label": "XPSNR",
+        "filter": "xpsnr",
+        "family": "stats",
+        "args": {},
+        "frame_re": r"XPSNR\s+y:\s*([\d.]+|inf)",
+        "summary_re": r"XPSNR\s+y:\s*([\d.]+)",
+        "targets": [("Visually lossless — 44 dB", 44.0), ("Transparent — 41 dB (recommended)", 41.0),
+                    ("High — 39 dB", 39.0), ("Good — 37 dB", 37.0)],
+        "default_target": 41.0,
+        "range": (15.0, 70.0),
+        "decimals": 2,
+        "step": 0.5,
+        "unit": " dB",
+        "note": "PSNR weighted by how visible the error is in each block — the metric the JVET codec groups "
+                "use alongside PSNR. Reads the luma plane. Lower numbers than PSNR for the same encode.",
     },
 }
 DEFAULT_QUALITY_METRIC = "vmaf"
+
+# How the per-frame scores become one number. The mean is what everybody quotes and what hides a bad scene
+# inside a good average: twenty seconds of smeared motion in a ten-minute file barely move it. The percentile
+# and minimum pools ask the opposite question — how bad does it get — and are the honest choice when a search
+# on the mean keeps recommending a CRF that looks worse than the score promised.
+QUALITY_POOLS = [
+    ("Mean — the average frame", "mean"),
+    ("Harmonic mean — bad frames count more", "harmonic"),
+    ("5th percentile — the worst 1 frame in 20", "p5"),
+    ("1st percentile — the worst 1 frame in 100", "p1"),
+    ("Minimum — the single worst frame", "min"),
+]
+DEFAULT_QUALITY_POOL = "mean"
 
 # Sampling: short clips spread across the file rather than one encode of the whole thing. The margin keeps
 # the search away from intros, logos and credits, which compress nothing like the actual content.
@@ -261,7 +377,16 @@ DEFAULT_SETTINGS = {
     "custom_height": 0,
     "no_upscale": True,
     "scale_algorithm": DEFAULT_SCALE_ALGORITHM,
-    "calculate_vmaf": False,
+    # Quality matching and verification
+    "calculate_vmaf": False,          # key kept for preset compatibility: score every finished encode
+    "auto_match_quality": False,      # find each file's own CRF before encoding it
+    "quality_metric": DEFAULT_QUALITY_METRIC,
+    "quality_target": 95.0,
+    "quality_pool": DEFAULT_QUALITY_POOL,
+    "quality_samples": QUALITY_SAMPLE_COUNT,
+    "quality_sample_seconds": QUALITY_SAMPLE_SECONDS,
+    "quality_crf_low": 0,             # 0 = the encoder's own default search range
+    "quality_crf_high": 0,
     # NVENC quality options — FFmpeg's own defaults for these are all "off"
     "nvenc_aq": True,
     "nvenc_aq_strength": 8,

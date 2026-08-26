@@ -98,7 +98,9 @@ class VideoFile:
         self.pixel_aspect_ratio: Optional[str] = None
 
         # Quality metrics
-        self.vmaf_score: Optional[float] = None
+        self.vmaf_score: Optional[float] = None      # score from the verification pass, in whatever metric
+        self.quality_metric: Optional[str] = None    # which metric produced vmaf_score
+        self.matched_crf: Optional[int] = None       # CRF the per-file quality search picked, if it ran
     
     def create_logger(self):
         """Create a rotating logger for this file"""

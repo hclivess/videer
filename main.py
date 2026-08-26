@@ -16,6 +16,7 @@ from modules.file_manager import FileManager
 from modules.process_manager import ProcessManager
 from modules.preset_manager import PresetManager
 from modules.queue_manager import QueueManager
+from modules.quality_analyzer import sweep_stale_workdirs
 from utils.ffmpeg_utils import check_ffmpeg_status
 from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
 from utils import childproc
@@ -52,6 +53,10 @@ class MainWindow(QMainWindow):
 
         # Put back the queue from the previous session (skipping what already encoded)
         self.queue_manager.restore_autosave()
+
+        # A crash or a hard kill during a quality search leaves its probe encodes in the temp directory;
+        # nothing else will ever clean them up on Windows.
+        sweep_stale_workdirs()
         
         # Check FFmpeg status
         self.check_dependencies()
@@ -69,6 +74,7 @@ class MainWindow(QMainWindow):
         self.process_manager.stats_updated.connect(self.ui_manager.update_stats)
         self.process_manager.file_state_changed.connect(self.ui_manager.set_file_state)
         self.process_manager.vmaf_calculated.connect(self.ui_manager.set_file_vmaf)
+        self.process_manager.crf_matched.connect(self.ui_manager.set_file_matched_crf)
         self.process_manager.processing_finished.connect(self.on_processing_finished)
         
         # UI signals

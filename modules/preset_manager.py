@@ -223,12 +223,26 @@ class PresetManager(QObject):
             if index >= 0:
                 ui.controls['nvenc_multipass'].setCurrentIndex(index)
 
+        # Quality matching
+        if 'quality_metric' in settings:
+            ui._select_quality_metric(settings['quality_metric'])
+        if 'quality_target' in settings:
+            ui.controls['quality_target'].setValue(float(settings['quality_target']))
+        if 'quality_pool' in settings:
+            index = ui.controls['quality_pool'].findData(settings['quality_pool'])
+            if index >= 0:
+                ui.controls['quality_pool'].setCurrentIndex(index)
+        for field in ('quality_samples', 'quality_sample_seconds',
+                      'quality_crf_low', 'quality_crf_high'):
+            if field in settings:
+                ui.controls[field].setValue(int(settings[field]))
+
         # Checkboxes
         checkbox_fields = [
             'stereo', 'deinterlace', 'tff', 'reduce_fps',
             'use_avisynth', 'use_ffms2', 'transcode_video',
             'transcode_audio', 'corrupt_fix', 'replace_files', 'delete_source',
-            'calculate_vmaf', 'no_upscale', 'nvenc_aq', 'nvenc_b_ref'
+            'calculate_vmaf', 'no_upscale', 'nvenc_aq', 'nvenc_b_ref', 'auto_match_quality'
         ]
         
         for field in checkbox_fields:

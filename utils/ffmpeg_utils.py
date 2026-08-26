@@ -12,7 +12,8 @@ import subprocess
 from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, PAR_PRESETS, DAR_PRESETS,
-                    RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM)
+                    RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
+                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC)
 
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -534,9 +535,6 @@ class FFmpegCommandBuilder:
         if dar and self.settings.get('par_handling', 'metadata') != 'resample':
             cmd.extend(['-aspect', dar])
 
-    # Full-reference metrics the app can measure with, and the filter that computes each
-    METRIC_FILTERS = {'vmaf': 'libvmaf', 'ssim': 'ssim'}
-
     def build_sample_encode_command(self, input_file: str, output_file: str,
                                     start: float, duration: float) -> List[str]:
         """
@@ -577,11 +575,18 @@ class FFmpegCommandBuilder:
 
     def build_metric_command(self, encoded_file: str, original_file: str, metric: str = 'vmaf',
                              start: Optional[float] = None, duration: Optional[float] = None,
-                             threads: int = 0) -> List[str]:
+                             threads: int = 0, log_name: Optional[str] = None) -> List[str]:
         """
         Compare an encode against its source with a full-reference metric. start/duration cut the same
         segment out of the reference that the encode was made from; without them the whole file is scored.
+
+        log_name is a *bare filename*, not a path: the per-frame log is the only way to pool anything other
+        than the mean, and a filter option containing a path would have to be escaped for the filtergraph
+        parser — on Windows that means escaping both the drive colon and every backslash. Running FFmpeg with
+        its working directory set to where the log should land removes the problem instead of encoding it.
         """
+        spec = QUALITY_METRICS.get(metric) or QUALITY_METRICS[DEFAULT_QUALITY_METRIC]
+
         cmd = self._base_command(err_detect=False)
         cmd.extend(['-i', encoded_file])   # distorted
         if start is not None:
@@ -590,15 +595,25 @@ class FFmpegCommandBuilder:
             cmd.extend(['-t', f'{duration:.3f}'])
         cmd.extend(['-i', original_file])  # reference
 
-        filter_name = self.METRIC_FILTERS.get(metric, 'libvmaf')
-        if filter_name == 'libvmaf' and threads > 0:
-            # libvmaf is single-threaded by default and is then slower than the encode it is scoring
-            filter_name = f'libvmaf=n_threads={threads}'
+        options = dict(spec.get('args') or {})
+        if spec['family'] == 'libvmaf':
+            if threads > 0:
+                # libvmaf is single-threaded by default and is then slower than the encode it is scoring
+                options['n_threads'] = str(threads)
+            if log_name:
+                options['log_path'] = log_name
+                options['log_fmt'] = 'csv'      # a tenth of the size of the JSON log, same per-frame rows
+        elif log_name:
+            options['stats_file'] = log_name
+
+        filter_spec = spec['filter']
+        if options:
+            filter_spec += '=' + ':'.join(f'{key}={value}' for key, value in options.items())
 
         # Align timestamps and scale the encode back to the reference size so
         # the comparison works after resolution/PAR changes.
         graph = ('[0:v]setpts=PTS-STARTPTS[d];[1:v]setpts=PTS-STARTPTS[r];'
-                 f'[d][r]scale2ref=flags=bicubic[ds][rs];[ds][rs]{filter_name}')
+                 f'[d][r]scale2ref=flags=bicubic[ds][rs];[ds][rs]{filter_spec}')
         cmd.extend(['-lavfi', graph])
         # Nothing but the metric is wanted: without -an FFmpeg still selects an audio stream and decodes it
         # into the null muxer for the whole comparison.
@@ -607,5 +622,4 @@ class FFmpegCommandBuilder:
 
     def build_vmaf_command(self, encoded_file, original_file):
         """Build FFmpeg command to calculate VMAF score for a finished encode"""
-        cmd = self.build_metric_command(encoded_file, original_file, 'vmaf')
-        return cmd
+        return self.build_metric_command(encoded_file, original_file, 'vmaf')

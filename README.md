@@ -7,12 +7,39 @@ Videer integrates `QTGMC`, which provides much smoother results than
 ffmpeg's `yadif`, [see for yourself](https://www.youtube.com/watch?v=jE47A57T5FA). `QTGMC` is the best deinterlacer in
 existence. Including AI and DaVinci Studio.
 
-Videer also **picks the CRF for you, by measuring it**. *Match Source Quality* encodes short samples of your file at
-candidate CRF values, scores each one against the original with **VMAF**, and settles on the highest CRF — the
-smallest file — that still meets the quality you asked for. No more picking a number out of habit and finding out
-afterwards whether you threw away quality or threw away disk space.
+Videer also **picks the CRF for you, by measuring it — one per file**. *Match Source Quality* encodes short samples
+of each video at candidate CRF values, scores them against the original with **VMAF** (or NEG, 4K, MS-SSIM, SSIM,
+PSNR, XPSNR — pick the bias you understand), and settles on the highest CRF, the smallest file, that still meets the
+quality you asked for. A whole queue can be matched this way, each file at its own number, because a clean cartoon
+and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
+
+## Changes in 3.13
+
+- **A CRF per file, not per queue.** *Find each file's own CRF before encoding it* (Quality tab) runs the
+  quality search on every entry in the queue and encodes each one at the number that file needs. Batching by a
+  single CRF was always the wrong shape for the problem — a clean cartoon and a grainy film print do not want
+  the same setting, and one of them was always getting it wrong. The chosen CRF shows next to the file, goes
+  into its output filename, and is written to its log along with the score and target that produced it. A file
+  the search cannot answer for falls back to the CRF slider instead of failing.
+- **Seven metrics to choose from.** Plain VMAF was reading generously, and it has good reason to: it was
+  trained for 1080p viewed from three screen-heights away, so it scores high on UHD, and it rewards anything
+  that adds apparent sharpness. There is now a choice — **VMAF**, **VMAF NEG** (the enhancement gain removed),
+  **VMAF 4K** (re-anchored for UHD), **MS-SSIM**, **SSIM**, **PSNR** and **XPSNR** — each with its own named
+  targets, its own scale, and a line in the UI saying what it is biased towards. It is not a small difference:
+  on the same grainy test source, VMAF asked for CRF 29 and XPSNR asked for CRF 20.
+- **Pooling, which is the other half of why a search can read high.** The mean is what everyone quotes and is
+  exactly what hides a bad scene — twenty smeared seconds inside ten good minutes barely move it. Frames can
+  now be pooled by mean, harmonic mean, 5th or 1st percentile, or the single worst frame, so the search can
+  steer by how bad it gets rather than how good it usually is. Every metric is read frame by frame from the
+  filter's own log for this.
+- The post-encode score follows the same metric and pooling, so verification and matching finally answer the
+  same question, and the queue shows the result under the metric's own name instead of always saying "VMAF".
+- New **Quality** tab collects all of it: metric, target, pooling, sampling, CRF search window, automatic
+  matching and verification. The old *Calculate VMAF Score After Encoding* checkbox moved there from Output;
+  presets and `defaults.json` written by earlier versions still switch it on.
+
 
 ## Changes in 3.12
 
@@ -125,22 +152,39 @@ are running into issues, you should try with ffms2 enabled.
 
 ## Features
 
-### Quality matching — VMAF-driven CRF
+### Quality matching — a CRF per file, measured
 
-- **Match Source Quality…** (`Ctrl+M`, or the button under the CRF slider) answers the question a CRF number
-  cannot: how much compression *this* source will take before it starts to look worse. It encodes a few short
-  samples of the real file at candidate CRFs, scores each against the original with VMAF, and bisects to the
-  **highest** CRF that still meets the quality you asked for — highest, because among the settings that keep the
-  quality, the largest CRF is the smallest file
-- Targets are named rather than numeric: *visually lossless* (VMAF 97), *transparent* (95, the default), *high*
-  (93), *good* (90), or any value you type. Sample count and length, and the CRF range to search, are yours to set;
-  the range is remembered per encoder, because AV1's CRF scale is not x265's
-- Every probe is reported as it finishes — CRF, score, estimated size of the finished video stream and what that
-  is as a share of the source — so the trade-off you are choosing between is visible, not just the answer
+- **Every file gets its own CRF.** Tick *Find each file's own CRF before encoding it* on the Quality tab and
+  the queue searches each entry separately: it samples that file, finds the CRF that keeps *its* quality, and
+  encodes it at that number. A clean cartoon and a grainy film print do not want the same setting, and a batch
+  encoded at one CRF gets one of them wrong — which is the whole problem with batching by a number
+- The chosen CRF appears next to the file in the queue, goes into its output filename, and is written to its
+  log with the score and target that produced it. A file the search cannot answer for falls back to the CRF
+  slider rather than failing
+- **Match Source Quality…** (`Ctrl+M`, or the button under the CRF slider) runs the same search on one file
+  with every probe shown — CRF, score, estimated size of the finished video stream, and what that is as a
+  share of the source — so you can see the trade-off before committing a whole queue to it. Applying a result
+  copies the criteria to the Quality tab, so the batch is judged the way that file just was
+- **Seven metrics, because no metric is the truth.** VMAF is the default and the one trained on human scores,
+  but it was trained for 1080p viewed from three screen-heights away, so it reads high on UHD and can be
+  flattered by anything that adds apparent sharpness. **VMAF NEG** removes that gain, **VMAF 4K** re-anchors
+  the scale for UHD, **MS-SSIM** and **SSIM** measure structure instead of predicting opinion, and **PSNR**
+  and **XPSNR** measure signal error alone. Each carries its own named targets and its own scale — 0-100,
+  0-1 or decibels — and the tab explains what each one is biased towards
+- **Pooling, which is usually what "the score looked fine but the encode doesn't" means.** A mean is what
+  everyone quotes and is exactly what hides a bad scene: twenty smeared seconds inside ten good minutes barely
+  move it. Pool on the harmonic mean, the 5th or 1st percentile, or the single worst frame, and the search
+  steers by how bad it gets instead of how good it usually is
+- Targets are named rather than numeric — *visually lossless*, *transparent*, *high*, *good* — or any value you
+  type. Sample count and length are yours to set, as is the CRF window to search, which defaults to the range
+  that suits the selected encoder because AV1's CRF scale is not x265's
 - It says when re-encoding is not worth it: a target no CRF in the range could reach means a grainy or already
   heavily compressed source, and an estimate no smaller than the original means stream copy is the better choice
-- Uses the encoder, speed preset and filters currently selected, so the answer is for the encode you are about to
-  run. Needs an FFmpeg with `libvmaf`; builds without it fall back to SSIM, and say so
+- **Verification** scores every finished encode against its original with the same metric and pooling, and
+  shows the result next to the file
+- Uses the encoder, speed preset and filters currently selected, so the answer is for the encode you are about
+  to run. VMAF, its variants and MS-SSIM need an FFmpeg built with `libvmaf`; SSIM, PSNR and XPSNR are in every
+  build, and metrics this build cannot compute are greyed out rather than hidden
 
 ### Queue
 
@@ -202,8 +246,8 @@ are running into issues, you should try with ffms2 enabled.
   machine-readable `-progress` output
 - Settings sanity check before starting (container/codec mismatches, ignored options, missing AviSynth plugins,
   destructive options)
-- Opt-in VMAF score after encoding (requires `libvmaf` in FFmpeg), and a VMAF-driven CRF search
-  before it — see *Quality matching* above
+- Opt-in quality score for every finished encode, in any of seven metrics, and a metric-driven CRF search
+  before it — per file, across the whole queue; see *Quality matching* above
 - Cross-platform: runs on Windows, Linux and macOS (AviSynth+/QTGMC features are Windows-only); no shell or
   PowerShell calls
 

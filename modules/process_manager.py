@@ -9,17 +9,19 @@ import time
 import threading
 import subprocess
 import re
+import shutil
+import tempfile
 import psutil
 import shlex
 from typing import List, Dict, Any, Optional, Callable
 from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
 from models.file_models import VideoFile
-from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration
+from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS
 from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
 from utils import childproc
-from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS
+from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS, DEFAULT_QUALITY_METRIC
 
 
 # FFmpeg run with -progress pipe:1 reports continuously while it is working. Total silence for this long means
@@ -64,7 +66,6 @@ class ProcessThread(QThread):
 
     # Pre-compiled regex patterns
     _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?')
-    _VMAF_RE = re.compile(r'VMAF score\s*[:=]\s*([\d.]+)', re.IGNORECASE)
     _ERROR_KEYWORDS = ("error", "invalid", "failed")
 
     # Signals
@@ -73,7 +74,8 @@ class ProcessThread(QThread):
     file_started = Signal(int)              # file index
     file_finished = Signal(int, bool)       # file index, success
     processing_finished = Signal(int, int)  # success count, total count
-    vmaf_calculated = Signal(int, float)    # file index, score
+    vmaf_calculated = Signal(int, float, str)   # file index, score, metric
+    crf_matched = Signal(int, int)          # file index, CRF the per-file search chose
 
     def __init__(self, process_manager, settings: Dict[str, Any]):
         super().__init__()
@@ -149,10 +151,15 @@ class ProcessThread(QThread):
 
             # Preparing a file can fail on its own (read-only directory, locked log, over-long Windows path,
             # a preset with a non-numeric size). That must fail this file, not kill the whole queue.
+            file_settings = self.settings
             try:
                 file.create_logger()
-                file.set_output_name(self.settings)
                 file.duration = probe_duration(file.filepath)
+                # The search has to happen before set_output_name: the CRF it picks is part of the output
+                # filename, and naming the file after the queue's CRF would label every encode wrongly.
+                file_settings = self._settings_for(file, index)
+                file.set_output_name(file_settings)
+                self.command_builder = FFmpegCommandBuilder(file_settings)
                 prepared = True
             except Exception as exc:
                 file.add_error(f"Could not prepare {file.filename}: {exc}")
@@ -163,10 +170,10 @@ class ProcessThread(QThread):
             if success:
                 self.success_count += 1
 
-                # Calculate VMAF before any file replacement (needs original as reference)
+                # Score before any file replacement (the original is the reference)
                 if (self.settings.get('calculate_vmaf')
                         and self.settings.get('video_codec') != 'copy'):
-                    self._calculate_vmaf(file, file.get_full_output_path(), index)
+                    self._verify_quality(file, file.get_full_output_path(), index)
 
                 output_path = file.get_full_output_path()
                 delete_source = bool(self.settings.get('delete_source'))
@@ -264,7 +271,7 @@ class ProcessThread(QThread):
             return subprocess.list2cmdline(command)
         return ' '.join(shlex.quote(arg) for arg in command)
 
-    def _start_subprocess(self, command: List[str]) -> subprocess.Popen:
+    def _start_subprocess(self, command: List[str], cwd: Optional[str] = None) -> subprocess.Popen:
         """Start FFmpeg without a shell so paths with spaces/quotes are passed verbatim"""
         kwargs = dict(
             stdout=subprocess.PIPE,
@@ -274,6 +281,7 @@ class ProcessThread(QThread):
             encoding='utf-8',
             errors='replace',
             bufsize=1,
+            cwd=cwd,
         )
         if os.name == 'nt':
             # Plugins that pull in runtime DLLs via LoadLibrary (fft3dfilter ->
@@ -293,7 +301,8 @@ class ProcessThread(QThread):
 
     def _run_monitored(self, command: List[str], file: VideoFile, phase: str,
                        duration: Optional[float],
-                       on_line: Optional[Callable[[str], None]] = None) -> int:
+                       on_line: Optional[Callable[[str], None]] = None,
+                       cwd: Optional[str] = None) -> int:
         """
         Run an FFmpeg command started with `-progress pipe:1`, log its output and
         emit structured progress snapshots. Returns the return code (1 if stopped
@@ -302,7 +311,7 @@ class ProcessThread(QThread):
         file.log_info(f"Executing: {self._format_command(command)}")
 
         try:
-            process = self._start_subprocess(command)
+            process = self._start_subprocess(command, cwd=cwd)
         except Exception as e:
             file.add_error(f"Command execution error: {str(e)}")
             return 1
@@ -509,30 +518,154 @@ class ProcessThread(QThread):
 
         return self._run_monitored(command, file, phase, file.duration, on_line)
 
-    def _calculate_vmaf(self, file: VideoFile, encoded_path: str, file_index: int):
-        """Calculate VMAF score by comparing encoded file against original"""
-        file.log_info("Starting VMAF calculation...")
-        command = self.command_builder.build_vmaf_command(encoded_path, file.filepath)
-        vmaf_score: Optional[float] = None
+    # ------------------------------------------------------------------
+    # Quality: per-file CRF matching and post-encode verification
+    # ------------------------------------------------------------------
+    def _adopt_process(self, process: Optional[subprocess.Popen]):
+        """
+        Let the quality search's FFmpeg be the queue's current process while it runs, so Stop kills it and
+        Pause suspends it. Without this a search would be unreachable by both — and a probe encode is exactly
+        as expensive to leave running as a real one.
+        """
+        self.current_process = process
+        self.current_pid = process.pid if process is not None else None
+        self._current_psutil = self._psutil_handle(process.pid) if process is not None else None
+        if process is not None and self.paused:
+            self._signal_tree(suspend=True)
 
-        def on_line(line):
-            nonlocal vmaf_score
-            match = self._VMAF_RE.search(line)
-            if match:
-                vmaf_score = float(match.group(1))
+    def _settings_for(self, file: VideoFile, index: int) -> Dict[str, Any]:
+        """
+        The settings this particular file is encoded with. Identical to the queue's unless per-file quality
+        matching is on, in which case the CRF is the one this file's own search asked for.
+        """
+        if not self.settings.get('auto_match_quality'):
+            return self.settings
+        if self.settings.get('video_codec') not in CRF_ENCODERS:
+            return self.settings
+        if self.should_stop:
+            return self.settings
+
+        crf = self._match_quality(file, index)
+        return self.settings if crf is None else {**self.settings, 'crf': crf}
+
+    def _match_quality(self, file: VideoFile, index: int) -> Optional[int]:
+        """
+        Search this file for the CRF it needs. Returns None to fall back to the queue's CRF — a search that
+        cannot answer must not fail the file, because the fallback still produces a perfectly good encode.
+        """
+        # Deferred import: quality_analyzer takes its formatters from this module, so importing it at the
+        # top would be a cycle.
+        from modules.quality_analyzer import QualitySearch, format_score
+
+        file.log_info("Quality match: searching for this file's own CRF")
+        self.info_signal.emit(f"Matching quality for {file.filename}…")
+        self._phase_start = time.time()
+
+        # The panel is driven from both callbacks, not just the step counter: a step only completes when a
+        # whole probe encode does, and on a slow preset with long samples that is minutes of a window that
+        # looks frozen. Every message the search emits moves the phase pill and keeps the percentage honest.
+        steps = {'done': 0, 'expected': 1}
+
+        def on_progress(message: str):
+            file.log_info(f"[quality] {message}")
+            self.info_signal.emit(f"{file.filename}: {message}")
+            self._emit_search_progress(file, steps['done'], steps['expected'])
+
+        def on_step(done: int, expected: int):
+            steps['done'], steps['expected'] = done, expected
+            self._emit_search_progress(file, done, expected)
+
+        self._emit_search_progress(file, 0, 1)
+
+        search = QualitySearch(
+            file.filepath, self.settings,
+            on_progress=on_progress,
+            on_step=on_step,
+            should_stop=lambda: self.should_stop,
+            on_process=self._adopt_process)
+
+        result = search.run()
+
+        if result is None:
+            if not self.should_stop:
+                reason = search.error or "no result"
+                file.log_info(f"Quality match did not finish ({reason}); "
+                              f"using the queue's CRF {self.settings.get('crf')}")
+                self.info_signal.emit(f"{file.filename}: quality match failed ({reason}) — "
+                                      f"encoding at CRF {self.settings.get('crf')}")
+            return None
+
+        recommended = result.get('recommended')
+        if not recommended:
+            return None
+
+        crf = int(recommended['crf'])
+        file.matched_crf = crf
+        summary = (f"Quality match: CRF {crf} at "
+                   f"{format_score(result['metric'], recommended['score'])} "
+                   f"(target {result['target']:g}, pooled by {result['pool']})")
+        if result.get('estimated_size'):
+            summary += f", estimated {format_size(result['estimated_size'])} of video"
+        if not result.get('reached_target'):
+            summary += " — target not reached, this is the closest the range allowed"
+        file.log_info(summary)
+        for note in result.get('notes', []):
+            file.log_info(f"[quality] {note}")
+        self.info_signal.emit(f"{file.filename}: {summary}")
+        self.crf_matched.emit(index, crf)
+        return crf
+
+    def _emit_search_progress(self, file: VideoFile, done: int, expected: int):
+        """Give the progress panel something true to show while a search runs — it is not a quick step"""
+        self.progress_signal.emit({
+            'file_index': self._current_index,
+            'total_files': self._pm.get_total_file_count(),
+            'file_name': file.filename,
+            'phase': 'Quality match',
+            'percent': min(100.0, done * 100.0 / max(1, expected)),
+            'fps': None, 'speed': None, 'bitrate': None, 'size': None, 'frame': None,
+            'out_time': None, 'duration': None, 'eta_file': None, 'eta_total': None,
+            'elapsed_file': time.time() - (self._file_start_time or time.time()),
+            'elapsed_total': time.time() - (self.start_time or time.time()),
+        })
+
+    def _verify_quality(self, file: VideoFile, encoded_path: str, file_index: int):
+        """Score the finished encode against the original with the chosen metric and pooling"""
+        from modules.quality_analyzer import (LOG_NAME, VERIFY_PREFIX, choose_metric, format_score,
+                                              metric_spec, parse_metric_log, parse_metric_summary,
+                                              pool_scores)
+
+        metric = choose_metric(self.settings.get('quality_metric', DEFAULT_QUALITY_METRIC))
+        pool = self.settings.get('quality_pool', 'mean')
+        label = metric_spec(metric)['label']
+        file.log_info(f"Starting {label} verification...")
+
+        workdir = tempfile.mkdtemp(prefix=VERIFY_PREFIX)
+        lines: List[str] = []
+        command = self.command_builder.build_metric_command(
+            encoded_path, file.filepath, metric,
+            threads=int(self.settings.get('threads') or 0), log_name=LOG_NAME)
 
         try:
-            self._run_monitored(command, file, "VMAF", file.duration, on_line)
+            # cwd, not an absolute log path: a filter option carrying a Windows path would have to escape
+            # both the drive colon and every backslash for the filtergraph parser.
+            self._run_monitored(command, file, label, file.duration, lines.append, cwd=workdir)
+            frames = parse_metric_log(os.path.join(workdir, LOG_NAME), metric)
+            score = pool_scores(frames, pool) if frames else parse_metric_summary(lines, metric)
         except Exception as e:
-            file.log_info(f"VMAF calculation failed: {str(e)}")
+            file.log_info(f"{label} verification failed: {str(e)}")
             return
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
-        if vmaf_score is not None:
-            file.vmaf_score = vmaf_score
-            file.log_info(f"VMAF score: {vmaf_score}")
-            self.vmaf_calculated.emit(file_index, vmaf_score)
+        if score is not None:
+            file.vmaf_score = score
+            file.quality_metric = metric
+            file.log_info(f"{format_score(metric, score)} over {len(frames)} frames "
+                          f"(pooled by {pool})" if frames else f"{format_score(metric, score)}")
+            self.vmaf_calculated.emit(file_index, score, metric)
         else:
-            file.log_info("VMAF score could not be parsed from output")
+            file.log_info(f"{label} score could not be read from the output")
 
     def stop(self):
         """Stop processing"""
@@ -612,7 +745,8 @@ class ProcessManager(QObject):
     status_updated = Signal(str)               # short human-readable status text
     stats_updated = Signal(dict)               # rich progress snapshot for the UI panel
     file_state_changed = Signal(int, str)      # index, 'running' | 'success' | 'failed'
-    vmaf_calculated = Signal(int, float)       # index, score
+    vmaf_calculated = Signal(int, float, str)  # index, score, metric
+    crf_matched = Signal(int, int)             # index, matched CRF
     processing_finished = Signal(int, int)     # success count, total count
     paused_state_changed = Signal(bool)        # True = paused
 
@@ -713,6 +847,7 @@ class ProcessManager(QObject):
         self.process_thread.file_finished.connect(self._on_file_finished)
         self.process_thread.processing_finished.connect(self._on_processing_finished)
         self.process_thread.vmaf_calculated.connect(self.vmaf_calculated)
+        self.process_thread.crf_matched.connect(self.crf_matched)
 
         self._is_processing = True
         self.process_thread.start()
@@ -874,7 +1009,16 @@ class ProcessManager(QObject):
         if settings.get('delete_source'):
             issues.append("Delete Source Files is ON: each original is permanently deleted "
                           "as soon as its encode succeeds (no .old backup, no recycle bin).")
-        if settings.get('calculate_vmaf') and settings.get('deinterlace') and settings.get('reduce_fps'):
-            issues.append("VMAF needs matching frame rates; halving FPS while deinterlacing will make it fail.")
+        measuring = settings.get('calculate_vmaf') or settings.get('auto_match_quality')
+        if measuring and settings.get('deinterlace') and settings.get('reduce_fps'):
+            issues.append("Quality metrics compare frame for frame; halving FPS while deinterlacing changes "
+                          "the frame count and will make the comparison fail.")
+        if settings.get('auto_match_quality'):
+            if video_codec not in CRF_ENCODERS:
+                issues.append(f"Automatic CRF matching needs a CRF-based encoder; '{video_codec}' has no CRF, "
+                              f"so every file will use the queue's setting instead.")
+            elif settings.get('use_avisynth'):
+                issues.append("Automatic CRF matching samples the source directly, without the AviSynth+ "
+                              "chain, so the CRF it picks is measured on different frames than the encode.")
 
         return issues
