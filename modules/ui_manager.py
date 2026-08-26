@@ -25,6 +25,7 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
                                       format_score, metric_spec, resolved_search_range)
+from modules.repair_manager import RepairDialog
 
 
 class FileListWidget(QListWidget):
@@ -149,6 +150,7 @@ class UIManager(QWidget):
         # Tools menu
         tools_menu = menubar.addMenu('Tools')
         self._add_action(tools_menu, 'Match Source Quality…', 'Ctrl+M', self.open_quality_match)
+        self._add_action(tools_menu, 'Check && Repair Files…', 'Ctrl+R', self.open_repair)
 
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -222,12 +224,19 @@ class UIManager(QWidget):
         self.controls['load_queue'].setToolTip("Replace or extend the queue from a saved queue file")
         self.controls['load_queue'].clicked.connect(self.main_window.queue_manager.load_queue)
 
+        self.controls['repair'] = QPushButton("Check && Repair")
+        self.controls['repair'].setToolTip(
+            "Decode every file in the queue and report what is damaged — then repair it:\n"
+            "rebuild the container where that is enough, re-encode past the damage where it is not.")
+        self.controls['repair'].clicked.connect(self.open_repair)
+
         file_controls.addWidget(self.controls['add_files'])
         file_controls.addWidget(self.controls['add_folder'])
         file_controls.addWidget(self.controls['remove_files'])
         file_controls.addWidget(self.controls['clear_files'])
         file_controls.addWidget(self.controls['save_queue'])
         file_controls.addWidget(self.controls['load_queue'])
+        file_controls.addWidget(self.controls['repair'])
         
         files_layout.addLayout(file_controls)
         files_group.setLayout(files_layout)
@@ -1272,6 +1281,16 @@ class UIManager(QWidget):
             return
         QualityMatchDialog(self.main_window).exec()
 
+    def open_repair(self):
+        """Check the queue for damage and repair it. Not during a run: it reads and writes whole files."""
+        if self.main_window.process_manager.is_processing():
+            QMessageBox.information(
+                self.main_window, "Busy",
+                "Finish or stop the queue first — repair reads and rewrites whole files and would be "
+                "competing with the encode for both the disk and the CPU.")
+            return
+        RepairDialog(self.main_window).exec()
+
     def _show_about(self):
         """Show about dialog"""
         QMessageBox.about(
@@ -1474,6 +1493,7 @@ class UIManager(QWidget):
         self.controls['load_queue'].setEnabled(not is_processing)   # replacing a running queue is unsafe
         self.controls['match_quality'].setEnabled(not is_processing)  # probe encodes would fight the queue
         self.controls['match_quality_tab'].setEnabled(not is_processing)
+        self.controls['repair'].setEnabled(not is_processing)     # it rewrites whole files
         self.tabs.setEnabled(not is_processing)             # settings stay locked
 
         # Disable internal drag-drop reordering during processing (prevents index corruption) but keep

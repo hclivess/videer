@@ -207,7 +207,10 @@ class FFmpegCommandBuilder:
     def _base_command(self, err_detect: bool = True) -> List[str]:
         cmd = [self.ffmpeg_path, '-hide_banner']
         if err_detect:
-            cmd.extend(['-err_detect', 'crccheck+bitstream+buffer'])
+            # Repair inverts the usual stance: normally a damaged packet should be reported and refused, but
+            # when the damage is the whole reason for the run, refusing it means refusing to repair anything.
+            mode = 'ignore_err' if self.settings.get('repair_mode') else 'crccheck+bitstream+buffer'
+            cmd.extend(['-err_detect', mode])
         cmd.extend(self.PROGRESS_ARGS)
         return cmd
 

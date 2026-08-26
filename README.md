@@ -17,6 +17,15 @@ and a grainy film print never wanted the same one.
 
 ## Changes in 3.13
 
+- **Check & Repair for damaged files** (`Ctrl+R`). Decodes every file in the queue, counts the errors, and
+  repairs what can be repaired: rebuilding the container where the damage is a broken index, bad timestamps
+  or a recording that was cut off mid-write — lossless, every frame copied through — and re-encoding past
+  the damage where it is the picture data itself that is broken. *Automatic* tries the free fix first and
+  only spends the re-encode when the error count says it has to. Every file is decoded again afterwards, so
+  the result is measured rather than assumed, and a repair that achieved nothing says so. Repaired files are
+  written beside the originals, which are only replaced if asked — and never with a file in a different
+  container wearing their extension.
+
 - **A CRF per file, not per queue.** *Find each file's own CRF before encoding it* (Quality tab) runs the
   quality search on every entry in the queue and encodes each one at the number that file needs. Batching by a
   single CRF was always the wrong shape for the problem — a clean cartoon and a grainy film print do not want
@@ -185,6 +194,28 @@ are running into issues, you should try with ffms2 enabled.
 - Uses the encoder, speed preset and filters currently selected, so the answer is for the encode you are about
   to run. VMAF, its variants and MS-SSIM need an FFmpeg built with `libvmaf`; SSIM, PSNR and XPSNR are in every
   build, and metrics this build cannot compute are greyed out rather than hidden
+
+### Repair
+
+- **Check & Repair** (`Ctrl+R`, or the button under the queue) decodes every file in the queue from end to
+  end, counts what FFmpeg complains about, and shows the batch as a table — which recordings are damaged,
+  how badly, and what can be done about each. *Check only* writes nothing at all
+- Damage comes in two kinds and they want opposite treatments. **Rebuilding the container** fixes a broken
+  index, wrong timestamps or a file that was cut off mid-write, and costs nothing: every compressed frame is
+  copied through untouched, so the result is the same video, only playable and seekable again.
+  **Re-encoding** is the only thing that helps when the picture data itself is damaged — the decoder conceals
+  what it cannot decode and a clean stream is written, at the price of a re-encode
+- **Automatic** does the honest thing: rebuild the container, measure again, and spend the re-encode only if
+  the error count says it must. Every file is decoded again after treatment, so the table reports the fix as
+  measured — *113 errors → 0* — rather than asserting it worked. A repair that changed nothing says so
+- Repaired files are written as `<name>.repaired.<ext>` beside the original, which is never touched unless
+  *Replace the original* is ticked — and even then only for files that actually improved, with the original
+  kept as `<name>.old<ext>`. A repair that lands in a different container than the source keeps its own
+  extension rather than becoming Matroska wearing an `.mp4`
+- For a file that was cut off, it reports what survived: *7s, where the damaged file claimed 12s*
+- It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
+  FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
+  from the same device instead of failing quietly
 
 ### Queue
 
