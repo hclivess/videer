@@ -178,9 +178,14 @@ class ProcessThread(QThread):
                 output_path = file.get_full_output_path()
                 delete_source = bool(self.settings.get('delete_source'))
                 if self.settings.get('replace_files'):
-                    # With delete_source the .old backup is dropped as well
-                    self.file_ops.replace_file(output_path, file.filepath, file.logger,
-                                               keep_backup=not delete_source)
+                    # With delete_source the .old backup is dropped as well. The encode keeps its own
+                    # extension when the container differs from the source's — a .avi name holding Matroska
+                    # is a file that lies about itself.
+                    replaced = self.file_ops.replace_file_as(output_path, file.filepath, file.logger,
+                                                             keep_backup=not delete_source)
+                    if replaced is None:
+                        self.info_signal.emit(f"{file.filename}: could not replace the original; "
+                                              f"the encode is at {os.path.basename(output_path)}")
                 else:
                     self.file_ops.preserve_timestamps(file.filepath, output_path, file.logger)
                     if delete_source:

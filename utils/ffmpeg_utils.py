@@ -124,6 +124,25 @@ def ffmpeg_has_filter(name: str) -> bool:
     return name in filters if filters else True
 
 
+def has_audio_stream(filepath: str) -> bool:
+    """
+    Whether the file carries any audio at all.
+
+    Unknown counts as yes: if ffprobe cannot be asked, the caller should keep whatever audio handling it
+    would have used, rather than silently dropping the audio of a file that has some.
+    """
+    ffprobe = find_ffprobe()
+    if not ffprobe or not os.path.exists(filepath):
+        return True
+    try:
+        result = childproc.run(
+            [ffprobe, '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index',
+             '-of', 'csv=p=0', filepath], text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError):
+        return True
+    return bool((result.stdout or '').strip())
+
+
 def probe_media_info(filepath: str) -> Dict[str, Any]:
     """Duration, size and first-video-stream properties, best effort — every field may be None."""
     info: Dict[str, Any] = {'duration': None, 'size': None, 'width': None, 'height': None,

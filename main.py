@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
         self.ui_manager.files_added.connect(self.file_manager.add_files)
         self.ui_manager.files_removed.connect(self._on_files_removed)
         self.ui_manager.queue_cleared.connect(self.file_manager.clear_queue)
-        self.ui_manager.files_reordered.connect(self.file_manager.move_file)
+        self.ui_manager.files_reordered.connect(self.file_manager.reorder)
 
         # Route newly-added files to the running process queue
         self.file_manager.files_updated.connect(self._on_files_updated_during_processing)

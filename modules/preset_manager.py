@@ -9,7 +9,8 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 
-from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION
+from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION, APP_DIR
+from utils.file_utils import write_json_atomic
 
 
 class PresetManager(QObject):
@@ -22,10 +23,21 @@ class PresetManager(QObject):
         self._ensure_presets_dir()
     
     def _get_presets_dir(self) -> str:
-        """Get presets directory path"""
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(os.path.dirname(app_dir), "presets")
-    
+        """
+        Where presets are kept: beside the application, next to defaults.json and queue.json.
+
+        Deriving it from __file__ instead put it wherever the code happens to live — in a PyInstaller build
+        that is the bundle's internal directory, so a user's own presets ended up filed inside _internal/
+        while the app's other user data sat next to the executable. In the source tree both answers are the
+        same directory, so nothing moves for anyone running from source.
+        """
+        return os.path.join(APP_DIR, "presets")
+
+    def _legacy_presets_dir(self) -> str:
+        """Where presets were written before they moved beside the application"""
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(os.path.dirname(module_dir), "presets")
+
     def _ensure_presets_dir(self):
         """Ensure presets directory exists"""
         if not os.path.exists(self.presets_dir):
@@ -57,9 +69,8 @@ class PresetManager(QObject):
         preset_file = os.path.join(self.presets_dir, f"{self._sanitize_filename(name)}.json")
         
         try:
-            with open(preset_file, 'w') as f:
-                json.dump(preset_data, f, indent=4)
-            
+            write_json_atomic(preset_file, preset_data)
+
             QMessageBox.information(
                 self.main_window,
                 "Preset Saved",
@@ -266,25 +277,34 @@ class PresetManager(QObject):
         self.apply_settings(settings)
     
     def get_available_presets(self) -> List[Dict[str, str]]:
-        """Get list of available preset files"""
+        """
+        Every preset that can be loaded.
+
+        Both the current directory and the one presets used to live in are read, so an upgrade never makes
+        somebody's saved presets vanish. New ones are only ever written to the current directory, and a name
+        found in both resolves to the current one.
+        """
         presets = []
-        
-        if not os.path.exists(self.presets_dir):
-            return presets
-        
-        for filename in os.listdir(self.presets_dir):
-            if filename.endswith('.json'):
-                filepath = os.path.join(self.presets_dir, filename)
+        seen = set()
+
+        for directory in (self.presets_dir, self._legacy_presets_dir()):
+            if not os.path.isdir(directory) or os.path.normcase(directory) in seen:
+                continue
+            seen.add(os.path.normcase(directory))
+            for filename in sorted(os.listdir(directory)):
+                if not filename.endswith('.json'):
+                    continue
+                filepath = os.path.join(directory, filename)
                 try:
                     with open(filepath, 'r') as f:
                         data = json.load(f)
-                        presets.append({
-                            'name': data.get('name', filename[:-5]),
-                            'file': filepath
-                        })
-                except:
+                except (OSError, ValueError):
                     continue
-        
+                name = data.get('name', filename[:-5])
+                if any(existing['name'] == name for existing in presets):
+                    continue
+                presets.append({'name': name, 'file': filepath})
+
         return sorted(presets, key=lambda x: x['name'])
     
     def export_preset(self):
@@ -377,8 +397,7 @@ class PresetManager(QObject):
                     return
             
             # Save locally
-            with open(local_file, 'w') as f:
-                json.dump(preset_data, f, indent=4)
+            write_json_atomic(local_file, preset_data)
             
             # Apply if user wants
             reply = QMessageBox.question(
@@ -456,8 +475,7 @@ class PresetManager(QObject):
         """Save current settings as user defaults (defaults.json)"""
         settings = self.main_window.ui_manager.get_current_settings()
         try:
-            with open(DEFAULTS_FILE, 'w') as f:
-                json.dump(settings, f, indent=4)
+            write_json_atomic(DEFAULTS_FILE, settings)
             QMessageBox.information(
                 self.main_window,
                 "Defaults Saved",

@@ -92,7 +92,7 @@ class UIManager(QWidget):
     files_added = Signal(list)
     files_removed = Signal(list)
     queue_cleared = Signal()
-    files_reordered = Signal(int, int)   # from_index, to_index
+    files_reordered = Signal(list)       # canonical paths, in the order the list now shows
     
     def __init__(self, main_window):
         super().__init__()
@@ -1166,7 +1166,10 @@ class UIManager(QWidget):
         self.controls['replace_files'].setToolTip(
             "Move the encoded output over the original filename.\n"
             "The original is kept next to it as <name>.old<ext> unless\n"
-            "'Delete Source Files' is also enabled."
+            "'Delete Source Files' is also enabled.\n\n"
+            "When the output container differs from the source's, the encode keeps its own\n"
+            "extension (tape.avi becomes tape.mkv, the original becomes tape.avi.old.avi):\n"
+            "a .avi file holding Matroska lies about what it is."
         )
         file_layout.addWidget(self.controls['replace_files'])
 
@@ -1240,13 +1243,24 @@ class UIManager(QWidget):
             if index >= 0:
                 self.controls['deinterlacer'].setCurrentIndex(index)
 
-    def _on_rows_moved(self, _parent, start, end, _dest, row):
-        """Internal drag-and-drop in the list → reorder the real queue"""
-        if start != end:
-            return  # multi-row moves are not supported by the queue model
-        to_index = row - 1 if row > start else row
+    def _on_rows_moved(self, *_args):
+        """
+        Internal drag-and-drop in the list → reorder the real queue.
+
+        The queue is rebuilt from the order the list ends up in, rather than from the (start, end, dest)
+        indices Qt reports. Those have to be translated differently depending on which way the block moved,
+        and the previous translation only handled single rows: dragging three files at once reordered the
+        *list* and left the queue untouched, so what you saw was no longer what would encode — and Remove,
+        which works on the row you clicked, would then take out a different file.
+        """
         # Defer: the view is still inside its drop handling when rowsMoved fires
-        QTimer.singleShot(0, lambda: self.files_reordered.emit(start, to_index))
+        QTimer.singleShot(0, self._emit_view_order)
+
+    def _emit_view_order(self):
+        order = [self.file_list.item(row).data(Qt.ItemDataRole.UserRole)
+                 for row in range(self.file_list.count())]
+        if all(order):
+            self.files_reordered.emit(order)
 
     def _on_add_files(self):
         """Add files dialog"""
@@ -1324,6 +1338,9 @@ class UIManager(QWidget):
             if file.vmaf_score is not None:
                 label += f" | {format_score(getattr(file, 'quality_metric', None) or 'vmaf', file.vmaf_score)}"
             item = QListWidgetItem(label)
+            # Identity, not position: the queue is re-ordered by matching these back to files, so a drag
+            # that moves several rows at once cannot leave the list and the queue disagreeing.
+            item.setData(Qt.ItemDataRole.UserRole, file.canonical)
             item.setToolTip(file.filepath)
             item.setSizeHint(QSize(0, 32))
             self._style_item(item, getattr(file, 'status', 'pending'))

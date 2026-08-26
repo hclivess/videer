@@ -300,34 +300,18 @@ class RepairWorker(QThread):
         """
         Put the repaired file where the original was, keeping the original as .old.
 
-        A re-encode can land in a different container than the source — repairing an MP4 into MKV is normal,
-        because MKV is what the Output tab is usually set to. Moving that file onto the .mp4 name would
-        produce Matroska wearing an MP4 extension: something every player has to guess about and some refuse.
-        So the extension decides how this is done, not the filename.
+        The container decides the name — a re-encode can land in MKV where the source was MP4 — and that is
+        FileOperations' business, not this module's.
         """
-        original_ext = os.path.splitext(original)[1].lower()
-        repaired_ext = os.path.splitext(repaired)[1].lower()
-
-        if original_ext == repaired_ext:
-            if self.file_ops.replace_file(repaired, original, None, keep_backup=True):
-                return original, "Original kept as .old next to it."
-            return None, ""
-
-        # Different container: the original steps aside and the repair keeps its own extension.
-        target = os.path.splitext(original)[0] + repaired_ext
-        if os.path.exists(target):
-            return None, (f"Kept as {os.path.basename(repaired)}: the repair is {repaired_ext} rather than "
-                          f"{original_ext} and {os.path.basename(target)} already exists.")
-        backup = f"{original}.old{original_ext}"
-        try:
-            if os.path.exists(backup):
-                os.remove(backup)
-            os.rename(original, backup)
-            os.replace(repaired, target)
-        except OSError as exc:
-            return None, f"Could not replace the original: {exc}"
-        return target, (f"Original kept as {os.path.basename(backup)}; the repair is {repaired_ext}, "
-                        f"so it kept its own extension.")
+        target = self.file_ops.replace_file_as(repaired, original, None, keep_backup=True)
+        if target is None:
+            return None, (f"Could not replace the original; the repair is at "
+                          f"{os.path.basename(repaired)}.")
+        if os.path.splitext(target)[1].lower() == os.path.splitext(original)[1].lower():
+            return target, "Original kept as .old next to it."
+        return target, (f"Original kept as {os.path.basename(original)}.old"
+                        f"{os.path.splitext(original)[1]}; the repair is "
+                        f"{os.path.splitext(target)[1]}, so it kept its own extension.")
 
     @staticmethod
     def _recovery_note(before: Dict[str, Any], best: Dict[str, Any],

@@ -15,6 +15,11 @@ from typing import Optional, List, Dict, Any
 MAX_ERRORS_HEAD = 200
 MAX_ERRORS_TAIL = 200
 
+# Which codecs the CRF and audio-bitrate numbers actually mean something for; the output filename names
+# only the settings that applied.
+CRF_CODECS = ('libx264', 'libx265', 'libsvtav1', 'libvpx-vp9', 'h264_nvenc', 'hevc_nvenc')
+BITRATELESS_AUDIO_CODECS = ('copy', 'flac', 'pcm_s32le')
+
 # Same spew reaches the per-file log. Rotate so one bad input cannot fill the media drive overnight.
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUPS = 2
@@ -131,10 +136,16 @@ class VideoFile:
         crf = settings.get('crf', 23)
         abr = settings.get('abr', 256)
         
-        # Build output filename
+        # Build output filename. Only the numbers that actually applied are named: a stream copy has no CRF
+        # and FLAC has no bitrate, so "_copy_copy_crf23_abr256" was three pieces of false information baked
+        # into every such filename.
         codec_suffix = f"_{video_codec}_{audio_codec}"
-        quality_suffix = f"_crf{crf}_abr{abr}"
-        
+        quality_suffix = ""
+        if video_codec in CRF_CODECS:
+            quality_suffix += f"_crf{crf}"
+        if audio_codec not in BITRATELESS_AUDIO_CODECS:
+            quality_suffix += f"_abr{abr}"
+
         resolution_suffix = self._resolution_suffix(settings)
 
         self.output_name = (f"{self.basename}{codec_suffix}{quality_suffix}"
@@ -183,7 +194,7 @@ class VideoFile:
         """Get file size in MB"""
         try:
             return os.path.getsize(self.filepath) / (1024 * 1024)
-        except:
+        except OSError:
             return 0.0
     
     def add_error(self, message: str):

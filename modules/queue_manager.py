@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
                                QLabel, QMessageBox, QPushButton, QVBoxLayout)
 
+from utils.file_utils import write_json_atomic
 from config import APP_NAME, APP_VERSION, QUEUE_AUTOSAVE_FILE, QUEUE_FILE_FORMAT
 from models.file_models import canonical_path
 
@@ -45,10 +46,7 @@ def write_queue_file(path: str, data: Dict[str, Any]):
     Write the queue JSON atomically: the autosave is rewritten on every queue change, and a process killed
     mid-write would otherwise leave a truncated file that cannot be restored at all.
     """
-    tmp = f"{path}.tmp"
-    with open(tmp, 'w', encoding='utf-8') as handle:
-        json.dump(data, handle, indent=4)
-    os.replace(tmp, path)
+    write_json_atomic(path, data)
 
 
 def read_queue_file(path: str) -> Dict[str, Any]:

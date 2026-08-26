@@ -7,6 +7,7 @@ import os
 import multiprocessing
 from typing import Dict, Any, Optional
 from models.file_models import VideoFile
+from utils.ffmpeg_utils import has_audio_stream
 
 
 class AviSynthHandler:
@@ -102,8 +103,15 @@ class AviSynthHandler:
         if self.settings.get('use_ffms2', False):
             # Use FFMS2 for better compatibility
             avs_file.write(f'v = FFVideoSource("{video_file.filepath}", track=-1)\n')
-            avs_file.write(f'a = FFAudioSource("{video_file.filepath}", track=-1)\n')
-            avs_file.write('AudioDub(v, a)\n')
+            if has_audio_stream(video_file.filepath):
+                avs_file.write(f'a = FFAudioSource("{video_file.filepath}", track=-1)\n')
+                avs_file.write('AudioDub(v, a)\n')
+            else:
+                # FFAudioSource throws when there is no audio track, and that error fails the whole file.
+                # Silent sources are ordinary here — a camera in video-only mode, a capture with the audio
+                # card unplugged — so serve the video on its own instead.
+                avs_file.write('# no audio track in the source; serving video only\n')
+                avs_file.write('v\n')
         else:
             # Use AVISource (requires AVI input)
             avs_file.write(f'AVISource("{video_file.filepath}", audio=true)\n')

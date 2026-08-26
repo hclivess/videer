@@ -3,11 +3,27 @@ File utilities for videer
 Timestamp preservation and in-place file replacement
 """
 
+import json
 import os
 import shutil
 import platform
 import logging
-from typing import Optional
+from typing import Any, Optional
+
+
+def write_json_atomic(path: str, data: Any):
+    """
+    Write JSON via a temporary file and a rename.
+
+    Everything the app remembers between runs goes through here — the queue autosave, defaults.json, preset
+    files. Writing in place means a process killed mid-write (and the queue autosave runs after every single
+    file) leaves a truncated file behind, and a truncated settings file is indistinguishable from a corrupt
+    one: the next start silently falls back to factory defaults with no way to tell the user why.
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, indent=4)
+    os.replace(tmp, path)
 
 
 def _set_creation_time_windows(path: str, timestamp: float) -> bool:
@@ -79,43 +95,66 @@ class FileOperations:
         except OSError:
             return False
 
-    def replace_file(self, new_file: str, original_file: str,
-                     logger: Optional[logging.Logger] = None,
-                     keep_backup: bool = True) -> bool:
+    def replace_file_as(self, new_file: str, original_file: str,
+                        logger: Optional[logging.Logger] = None,
+                        keep_backup: bool = True) -> Optional[str]:
         """
-        Replace original with new file. The original is kept as <name>.old<ext>
-        unless keep_backup is False, in which case it is deleted once the new
-        file is safely in place.
-        """
-        try:
-            if not self.output_is_usable(new_file):
-                if logger:
-                    logger.error(f"New file is missing or empty: {new_file}")
-                return False
+        Put *new_file* where *original_file* was, keeping the original as <name>.old<ext>.
 
+        The extension decides the destination name, not the original's filename. Encoding an .avi source into
+        MKV and replacing the original used to move Matroska onto the .avi name: the file then lies about
+        what it is, which players mostly paper over by sniffing the content and other tools do not. When the
+        containers differ the original steps aside and the encode keeps its own extension, so the pair on
+        disk is tape.mkv (new) and tape.avi.old.avi (original).
+
+        Returns the path the file ended up at, or None if nothing was moved.
+        """
+        if not self.output_is_usable(new_file):
+            if logger:
+                logger.error(f"New file is missing or empty: {new_file}")
+            return None
+
+        original_ext = os.path.splitext(original_file)[1]
+        new_ext = os.path.splitext(new_file)[1]
+        same_container = original_ext.lower() == new_ext.lower()
+        target = original_file if same_container else os.path.splitext(original_file)[0] + new_ext
+
+        if not same_container and os.path.exists(target):
+            # Something else already owns that name; overwriting it would be a deletion nobody asked for
+            if logger:
+                logger.error(f"Not replacing: {target} already exists")
+            return None
+
+        try:
             st = os.stat(original_file)
-            backup = f"{original_file}.old{os.path.splitext(original_file)[1]}"
+            backup = f"{original_file}.old{original_ext}"
             if os.path.exists(backup):
                 os.remove(backup)
             os.rename(original_file, backup)
-            shutil.move(new_file, original_file)
+            shutil.move(new_file, target)
 
-            os.utime(original_file, (st.st_atime, st.st_mtime))
+            os.utime(target, (st.st_atime, st.st_mtime))
             if platform.system() == 'Windows':
-                _set_creation_time_windows(original_file, st.st_ctime)
+                _set_creation_time_windows(target, st.st_ctime)
 
             if keep_backup:
                 if logger:
-                    logger.info(f"Replaced {original_file} (original kept as {backup})")
+                    logger.info(f"Replaced {original_file} with {target} (original kept as {backup})")
             else:
                 os.remove(backup)
                 if logger:
-                    logger.info(f"Replaced {original_file} (original deleted)")
-            return True
+                    logger.info(f"Replaced {original_file} with {target} (original deleted)")
+            return target
         except Exception as e:
             if logger:
                 logger.error(f"Error replacing file: {e}")
-            return False
+            return None
+
+    def replace_file(self, new_file: str, original_file: str,
+                     logger: Optional[logging.Logger] = None,
+                     keep_backup: bool = True) -> bool:
+        """replace_file_as for callers that only need to know whether it worked"""
+        return self.replace_file_as(new_file, original_file, logger, keep_backup) is not None
 
     def delete_source(self, source_file: str, output_file: str,
                       logger: Optional[logging.Logger] = None) -> bool:

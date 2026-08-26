@@ -15,6 +15,38 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.13.1
+
+A pass over the older code, after the newer features made it obvious how much of it had never been looked at
+twice.
+
+- **Dragging several files at once silently did nothing to the queue.** The list reordered, the queue did not,
+  and from then on what you saw was not what would encode — and *Remove*, which works on the row you clicked,
+  took out a different file. The queue is now rebuilt from the order the list ends up in, identified by path
+  rather than by row arithmetic, so single and multi-row drags are the same operation.
+- **Replacing an original with a different container produced a file that lies about itself.** Encoding
+  `tape.avi` to MKV with *Replace Original Files* moved Matroska onto the `.avi` name. Now the encode keeps
+  its own extension — `tape.mkv`, with the original at `tape.avi.old.avi` — and refuses rather than
+  overwriting if that name is taken. Repair shares the same code.
+- **A video with no audio track failed outright under AviSynth+ with FFMS2**, because the script called
+  `FFAudioSource` unconditionally and that throws when there is nothing to open. Silent sources are ordinary
+  — a camera in video-only mode, a capture with the audio card unplugged — and are now served as video.
+- **"Reset to Factory Defaults" did not reset everything.** Extra FFmpeg arguments, custom AviSynth code and
+  the custom PAR/DAR values were not in the factory set, so anything left in those boxes survived the reset
+  and quietly joined every encode after it.
+- **Presets are kept beside the application** now, next to `defaults.json` and `queue.json`, instead of
+  wherever the code happened to live — which in a packaged build meant filed away inside the bundle's
+  internal directory. Presets saved by earlier versions are still found and loaded.
+- **Everything the app remembers is written atomically** — the queue autosave, `defaults.json`, preset files.
+  A process killed mid-write used to leave a truncated file, and a truncated settings file is
+  indistinguishable from a corrupt one: the next start falls back to factory defaults with no way to say why.
+- **Output filenames no longer name settings that never applied**: `_copy_copy_crf23_abr256` claimed a CRF for
+  a stream copy and a bitrate for a codec that has none. CRF appears for CRF-based encoders, the audio bitrate
+  for codecs that have one.
+- The queue's buttons moved to two rows — the seventh no longer gets its label elided at the minimum window
+  size — and the repair dialog now says that audio (or video) set to copy limits what a repair can achieve.
+
+
 ## Changes in 3.13
 
 - **Check & Repair for damaged files** (`Ctrl+R`). Decodes every file in the queue, counts the errors, and
@@ -260,9 +292,12 @@ are running into issues, you should try with ffms2 enabled.
 
 ### File handling
 
-- Output is written next to the source as `<name>_<vcodec>_<acodec>_crf<N>_abr<N>[_<res>].<ext>`; timestamps are
-  copied from the original
-- **Replace Original Files**: the encode takes over the original filename; the original is kept as `<name>.old<ext>`
+- Output is written next to the source as `<name>_<vcodec>_<acodec>[_crf<N>][_abr<N>][_<res>].<ext>`; timestamps
+  are copied from the original. Only the settings that actually applied are named — a stream copy has no CRF and
+  FLAC has no bitrate
+- **Replace Original Files**: the encode takes over the original filename; the original is kept as `<name>.old<ext>`.
+  When the output container differs from the source's, the encode keeps its own extension — `tape.avi` becomes
+  `tape.mkv` with the original at `tape.avi.old.avi` — because a `.avi` file holding Matroska lies about what it is
 - **Delete Source Files After Processing**: permanently deletes each source right after *its* encode succeeds — one by
   one as the queue progresses, so disk space is freed while long batches are still running. The source is only removed
   when the output exists and is non-empty; files that fail or are stopped keep their source. Combined with *Replace

@@ -131,6 +131,35 @@ class FileManager(QObject):
         """Check if queue has any files"""
         return bool(self.queue)
     
+    def reorder(self, canonical_order: List[str]) -> bool:
+        """
+        Put the queue into the given order, identified by canonical path.
+
+        Driven by the order the file list ends up in after a drag. Any file the caller does not mention
+        keeps its relative position at the end, so an order that is stale or incomplete can only ever be a
+        partial reordering — never a way to lose an entry.
+        """
+        files = self.queue.files
+        by_key: dict = {}
+        for file in files:
+            by_key.setdefault(file.canonical, []).append(file)
+
+        ordered = []
+        for key in canonical_order:
+            bucket = by_key.get(key)
+            if bucket:
+                ordered.append(bucket.pop(0))
+
+        taken = {id(file) for file in ordered}
+        ordered.extend(file for file in files if id(file) not in taken)
+
+        if ordered == files:
+            return False
+        files[:] = ordered
+        self.queue._reindex()
+        self._emit_updates()
+        return True
+
     def move_file(self, from_index: int, to_index: int) -> bool:
         """Move a file within the queue (list drag-and-drop reordering)"""
         files = self.queue.files
