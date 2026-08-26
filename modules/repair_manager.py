@@ -556,11 +556,19 @@ class RepairDialog(QDialog):
             self.hint_label.setText("Nothing is re-compressed, so this cannot change how the video looks — "
                                     "and cannot fix damage in the picture data either.")
         else:
-            self.hint_label.setText(
-                f"Re-encoding uses the current Video and Audio settings: {settings.get('video_codec')} at "
-                f"CRF {settings.get('crf')}, {settings.get('audio_codec')}, into "
-                f"{settings.get('output_format')}. Change them on the tabs behind this dialog if that is not "
-                f"what the repaired file should be.")
+            text = (f"Re-encoding uses the current Video and Audio settings: {settings.get('video_codec')} at "
+                    f"CRF {settings.get('crf')}, {settings.get('audio_codec')}, into "
+                    f"{settings.get('output_format')}. Change them on the tabs behind this dialog if that is "
+                    f"not what the repaired file should be.")
+            if settings.get('audio_codec') == 'copy':
+                # Worth saying plainly: a re-encode that copies the audio fixes the picture and leaves every
+                # damaged audio packet exactly where it was, which reads as a repair that half worked.
+                text += (" Audio is set to copy, so damaged audio will be carried through untouched — "
+                         "choose a real audio codec to have it rebuilt too.")
+            if settings.get('video_codec') == 'copy':
+                text += (" Video is set to copy, so this cannot repair the picture at all; it would only "
+                         "rebuild the container.")
+            self.hint_label.setText(text)
 
     # ------------------------------------------------------------------
     def _fill_table(self):

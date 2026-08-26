@@ -230,15 +230,20 @@ class UIManager(QWidget):
             "rebuild the container where that is enough, re-encode past the damage where it is not.")
         self.controls['repair'].clicked.connect(self.open_repair)
 
+        # Two rows: what changes the queue, then what acts on it. Seven buttons abreast fit the default
+        # window but not the minimum one, where the longest labels get elided to "Check & Rep…".
         file_controls.addWidget(self.controls['add_files'])
         file_controls.addWidget(self.controls['add_folder'])
         file_controls.addWidget(self.controls['remove_files'])
         file_controls.addWidget(self.controls['clear_files'])
-        file_controls.addWidget(self.controls['save_queue'])
-        file_controls.addWidget(self.controls['load_queue'])
-        file_controls.addWidget(self.controls['repair'])
-        
+
+        queue_controls = QHBoxLayout()
+        queue_controls.addWidget(self.controls['save_queue'])
+        queue_controls.addWidget(self.controls['load_queue'])
+        queue_controls.addWidget(self.controls['repair'])
+
         files_layout.addLayout(file_controls)
+        files_layout.addLayout(queue_controls)
         files_group.setLayout(files_layout)
         layout.addWidget(files_group)
         
