@@ -13,10 +13,11 @@ import shutil
 import tempfile
 import psutil
 import shlex
+from collections import deque
 from typing import List, Dict, Any, Optional, Callable
 from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
-from models.file_models import VideoFile
+from models.file_models import VideoFile, FAILURE_CONTEXT_LINES
 from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS
 from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
@@ -66,7 +67,11 @@ class ProcessThread(QThread):
 
     # Pre-compiled regex patterns
     _DURATION_RE = re.compile(r'Duration: (\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?')
-    _ERROR_KEYWORDS = ("error", "invalid", "failed")
+    # Wide on purpose: FFmpeg reports a fatal misconfiguration ("Unsupported channel layout", "Could not
+    # write header") in words that none of the obvious three cover, and a missed line is a failure the user
+    # cannot act on. Retention is bounded, so over-matching costs nothing but a longer report.
+    _ERROR_KEYWORDS = ("error", "invalid", "failed", "unsupported", "not supported", "cannot",
+                       "could not", "unable to", "no such", "denied", "does not contain")
 
     # Signals
     progress_signal = Signal(dict)          # structured progress snapshot
@@ -201,9 +206,9 @@ class ProcessThread(QThread):
             self._completed_wall_times.append(time.time() - self._file_start_time)
             self.file_finished.emit(index, success)
 
-            if file.error_count:
-                self.info_signal.emit(f"Errors in {file.filename} ({file.error_count} total):\n"
-                                      + file.get_error_report())
+            report = file.get_error_report()
+            if report:
+                self.info_signal.emit(f"Errors in {file.filename} ({file.error_count} total):\n" + report)
             # Retained error text has served its purpose; don't carry it for the rest of the batch
             file.clear_errors()
 
@@ -337,7 +342,8 @@ class ProcessThread(QThread):
             # Reading FFmpeg's output happens on a helper thread, and this one becomes a watchdog. A blocking
             # read notices should_stop only when the next line arrives — which for a wedged encoder is never.
             # The interpreting work stays on the single reader thread so per-line cost is unchanged.
-            state = {'last_output': time.time(), 'eof': False}
+            state = {'last_output': time.time(), 'eof': False,
+                     'tail': deque(maxlen=FAILURE_CONTEXT_LINES)}
             pump = threading.Thread(target=self._pump,
                                     args=(process, file, phase, duration, on_line, state),
                                     name="ffmpeg-reader", daemon=True)
@@ -369,6 +375,9 @@ class ProcessThread(QThread):
             # A closed stdout does not mean the process exited: an AviSynth+ MT teardown can spin its worker
             # threads indefinitely after the last frame. Wait with a deadline, and never past a Stop.
             return_code = self._wait_with_deadline(process, file)
+            if return_code != 0 and not self.should_stop:
+                # The line that says why is usually not the line that says it failed
+                file.note_failure_context(state['tail'])
         finally:
             # release(), never forget(): forgetting a still-running child hides it from both the Stop button
             # and kill_all(), leaving an encoder burning every core with nothing able to reach it.
@@ -412,6 +421,7 @@ class ProcessThread(QThread):
                     continue
 
                 file.log_info(line)
+                state['tail'].append(line)
 
                 if duration is None:
                     match = self._DURATION_RE.search(line)

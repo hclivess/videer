@@ -15,6 +15,12 @@ from typing import Optional, List, Dict, Any
 MAX_ERRORS_HEAD = 200
 MAX_ERRORS_TAIL = 200
 
+# FFmpeg often says why it is about to fail on a line that carries none of the words we scan for
+# ("Unsupported channel layout", "maybe incorrect parameters such as bit_rate, rate, width or height"),
+# and then reports the failure itself in a line that says nothing useful at all. Keep the last handful of
+# lines verbatim so the report can show what led up to it.
+FAILURE_CONTEXT_LINES = 12
+
 # Which codecs the CRF and audio-bitrate numbers actually mean something for; the output filename names
 # only the settings that applied.
 CRF_CODECS = ('libx264', 'libx265', 'libsvtav1', 'libvpx-vp9', 'h264_nvenc', 'hevc_nvenc')
@@ -84,6 +90,7 @@ class VideoFile:
         self.has_error = False
         self.error_messages: List[str] = []          # bounded head; see add_error / get_error_report
         self._error_tail: deque = deque(maxlen=MAX_ERRORS_TAIL)
+        self._failure_context: List[str] = []
         self.error_count = 0                         # total seen, including the ones not retained
         
         # Logger
@@ -212,21 +219,33 @@ class VideoFile:
         if self.logger:
             self.logger.error(message)
 
+    def note_failure_context(self, lines) -> None:
+        """
+        Keep FFmpeg's last lines before a non-zero exit. The line that explains a failure is frequently not
+        the line that reports it, so the report shows both.
+        """
+        self._failure_context = [line for line in lines][-FAILURE_CONTEXT_LINES:]
+
     def get_error_report(self) -> str:
-        """Human-readable error summary: head, an elision marker, then the tail"""
-        if not self.error_count:
+        """Human-readable error summary: head, an elision marker, the tail, then FFmpeg's last words"""
+        if not self.error_count and not self._failure_context:
             return ""
         parts = list(self.error_messages)
         dropped = self.error_count - len(self.error_messages) - len(self._error_tail)
         if dropped > 0:
             parts.append(f"... {dropped} further error lines omitted ...")
         parts.extend(self._error_tail)
+        context = [line for line in self._failure_context if line not in parts]
+        if context:
+            parts.append("FFmpeg's last output before it gave up:")
+            parts.extend(f"  {line}" for line in context)
         return '\n'.join(parts)
 
     def clear_errors(self):
         """Release retained error text (called once a file is done with)"""
         self.error_messages = []
         self._error_tail.clear()
+        self._failure_context = []
     
     def log_info(self, message: str):
         """Log an info message"""
