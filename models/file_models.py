@@ -241,6 +241,15 @@ class VideoFile:
             parts.extend(f"  {line}" for line in context)
         return '\n'.join(parts)
 
+    def reset_errors(self):
+        """
+        Forget everything recorded about a failed attempt that is about to be retried, so a file that ends up
+        encoding cleanly is not reported as one that failed. The per-file log keeps the full history.
+        """
+        self.clear_errors()
+        self.error_count = 0
+        self.has_error = False
+
     def clear_errors(self):
         """Release retained error text (called once a file is done with)"""
         self.error_messages = []

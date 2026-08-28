@@ -70,6 +70,10 @@ class ProcessThread(QThread):
     # Wide on purpose: FFmpeg reports a fatal misconfiguration ("Unsupported channel layout", "Could not
     # write header") in words that none of the obvious three cover, and a missed line is a failure the user
     # cannot act on. Retention is bounded, so over-matching costs nothing but a longer report.
+    # A muxer turning down a subtitle stream, in the words each one uses for it. Recognised so the encode can
+    # be retried in a form the container accepts instead of being lost over a track nobody asked about.
+    _SUBTITLE_REJECTIONS = ("subtitle codec", "subtitle encoding", "only possible from text to text")
+
     _ERROR_KEYWORDS = ("error", "invalid", "failed", "unsupported", "not supported", "cannot",
                        "could not", "unable to", "no such", "denied", "does not contain")
 
@@ -95,6 +99,7 @@ class ProcessThread(QThread):
         self.start_time: Optional[float] = None
         self._phase_start: Optional[float] = None
         self.success_count = 0
+        self._subtitles_rejected = False
 
         # Timing bookkeeping for ETA
         self._file_start_time: Optional[float] = None
@@ -233,16 +238,7 @@ class ProcessThread(QThread):
 
             temp_output = file.get_temp_output_path()
             final_output = file.get_full_output_path()
-            command = self.command_builder.build_main_command(
-                input_file, temp_output, self.settings.get('use_avisynth', False))
-
-            for index, codec in self.command_builder.dropped_subtitles:
-                note = (f"{file.filename}: subtitle stream {index} ({codec}) cannot be stored in "
-                        f"{self.settings.get('output_format', 'MKV')} and was left out")
-                file.log_info(note)
-                self.info_signal.emit(note)
-
-            return_code = self._execute_command(command, file, phase="Encoding")
+            return_code = self._encode_with_subtitle_fallback(file, input_file, temp_output)
             ok = return_code == 0 and not self.should_stop and self.file_ops.output_is_usable(temp_output)
             if ok:
                 # only now does the file appear under its real name; a stopped / failed encode never does
@@ -260,6 +256,51 @@ class ProcessThread(QThread):
         except Exception as e:
             file.add_error(f"Processing error: {str(e)}")
             return False
+
+    def _encode_with_subtitle_fallback(self, file: VideoFile, input_file: str, temp_output: str) -> int:
+        """
+        Run the encode, and if the muxer rejects the subtitle streams, run it again in a way it will accept.
+
+        Deciding up front what a container will take needs the source to be examined, and the examination can
+        come back empty — no ffprobe, an input FFmpeg reads but describes differently, a codec nobody
+        anticipated. The cost of being wrong used to be the whole file: the muxer rejects the subtitle track
+        while writing the header, before a single frame is encoded, and the encode is over. So take FFmpeg's
+        refusal as the answer to the question the probe could not answer: convert the subtitles into the
+        container's own text format, and if that is refused too, finish the file without them. Both retries
+        happen in the second it takes to fail at the header.
+        """
+        container = (self.settings.get('output_format') or 'MKV').upper()
+        attempts = (
+            (None, None),
+            ('convert', f"converting them to what {container} carries"),
+            ('drop', "leaving them out"),
+        )
+        return_code = 1
+        for override, description in attempts:
+            self.command_builder.subtitle_override = override
+            command = self.command_builder.build_main_command(
+                input_file, temp_output, self.settings.get('use_avisynth', False))
+
+            if override is None:
+                for index, codec in self.command_builder.dropped_subtitles:
+                    note = (f"{file.filename}: subtitle stream {index} ({codec}) cannot be stored in "
+                            f"{container} and was left out")
+                    file.log_info(note)
+                    self.info_signal.emit(note)
+            else:
+                note = f"{file.filename}: {container} would not take the subtitles as they are — {description}"
+                file.log_info(f"{note}. The attempt that failed reported:\n{file.get_error_report()}")
+                self.info_signal.emit(note)
+                # The retry is the run that counts; a file that ends up encoding must not be reported failed
+                file.reset_errors()
+
+            self._subtitles_rejected = False
+            return_code = self._execute_command(command, file, phase="Encoding")
+            if return_code == 0 or self.should_stop or not self._subtitles_rejected:
+                break
+
+        self.command_builder.subtitle_override = None
+        return return_code
 
     def _transcode(self, file: VideoFile) -> bool:
         """Transcode to raw format"""
@@ -534,6 +575,8 @@ class ProcessThread(QThread):
         """Execute FFmpeg command, monitor progress and collect error lines"""
         def on_line(line):
             lower = line.lower()
+            if any(keyword in lower for keyword in self._SUBTITLE_REJECTIONS):
+                self._subtitles_rejected = True
             if any(keyword in lower for keyword in self._ERROR_KEYWORDS):
                 file.add_error(line)
 

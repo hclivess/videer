@@ -5,6 +5,7 @@ Handles FFmpeg command generation and execution
 
 import json
 import os
+import re
 import shlex
 import shutil
 from typing import Dict, Any, Optional, List, Tuple
@@ -151,22 +152,46 @@ TEXT_SUBTITLE_CODECS = frozenset((
     'subviewer', 'subviewer1', 'microdvd', 'mpl2', 'pjs', 'jacosub', 'stl', 'vplayer', 'eia_608'))
 
 
+# "  Stream #0:2(eng): Subtitle: mov_text (tx3g / 0x67337874), 1920x1080" — how ffmpeg -i describes a
+# subtitle stream when there is no ffprobe to ask.
+_STREAM_SUBTITLE_RE = re.compile(r'Stream #\d+:\d+.*?: Subtitle: ([A-Za-z0-9_]+)')
+
+
 def probe_subtitle_codecs(filepath: str) -> List[str]:
     """
     Codec name of every subtitle stream, in stream order. Empty when the file has none, is not a media file
-    (an AviSynth script), or could not be probed — in which case the caller keeps whatever it would have done
-    anyway rather than acting on a failed probe.
+    (an AviSynth script), or could not be examined at all — in which case the caller keeps whatever it would
+    have done anyway rather than acting on a failed probe.
+
+    ffprobe answers this best, but it is a separate executable and not everyone who has ffmpeg has it on
+    PATH. Rather than let a missing helper decide whether an encode survives, fall back to reading the stream
+    list `ffmpeg -i` prints about any input it opens.
     """
+    if not os.path.exists(filepath):
+        return []
+
     ffprobe = find_ffprobe()
-    if not ffprobe or not os.path.exists(filepath):
+    if ffprobe:
+        try:
+            result = childproc.run(
+                [ffprobe, '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=codec_name',
+                 '-of', 'csv=p=0', filepath], text=True, encoding='utf-8', errors='replace', timeout=30)
+            names = [line.strip() for line in (result.stdout or '').splitlines() if line.strip()]
+            if names or result.returncode == 0:
+                return names
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
         return []
     try:
-        result = childproc.run(
-            [ffprobe, '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=codec_name',
-             '-of', 'csv=p=0', filepath], text=True, timeout=30)
+        # No output file: ffmpeg prints what it found and exits non-zero. That listing is the answer.
+        result = childproc.run([ffmpeg, '-hide_banner', '-i', filepath],
+                               text=True, encoding='utf-8', errors='replace', timeout=30)
     except (subprocess.SubprocessError, OSError):
         return []
-    return [line.strip() for line in (result.stdout or '').splitlines() if line.strip()]
+    return _STREAM_SUBTITLE_RE.findall((result.stderr or '') + (result.stdout or ''))
 
 
 def probe_media_info(filepath: str) -> Dict[str, Any]:
@@ -228,6 +253,8 @@ class FFmpegCommandBuilder:
         self.ffmpeg_path = find_ffmpeg()
         # Subtitle streams the last built command had to leave behind: [(stream index, codec name)]
         self.dropped_subtitles: List[Tuple[int, str]] = []
+        # Set to 'convert' or 'drop' to overrule the subtitle plan after a muxer has rejected what it chose
+        self.subtitle_override: Optional[str] = None
     
     # Machine-readable progress on stdout; human stats line suppressed
     PROGRESS_ARGS = ['-progress', 'pipe:1', '-nostats']
@@ -289,10 +316,15 @@ class FFmpegCommandBuilder:
         """
         self.dropped_subtitles = []
         configured = self.SUBTITLE_CODEC_BY_CONTAINER.get(output_format, 'copy')
-        if not configured:
+        if not configured or self.subtitle_override == 'drop':
             return ['-sn'], []
 
         rules = self.CONTAINER_SUBTITLES.get(output_format)
+        if self.subtitle_override == 'convert':
+            # The muxer refused what was chosen and we may not know why: convert everything text-shaped into
+            # the container's own format, which is the one thing it is guaranteed to accept.
+            return ['-map', '0:s?'], ['-c:s', rules['text'] if rules else configured]
+
         codecs = probe_subtitle_codecs(input_file) if rules else []
         if not codecs:
             return ['-map', '0:s?'], ['-c:s', configured]
