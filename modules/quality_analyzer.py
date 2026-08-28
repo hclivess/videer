@@ -651,12 +651,12 @@ class QualityMatchDialog(QDialog):
         self.setMinimumWidth(720)
 
         self.analyzer: Optional[QualityAnalyzer] = None
-        self.result: Optional[Dict[str, Any]] = None
+        self.search_result: Optional[Dict[str, Any]] = None
         self._syncing_target = False
         self._targets_seen: Dict[str, float] = {}
 
         settings = main_window.ui_manager.get_current_settings()
-        self.metric = choose_metric(settings.get('quality_metric', DEFAULT_QUALITY_METRIC))
+        self.metric_key = choose_metric(settings.get('quality_metric', DEFAULT_QUALITY_METRIC))
 
         self._build_ui()
         self._load_from_settings(settings)
@@ -813,7 +813,7 @@ class QualityMatchDialog(QDialog):
 
     def _label_table(self):
         self.table.setHorizontalHeaderLabels(
-            ["CRF", metric_spec(self.metric)['label'], "Est. video", "vs source", "Verdict"])
+            ["CRF", metric_spec(self.metric_key)['label'], "Est. video", "vs source", "Verdict"])
 
     # ------------------------------------------------------------------
     # State
@@ -845,10 +845,10 @@ class QualityMatchDialog(QDialog):
 
     def _load_from_settings(self, settings: Dict[str, Any]):
         """Start from the Quality tab, so the dialog and the batch matcher agree until told otherwise"""
-        index = self.metric_combo.findData(self.metric)
+        index = self.metric_combo.findData(self.metric_key)
         self.metric_combo.setCurrentIndex(index if index >= 0 else 0)
         self._configure_target(float(settings.get('quality_target')
-                                     or metric_spec(self.metric)['default_target']))
+                                     or metric_spec(self.metric_key)['default_target']))
 
         pool_index = self.pool_combo.findData(settings.get('quality_pool', DEFAULT_QUALITY_POOL))
         self.pool_combo.setCurrentIndex(pool_index if pool_index >= 0 else 0)
@@ -857,7 +857,7 @@ class QualityMatchDialog(QDialog):
 
     def _configure_target(self, value: Optional[float] = None):
         """Re-scale the target controls to the current metric — 0-100, 0-1 and decibels share no numbers"""
-        spec = metric_spec(self.metric)
+        spec = metric_spec(self.metric_key)
         self._syncing_target = True
         self.target_combo.clear()
         for label, preset in spec['targets']:
@@ -877,10 +877,10 @@ class QualityMatchDialog(QDialog):
     # ---- metric / target controls ---------------------------------------
     def _on_metric_changed(self, _index):
         metric = self.metric_combo.currentData()
-        if not metric or metric == self.metric:
+        if not metric or metric == self.metric_key:
             return
-        self._targets_seen[self.metric] = self.target_spin.value()
-        self.metric = metric
+        self._targets_seen[self.metric_key] = self.target_spin.value()
+        self.metric_key = metric
         # A target is only meaningful on its own metric's scale, so switching brings back what was last used
         # for the new one, or its recommended default.
         self._configure_target(self._targets_seen.get(metric))
@@ -919,7 +919,7 @@ class QualityMatchDialog(QDialog):
         """The encode settings from the tabs, with this dialog's quality choices laid over them"""
         settings = self.main_window.ui_manager.get_current_settings()
         settings.update({
-            'quality_metric': self.metric,
+            'quality_metric': self.metric_key,
             'quality_target': self.target_spin.value(),
             'quality_pool': self.pool_combo.currentData(),
             'quality_samples': self.samples_spin.value(),
@@ -955,15 +955,15 @@ class QualityMatchDialog(QDialog):
                                 "The low end of the CRF range must not be above the high end.")
             return
 
-        if not metric_available(self.metric):
+        if not metric_available(self.metric_key):
             QMessageBox.warning(
                 self, "Metric unavailable",
-                f"This FFmpeg build has no {metric_spec(self.metric)['filter']} filter, so "
-                f"{metric_spec(self.metric)['label']} cannot be measured. Install an FFmpeg built with "
+                f"This FFmpeg build has no {metric_spec(self.metric_key)['filter']} filter, so "
+                f"{metric_spec(self.metric_key)['label']} cannot be measured. Install an FFmpeg built with "
                 f"libvmaf, or choose SSIM or PSNR, which every build has.")
             return
 
-        self.result = None
+        self.search_result = None
         self.table.setRowCount(0)
         self.result_label.setVisible(False)
         self.apply_button.setEnabled(False)
@@ -1008,7 +1008,7 @@ class QualityMatchDialog(QDialog):
         self.table.insertRow(row)
         for column, text in enumerate([
                 str(probe['crf']),
-                format_value(self.metric, probe['score']),
+                format_value(self.metric_key, probe['score']),
                 format_size(estimated) if estimated else "--",
                 ratio,
                 "meets target" if probe['meets_target'] else "below target"]):
@@ -1024,7 +1024,7 @@ class QualityMatchDialog(QDialog):
         self.table.sortItems(0)
 
     def _on_finished(self, result: Dict[str, Any]):
-        self.result = result
+        self.search_result = result
         recommended = result.get('recommended')
 
         if not recommended:
@@ -1035,7 +1035,7 @@ class QualityMatchDialog(QDialog):
 
         savings = result.get('savings')
         headline = (f"Recommended CRF {recommended['crf']} — "
-                    f"{format_score(self.metric, recommended['score'])} "
+                    f"{format_score(self.metric_key, recommended['score'])} "
                     f"({pool_label(result['pool']).lower()})")
         if result.get('estimated_size'):
             headline += f", about {format_size(result['estimated_size'])} of video"
@@ -1065,13 +1065,13 @@ class QualityMatchDialog(QDialog):
         Put the answer where the encode will use it — and the criteria that produced it where the batch
         matcher will use them, so the rest of the queue is judged the way this file just was.
         """
-        if not self.result or not self.result.get('recommended'):
+        if not self.search_result or not self.search_result.get('recommended'):
             return
-        crf = int(self.result['recommended']['crf'])
+        crf = int(self.search_result['recommended']['crf'])
         ui = self.main_window.ui_manager
         ui.controls['crf'].setValue(crf)
         ui.apply_quality_settings({
-            'quality_metric': self.metric,
+            'quality_metric': self.metric_key,
             'quality_target': self.target_spin.value(),
             'quality_pool': self.pool_combo.currentData(),
             'quality_samples': self.samples_spin.value(),
@@ -1080,8 +1080,8 @@ class QualityMatchDialog(QDialog):
             'quality_crf_high': self.crf_high_spin.value(),
         })
         ui.update_status(
-            f"CRF set to {crf} from the quality match of {os.path.basename(self.result['file'])} "
-            f"({format_score(self.metric, self.result['recommended']['score'])})")
+            f"CRF set to {crf} from the quality match of {os.path.basename(self.search_result['file'])} "
+            f"({format_score(self.metric_key, self.search_result['recommended']['score'])})")
         self.accept()
 
     # ------------------------------------------------------------------
