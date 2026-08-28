@@ -15,6 +15,21 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.13.2
+
+- **The Match Source Quality window flooded the console with errors.** It kept the chosen metric in an
+  attribute named `metric` and the finished search in one named `result` — both names Qt already uses on
+  every dialog for its own painting and for the exec() return code — so every repaint of the window ended in
+  `Error calling Python override of QDialog::metric(): 'str' object is not callable`. The search itself was
+  fine; the window it ran in was not.
+- **A failed encode now says why it failed.** FFmpeg reports the cause on one line ("Opus mapping family
+  undefined for 12 channels", "Unsupported channel layout") and the failure itself on the next
+  (`Error initializing output stream 0:1 --`), and the error scan matched only *error*, *invalid* and
+  *failed* — so it kept the line that says nothing and dropped the one that says everything. It now knows the
+  vocabulary FFmpeg actually uses, and any run that exits non-zero prints its last twelve lines of output
+  under the errors.
+
+
 ## Changes in 3.13.1
 
 A pass over the older code, after the newer features made it obvious how much of it had never been looked at
