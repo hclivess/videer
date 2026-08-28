@@ -7,7 +7,7 @@ import json
 import os
 import shlex
 import shutil
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import subprocess
 from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
@@ -143,6 +143,32 @@ def has_audio_stream(filepath: str) -> bool:
     return bool((result.stdout or '').strip())
 
 
+# Subtitle codecs that carry text, and can therefore be converted into whatever text format the target
+# container wants. Everything else is a picture (VOBSUB, PGS, DVB) and can only be copied or dropped:
+# FFmpeg converts text to text and bitmap to bitmap, never across.
+TEXT_SUBTITLE_CODECS = frozenset((
+    'subrip', 'srt', 'text', 'ass', 'ssa', 'mov_text', 'webvtt', 'ttml', 'sami', 'realtext',
+    'subviewer', 'subviewer1', 'microdvd', 'mpl2', 'pjs', 'jacosub', 'stl', 'vplayer', 'eia_608'))
+
+
+def probe_subtitle_codecs(filepath: str) -> List[str]:
+    """
+    Codec name of every subtitle stream, in stream order. Empty when the file has none, is not a media file
+    (an AviSynth script), or could not be probed — in which case the caller keeps whatever it would have done
+    anyway rather than acting on a failed probe.
+    """
+    ffprobe = find_ffprobe()
+    if not ffprobe or not os.path.exists(filepath):
+        return []
+    try:
+        result = childproc.run(
+            [ffprobe, '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=codec_name',
+             '-of', 'csv=p=0', filepath], text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError):
+        return []
+    return [line.strip() for line in (result.stdout or '').splitlines() if line.strip()]
+
+
 def probe_media_info(filepath: str) -> Dict[str, Any]:
     """Duration, size and first-video-stream properties, best effort — every field may be None."""
     info: Dict[str, Any] = {'duration': None, 'size': None, 'width': None, 'height': None,
@@ -200,6 +226,8 @@ class FFmpegCommandBuilder:
     def __init__(self, settings: Dict[str, Any]):
         self.settings = settings
         self.ffmpeg_path = find_ffmpeg()
+        # Subtitle streams the last built command had to leave behind: [(stream index, codec name)]
+        self.dropped_subtitles: List[Tuple[int, str]] = []
     
     # Machine-readable progress on stdout; human stats line suppressed
     PROGRESS_ARGS = ['-progress', 'pipe:1', '-nostats']
@@ -211,6 +239,19 @@ class FFmpegCommandBuilder:
         'mov': 'mov_text',
         'avi': None,
         'webm': None,
+    }
+
+    # What each container will actually accept as a copied subtitle stream, and which text format to convert
+    # to when it will not. Matroska takes nearly everything *except* MP4's mov_text, which is exactly what a
+    # subtitled MP4 source carries — copying it in aborts the whole encode with "Subtitle codec 94213 is not
+    # supported". MP4 and MOV take only mov_text, so a picture-based subtitle track cannot go in at all.
+    CONTAINER_SUBTITLES = {
+        'mkv': {'copyable': frozenset(('subrip', 'srt', 'text', 'ass', 'ssa', 'webvtt', 'dvd_subtitle',
+                                       'hdmv_pgs_subtitle', 'hdmv_text_subtitle', 'dvb_subtitle',
+                                       'arib_caption')),
+                'text': 'srt'},
+        'mp4': {'copyable': frozenset(('mov_text',)), 'text': 'mov_text'},
+        'mov': {'copyable': frozenset(('mov_text',)), 'text': 'mov_text'},
     }
 
     # Matroska statistics tags (mkvmerge/mkvpropedit) that become stale after re-encoding
@@ -232,6 +273,57 @@ class FFmpegCommandBuilder:
             cmd.extend(['-err_detect', mode])
         cmd.extend(self.PROGRESS_ARGS)
         return cmd
+
+    def _subtitle_plan(self, input_file: str, output_format: str) -> Tuple[List[str], List[str]]:
+        """
+        How the source's subtitle streams reach the output: the -map arguments and the -c:s arguments.
+
+        Copying subtitles is right whenever the container accepts them, and fatal when it does not — FFmpeg
+        refuses to write the header and the file is lost, subtitles being the least of what the user wanted.
+        So each source stream is asked about individually: copy where the container takes it, convert where
+        the container wants another text format, and drop where a picture-based track cannot go in at all.
+
+        A source that cannot be probed (an AviSynth script, no ffprobe) keeps the old blanket behaviour: it is
+        better to run the command and let FFmpeg speak than to drop subtitles on the strength of a failed
+        probe.
+        """
+        self.dropped_subtitles = []
+        configured = self.SUBTITLE_CODEC_BY_CONTAINER.get(output_format, 'copy')
+        if not configured:
+            return ['-sn'], []
+
+        rules = self.CONTAINER_SUBTITLES.get(output_format)
+        codecs = probe_subtitle_codecs(input_file) if rules else []
+        if not codecs:
+            return ['-map', '0:s?'], ['-c:s', configured]
+
+        keep: List[int] = []
+        targets: List[str] = []
+        for index, name in enumerate(codecs):
+            if name in rules['copyable'] and (configured == 'copy' or name == configured):
+                target = 'copy'
+            elif name in TEXT_SUBTITLE_CODECS:
+                target = rules['text']
+            else:
+                # A picture this container cannot hold. The alternative is failing the whole file, but the
+                # caller is told, because silently losing a subtitle track is its own kind of damage.
+                self.dropped_subtitles.append((index, name))
+                continue
+            keep.append(index)
+            targets.append(target)
+
+        if not keep:
+            return ['-sn'], []
+
+        if len(keep) == len(codecs):
+            mapping = ['-map', '0:s?']
+        else:
+            mapping = [arg for index in keep for arg in ('-map', f'0:s:{index}')]
+
+        if len(set(targets)) == 1:
+            return mapping, ['-c:s', targets[0]]
+        return mapping, [arg for position, target in enumerate(targets)
+                         for arg in (f'-c:s:{position}', target)]
 
     def build_transcode_command(self, input_file: str, output_file: str,
                                 transcode_video: bool, transcode_audio: bool) -> List[str]:
@@ -281,13 +373,10 @@ class FFmpegCommandBuilder:
         # Encoder speed preset (name space differs per encoder)
         self._add_speed_preset(cmd, video_codec)
 
-        # Mapping (subtitles only where the container can carry them)
+        # Mapping (subtitles only where the container can carry them, and only in a form it accepts)
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
-        subtitle_codec = self.SUBTITLE_CODEC_BY_CONTAINER.get(output_format, 'copy')
-        if subtitle_codec:
-            cmd.extend(['-map', '0:s?'])
-        else:
-            cmd.append('-sn')
+        subtitle_map, subtitle_codec_args = self._subtitle_plan(input_file, output_format)
+        cmd.extend(subtitle_map)
 
         # Stereo downmix (only possible when audio is re-encoded)
         if self.settings.get('stereo', False) and audio_codec != 'copy':
@@ -300,8 +389,7 @@ class FFmpegCommandBuilder:
         self._add_audio_codec_settings(cmd)
 
         # Subtitle codec
-        if subtitle_codec:
-            cmd.extend(['-c:s', subtitle_codec])
+        cmd.extend(subtitle_codec_args)
 
         # Video filters (resolution + PAR/DAR) and DAR metadata.
         # Filters cannot be applied to a copied stream, so skip them entirely then.

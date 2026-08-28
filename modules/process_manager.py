@@ -236,6 +236,12 @@ class ProcessThread(QThread):
             command = self.command_builder.build_main_command(
                 input_file, temp_output, self.settings.get('use_avisynth', False))
 
+            for index, codec in self.command_builder.dropped_subtitles:
+                note = (f"{file.filename}: subtitle stream {index} ({codec}) cannot be stored in "
+                        f"{self.settings.get('output_format', 'MKV')} and was left out")
+                file.log_info(note)
+                self.info_signal.emit(note)
+
             return_code = self._execute_command(command, file, phase="Encoding")
             ok = return_code == 0 and not self.should_stop and self.file_ops.output_is_usable(temp_output)
             if ok:
