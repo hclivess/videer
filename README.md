@@ -15,6 +15,25 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.13.3
+
+- **A subtitle track no longer takes the whole file down with it.** Encoding a subtitled MP4 to MKV failed
+  before a single frame was written — the source's subtitles are `mov_text`, MKV was told to copy them, and
+  Matroska is the one container that cannot hold `mov_text`. FFmpeg refused to write the header and the
+  encode was over: `Subtitle codec 94213 is not supported`. Every file in a queue of MP4s went the same way.
+  Each subtitle stream is now decided on its own — copied where the container accepts it, converted where it
+  wants another text format (`mov_text` to SRT for MKV, SRT/ASS to `mov_text` for MP4 and MOV), and left out
+  only when it is a picture no conversion can place, which the log and the info panel both say out loud.
+- **And if that judgement is wrong, the file still survives.** Knowing what a container will take means
+  examining the source, and the examination can come back empty — no ffprobe on the machine, an input FFmpeg
+  describes differently, a codec nobody anticipated. So FFmpeg's refusal is now treated as the answer the
+  examination could not give: the encode runs again with the subtitles converted to the container's own text
+  format, and if that is refused too, once more without them. A rejection happens while writing the header,
+  so each retry costs about a second, and a file rescued by one is no longer reported as a file that failed.
+- **The examination itself no longer needs ffprobe**: without it, the subtitle streams are read from the
+  stream listing `ffmpeg -i` prints for any input it opens.
+
+
 ## Changes in 3.13.2
 
 - **The Match Source Quality window flooded the console with errors.** It kept the chosen metric in an
