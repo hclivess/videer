@@ -99,8 +99,11 @@ class MainWindow(QMainWindow):
     def check_dependencies(self):
         """Check if required dependencies are available"""
         self.ui_manager.update_ffmpeg_status(check_ffmpeg_status())
-        # Missing FFmpeg, or an FFmpeg without libvmaf, is something videer can fix rather than only report
-        offer_if_incomplete(self, self.settings)
+        # Missing FFmpeg, or an FFmpeg without libvmaf, is something videer can fix rather than only report.
+        # Not when nobody is at the keyboard, though: a modal question in an automated run is a hang, which
+        # is precisely how it broke CI's own headless smoke test.
+        if not (os.environ.get("VIDEER_SELFTEST") or os.environ.get("VIDEER_NO_FFMPEG_PROMPT")):
+            offer_if_incomplete(self, self.settings)
         self.ui_manager.refresh_metric_choices()
     
     def start_processing(self):

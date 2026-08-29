@@ -15,6 +15,14 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.14.2
+
+- **The startup offer to fetch a better FFmpeg could hang an automated start**, because a modal question with
+  nobody at the keyboard is a hang. It is skipped under `VIDEER_SELFTEST` or `VIDEER_NO_FFMPEG_PROMPT` — which
+  is how it was found: it hung videer's own headless smoke test and cost the 3.14 and 3.14.1 releases their
+  Linux binaries.
+
+
 ## Changes in 3.14.1
 
 - **A target nothing can reach no longer ends in a CRF recommendation.** When no CRF in the range met the
