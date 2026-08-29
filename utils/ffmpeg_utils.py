@@ -14,20 +14,29 @@ from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
-                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC)
+                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR)
 
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ffmpeg_cache: Optional[str] = None
 
+# Where a build fetched through Tools > FFmpeg Features lands. It comes first in the search: putting it there
+# was a deliberate act, and the reason for doing it is usually that the FFmpeg already on the PATH is the one
+# that cannot do the job. Deleting the folder goes back to the system copy.
+MANAGED_BIN_DIR = os.path.join(APP_DIR, "ffmpeg", "bin")
+
+
+def _managed(name: str) -> List[str]:
+    return [os.path.join(MANAGED_BIN_DIR, f"{name}.exe"), os.path.join(MANAGED_BIN_DIR, name)]
+
 
 def find_ffmpeg(refresh: bool = False) -> Optional[str]:
-    """Find FFmpeg executable in system PATH or the application directory (cached)"""
+    """Find FFmpeg: the build videer installed, then the system PATH, then the application directory"""
     global _ffmpeg_cache
     if _ffmpeg_cache and not refresh and os.path.exists(_ffmpeg_cache):
         return _ffmpeg_cache
 
-    candidates = [shutil.which('ffmpeg')]
+    candidates = _managed('ffmpeg') + [shutil.which('ffmpeg')]
     for name in ('ffmpeg.exe', 'ffmpeg'):
         candidates.append(os.path.join(_APP_DIR, name))
 
@@ -54,7 +63,7 @@ def find_ffprobe() -> Optional[str]:
     if _ffprobe_cache and os.path.exists(_ffprobe_cache):
         return _ffprobe_cache
 
-    candidates = [shutil.which('ffprobe')]
+    candidates = _managed('ffprobe') + [shutil.which('ffprobe')]
     dirs = [_APP_DIR]
     ffmpeg = find_ffmpeg()
     if ffmpeg:
@@ -68,6 +77,14 @@ def find_ffprobe() -> Optional[str]:
             _ffprobe_cache = path
             return path
     return None
+
+
+def forget_ffmpeg() -> None:
+    """Drop everything cached about the FFmpeg in use, so a newly installed one is picked up at once"""
+    global _ffmpeg_cache, _ffprobe_cache, _filters_cache
+    _ffmpeg_cache = None
+    _ffprobe_cache = None
+    _filters_cache = None
 
 
 def probe_duration(filepath: str) -> Optional[float]:

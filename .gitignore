@@ -15,3 +15,6 @@ dist/
 *.build/
 *.dist/
 *.onefile-build/
+
+# FFmpeg fetched through Tools > FFmpeg Features
+ffmpeg/

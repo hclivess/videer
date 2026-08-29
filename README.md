@@ -15,6 +15,22 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.14
+
+- **videer now fetches an FFmpeg that can do what it needs.** VMAF is not part of a plain FFmpeg build — it
+  has to be compiled in, and the Windows *essentials* build and many distribution packages leave it out, with
+  nothing in the app to say so beyond a greyed-out metric. *Tools ▸ FFmpeg Features* lists exactly what the
+  FFmpeg in use cannot do and offers to download a build that can: the URL, the size and the destination are
+  on screen before anything starts. It fetches from BtbN/FFmpeg-Builds (Windows and Linux, x64 and ARM64),
+  keeps only `ffmpeg` and `ffprobe`, checks that what arrived actually runs and actually has `libvmaf`, and
+  selects VMAF once it does. On macOS it says to use `brew install ffmpeg`, which has libvmaf.
+- The fetched copy lives in `ffmpeg/bin` beside videer and is used in preference to anything on the PATH —
+  the reason for downloading it is usually that the one on the PATH is the one that cannot do the job.
+  Deleting that folder goes back to the system FFmpeg.
+- Missing features are offered once at startup and never again if declined; the Quality tab grows a button
+  for it only while something is actually missing.
+
+
 ## Changes in 3.13.5
 
 - **The quality search scored the deinterlacer, not the encoder.** The probe encodes were made with the

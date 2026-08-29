@@ -27,7 +27,9 @@ from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_me
                                       metric_target, format_score, metric_spec,
                                       resolved_search_range)
 from config import QUALITY_METRICS
+from utils.ffmpeg_utils import check_ffmpeg_status
 from modules.repair_manager import RepairDialog
+from modules.ffmpeg_installer import FFmpegSetupDialog, missing_features
 
 
 class FileListWidget(QListWidget):
@@ -153,6 +155,7 @@ class UIManager(QWidget):
         tools_menu = menubar.addMenu('Tools')
         self._add_action(tools_menu, 'Match Source Quality…', 'Ctrl+M', self.open_quality_match)
         self._add_action(tools_menu, 'Check && Repair Files…', 'Ctrl+R', self.open_repair)
+        self._add_action(tools_menu, 'FFmpeg Features…', None, self.open_ffmpeg_setup)
 
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -769,6 +772,12 @@ class UIManager(QWidget):
         self.quality_metric_note.setStyleSheet("color: #666; font-size: 11px;")
         metric_layout.addWidget(self.quality_metric_note, 1, 0, 1, 2)
 
+        # Only there when it is needed: a button offering to fix something that is not broken is clutter
+        self.get_ffmpeg_button = QPushButton("Get an FFmpeg that can measure VMAF…")
+        self.get_ffmpeg_button.clicked.connect(self.open_ffmpeg_setup)
+        metric_layout.addWidget(self.get_ffmpeg_button, 4, 0, 1, 2)
+        self.get_ffmpeg_button.setVisible(bool(missing_features()))
+
         metric_layout.addWidget(QLabel("Target:"), 2, 0)
         target_widget = QWidget()
         target_layout = QHBoxLayout(target_widget)
@@ -1317,6 +1326,29 @@ class UIManager(QWidget):
                 "measure its probe encodes.")
             return
         QualityMatchDialog(self.main_window).exec()
+
+    def open_ffmpeg_setup(self):
+        """What this FFmpeg can and cannot do, and the offer to fetch one that can"""
+        FFmpegSetupDialog(self.main_window).exec()
+        self.refresh_metric_choices()
+
+    def refresh_metric_choices(self, prefer: Optional[str] = None):
+        """
+        Re-read what FFmpeg can measure. Called after an install, when metrics that were greyed out a moment
+        ago are available and the tab is still showing the stand-in that was chosen without them.
+
+        `prefer` is for exactly that moment: someone who has just downloaded an FFmpeg to get VMAF wants VMAF
+        selected, not the SSIM they were left with while it was impossible. Without it the current choice is
+        kept, because a choice made deliberately should survive a refresh.
+        """
+        current = self.controls['quality_metric'].currentData()
+        blocked = self.controls['quality_metric'].blockSignals(True)
+        fill_metric_combo(self.controls['quality_metric'])
+        self.controls['quality_metric'].blockSignals(blocked)
+        self._current_quality_metric = None
+        self._select_quality_metric(prefer or current or DEFAULT_QUALITY_METRIC)
+        self.get_ffmpeg_button.setVisible(bool(missing_features()))
+        self.update_ffmpeg_status(check_ffmpeg_status())
 
     def open_repair(self):
         """Check the queue for damage and repair it. Not during a run: it reads and writes whole files."""

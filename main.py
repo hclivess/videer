@@ -18,6 +18,7 @@ from modules.preset_manager import PresetManager
 from modules.queue_manager import QueueManager
 from modules.quality_analyzer import sweep_stale_workdirs
 from utils.ffmpeg_utils import check_ffmpeg_status
+from modules.ffmpeg_installer import offer_if_incomplete
 from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
 from utils import childproc
 
@@ -97,16 +98,10 @@ class MainWindow(QMainWindow):
     
     def check_dependencies(self):
         """Check if required dependencies are available"""
-        ffmpeg_available = check_ffmpeg_status()
-        self.ui_manager.update_ffmpeg_status(ffmpeg_available)
-        
-        if not ffmpeg_available:
-            QMessageBox.warning(
-                self,
-                "FFmpeg Not Found",
-                "FFmpeg was not found in your system PATH or the application directory.\n"
-                "Install FFmpeg (or place the ffmpeg binary next to main.py)."
-            )
+        self.ui_manager.update_ffmpeg_status(check_ffmpeg_status())
+        # Missing FFmpeg, or an FFmpeg without libvmaf, is something videer can fix rather than only report
+        offer_if_incomplete(self, self.settings)
+        self.ui_manager.refresh_metric_choices()
     
     def start_processing(self):
         """Start processing the file queue"""
