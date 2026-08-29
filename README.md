@@ -15,6 +15,20 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.14.1
+
+- **A target nothing can reach no longer ends in a CRF recommendation.** When no CRF in the range met the
+  target, the search recommended the lowest one it had tried — which is the *largest* file the range allows,
+  proposed for a target it does not meet, to someone who came to save space. On a target that is out of reach
+  for every source in a queue, that is the same low CRF on every file, and the feature is worse than useless.
+  It now recommends nothing, says what the source actually managed and at which CRF, and suggests aiming at
+  that or below. The batch matcher falls back to the queue's own CRF and says so per file; *Apply* in the
+  dialog is disabled, because there is nothing to apply.
+- **And it finds that out in two probes instead of five.** The first CRF to miss the target is now followed
+  straight by the bottom of the range — the best quality on offer. If that misses too, nothing between them
+  can succeed, and the search stops instead of bisecting its way down to a number it will not recommend.
+
+
 ## Changes in 3.14
 
 - **videer now fetches an FFmpeg that can do what it needs.** VMAF is not part of a plain FFmpeg build — it

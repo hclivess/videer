@@ -416,6 +416,8 @@ class QualitySearch:
         low, high = self.crf_low, self.crf_high
         best: Optional[Dict[str, Any]] = None
 
+        floor_tested = False
+
         while low <= high and not self.cancelled():
             crf = (low + high) // 2
             probe = self._evaluate(crf, samples, info)
@@ -428,8 +430,29 @@ class QualitySearch:
             if probe['meets_target']:
                 best = probe
                 low = crf + 1                             # quality to spare: try to save more space
-            else:
-                high = crf - 1                            # went too far: back off
+                continue
+
+            high = crf - 1                                # went too far: back off
+            if floor_tested or low > high:
+                continue
+
+            # The first failure raises a question bisection answers slowly and expensively: can this source
+            # meet the target at all? The bottom of the range is the best quality on offer, so ask it now.
+            # If even that falls short, every further probe is spent proving the same thing, and the answer
+            # the old loop arrived at — the bottom of the range — is not an answer at all: it is the largest
+            # file the range allows, recommended for a target it does not meet.
+            floor_tested = True
+            self._progress(f"CRF {crf} missed the target; checking whether CRF {low} can reach it at all.")
+            floor = self._evaluate(low, samples, info)
+            if floor is None:
+                return None
+            results[low] = floor
+            if self._on_probe:
+                self._on_probe(floor)
+            if not floor['meets_target']:
+                break                                     # out of reach; stop rather than walk down to it
+            best = floor
+            low += 1
 
         if self.cancelled():
             return None
@@ -578,8 +601,9 @@ class QualitySearch:
             notes.append(substitution_note(self.substituted_for, self.metric, self.target))
 
         if best is None:
-            # Nothing in the range held the target. The closest attempt is the honest recommendation, and the
-            # reason is almost always grain or noise: detail that costs a great many bits to reproduce.
+            # Nothing in the range held the target, so there is nothing to recommend. The old answer — the
+            # lowest CRF tried — was the worst possible one: the largest file in the range, proposed for a
+            # target it does not meet, to someone who came here to save space.
             closest = max(results.values(), key=lambda p: p['score']) if results else None
             best_line = (f" The best anything in that range managed was "
                          f"{format_score(self.metric, closest['score'])} at CRF {closest['crf']}, so a target "
@@ -589,7 +613,13 @@ class QualitySearch:
                 f"{format_score(self.metric, self.target)}.{best_line} A grainy, noisy or already heavily "
                 f"compressed source is the usual reason — detail that expensive to keep is also a sign "
                 f"that re-encoding it will not save much.")
-            recommended = closest
+            if closest:
+                notes.append(
+                    f"CRF {closest['crf']} is not being recommended for it: it is the largest file in the "
+                    f"range and still misses the target. Aim at "
+                    f"{format_score(self.metric, closest['score'])} or below, pool on the mean rather than a "
+                    f"percentile, or leave this source alone.")
+            recommended = None
         else:
             recommended = best
             if best['crf'] >= self.crf_high:
@@ -1071,9 +1101,24 @@ class QualityMatchDialog(QDialog):
         recommended = result.get('recommended')
 
         if not recommended:
-            self.result_label.setText("No usable measurement — see the log above.")
-            self.result_label.setStyleSheet("color: #a94442; font-weight: bold;")
+            # Either nothing measured, or nothing met the target. The second case has probes to show and
+            # advice to give, and must not end with a CRF being proposed: there is no CRF that answers.
+            probes = result.get('probes') or []
+            if probes:
+                closest = max(probes, key=lambda p: p['score'])
+                headline = (f"No CRF between {self.crf_low_spin.value()} and {self.crf_high_spin.value()} "
+                            f"reached {format_score(self.metric_key, result.get('target'))} "
+                            f"({pool_label(result['pool']).lower()}). The best this source managed was "
+                            f"{format_score(self.metric_key, closest['score'])} at CRF {closest['crf']}.")
+                detail = "\n".join(f"• {note}" for note in result.get('notes', []))
+                self.result_label.setText(headline + (f"\n{detail}" if detail else ""))
+                self.result_label.setStyleSheet("font-weight: bold; color: #8a6d3b;")
+            else:
+                self.result_label.setText("No usable measurement — see the log above.")
+                self.result_label.setStyleSheet("color: #a94442; font-weight: bold;")
             self.result_label.setVisible(True)
+            self.status_label.setText("Done — nothing to apply.")
+            self.progress_bar.setValue(100)
             return
 
         savings = result.get('savings')

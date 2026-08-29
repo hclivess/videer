@@ -661,6 +661,20 @@ class ProcessThread(QThread):
 
         recommended = result.get('recommended')
         if not recommended:
+            # Nothing in the range met the target. The queue's own CRF is the right fallback: the bottom of
+            # the search range is the largest file it could have produced, and encoding every file in a batch
+            # at it — for a target none of them met — is the opposite of what the search is for.
+            probes = result.get('probes') or []
+            best = max(probes, key=lambda p: p['score']) if probes else None
+            detail = (f"the best in CRF {search.crf_low}–{search.crf_high} was "
+                      f"{format_score(result['metric'], best['score'])} at CRF {best['crf']}"
+                      if best else "nothing measurable")
+            file.log_info(f"Quality match: no CRF reached {result['target']:g} ({detail}); "
+                          f"using the queue's CRF {self.settings.get('crf')}")
+            self.info_signal.emit(f"{file.filename}: no CRF reached the target — {detail}; "
+                                  f"encoding at the queue's CRF {self.settings.get('crf')}")
+            for note in result.get('notes', []):
+                file.log_info(f"[quality] {note}")
             return None
 
         crf = int(recommended['crf'])
@@ -670,8 +684,6 @@ class ProcessThread(QThread):
                    f"(target {result['target']:g}, pooled by {result['pool']})")
         if result.get('estimated_size'):
             summary += f", estimated {format_size(result['estimated_size'])} of video"
-        if not result.get('reached_target'):
-            summary += " — target not reached, this is the closest the range allowed"
         file.log_info(summary)
         for note in result.get('notes', []):
             file.log_info(f"[quality] {note}")
