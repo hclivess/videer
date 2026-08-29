@@ -616,6 +616,12 @@ class QualitySearch:
         if self.pool == 'mean':
             notes.append("Pooled on the mean, which averages away the worst scenes. If the encode looks worse "
                          "than the score promised, search again on the 5th percentile.")
+        chain = FFmpegCommandBuilder(self.settings).build_video_filters()
+        if chain:
+            notes.append(
+                f"The filter chain ({', '.join(chain)}) is applied to both sides of the comparison, so the "
+                f"score is what the encoder lost and not what deinterlacing or scaling changed — those are "
+                f"choices no CRF can undo.")
         if self.settings.get('use_avisynth'):
             notes.append("AviSynth+ processing is enabled but is not applied to the probes, so the real "
                          "encode will differ from this estimate.")

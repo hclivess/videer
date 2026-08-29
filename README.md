@@ -15,6 +15,21 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.13.5
+
+- **The quality search scored the deinterlacer, not the encoder.** The probe encodes were made with the
+  filter chain the real encode uses; the source they were compared against was not. Deinterlacing in the
+  default `send_field` mode gives the encode two frames for every one of the source's, so the metric lined up
+  interpolated fields against whole frames half a frame away in time and read **VMAF 65 for an encode worth
+  99**. No CRF can fix that, so the search walked to the bottom of its range and reported the target as never
+  reached — on file after file, in exactly the deinterlacing configuration videer exists for. Measured on the
+  same 1080i source at CRF 20: 65.6 before, 98.7 after; with the frame rate halved as well, 72.4 before,
+  99.9 after.
+- The filter chain is now applied to both sides of the comparison, so what remains to be measured is what the
+  encoder lost — deinterlacing and scaling are choices no CRF can undo, and a search that scores them tells
+  you nothing about the CRF. The result says when this applies and which filters were involved.
+
+
 ## Changes in 3.13.4
 
 - **The quality search recommended the bottom of the CRF range on every file, and said the target was never

@@ -752,9 +752,20 @@ class FFmpegCommandBuilder:
         if options:
             filter_spec += '=' + ':'.join(f'{key}={value}' for key, value in options.items())
 
+        # The reference gets the same filter chain the encode was made with. Without that the score is not
+        # about the encoder at all: deinterlacing in send_field mode gives the encode two frames for every
+        # one of the source's, so the metric compares interpolated fields against whole frames that are half
+        # a frame away in time, and reads 65 where the encode is worth 99. No CRF can fix that, so a search
+        # walks to the bottom of its range on every file. Whatever the filters change, they change on both
+        # sides, and what is left to measure is what the encoder lost.
+        reference_chain = ','.join(self.build_video_filters())
+        if reference_chain:
+            reference_chain += ','
+
         # Align timestamps and scale the encode back to the reference size so
         # the comparison works after resolution/PAR changes.
-        graph = ('[0:v]setpts=PTS-STARTPTS[d];[1:v]setpts=PTS-STARTPTS[r];'
+        graph = ('[0:v]setpts=PTS-STARTPTS[d];'
+                 f'[1:v]{reference_chain}setpts=PTS-STARTPTS[r];'
                  f'[d][r]scale2ref=flags=bicubic[ds][rs];[ds][rs]{filter_spec}')
         cmd.extend(['-lavfi', graph])
         # Nothing but the metric is wanted: without -an FFmpeg still selects an audio stream and decodes it
