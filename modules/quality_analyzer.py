@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QProgressBar, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
+from modules.widgets import WrapLabel
 
 from config import (DEFAULT_QUALITY_METRIC, DEFAULT_QUALITY_POOL, DEFAULT_QUALITY_SEARCH_RANGE,
                     QUALITY_METRICS, QUALITY_POOLS, QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_MARGIN,
@@ -743,11 +744,10 @@ class QualityMatchDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        intro = QLabel(
+        intro = WrapLabel(
             "Encodes a few short samples of the source at different CRF values, compares each against the "
             "original, and reports the highest CRF — the smallest file — that still meets the quality you "
             "ask for.")
-        intro.setWordWrap(True)
         intro.setStyleSheet("color: #555;")
         layout.addWidget(intro)
 
@@ -769,8 +769,7 @@ class QualityMatchDialog(QDialog):
         self.metric_combo = QComboBox()
         fill_metric_combo(self.metric_combo)
         self.metric_combo.currentIndexChanged.connect(self._on_metric_changed)
-        self.metric_note = QLabel()
-        self.metric_note.setWordWrap(True)
+        self.metric_note = WrapLabel()
         self.metric_note.setStyleSheet("color: #666; font-size: 11px;")
         form.addRow("Metric:", self.metric_combo)
         form.addRow("", self.metric_note)
@@ -827,8 +826,7 @@ class QualityMatchDialog(QDialog):
         range_layout.addStretch()
         form.addRow("Search CRF range:", range_row)
 
-        self.encoder_label = QLabel()
-        self.encoder_label.setWordWrap(True)
+        self.encoder_label = WrapLabel()
         self.encoder_label.setStyleSheet("color: #555;")
         form.addRow("Using:", self.encoder_label)
 
@@ -854,8 +852,7 @@ class QualityMatchDialog(QDialog):
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
 
-        self.status_label = QLabel("Ready.")
-        self.status_label.setWordWrap(True)
+        self.status_label = WrapLabel("Ready.")
         layout.addWidget(self.status_label)
 
         # ---- results -------------------------------------------------
@@ -871,8 +868,7 @@ class QualityMatchDialog(QDialog):
         self._label_table()
         layout.addWidget(self.table)
 
-        self.result_label = QLabel()
-        self.result_label.setWordWrap(True)
+        self.result_label = WrapLabel()
         self.result_label.setVisible(False)
         layout.addWidget(self.result_label)
 

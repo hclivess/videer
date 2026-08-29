@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
 from PySide6.QtGui import (QAction, QIcon, QDragEnterEvent, QDragMoveEvent, QDropEvent,
                            QFont, QColor, QBrush)
+from modules.widgets import WrapLabel
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS,
                    ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS,
@@ -767,8 +768,7 @@ class UIManager(QWidget):
         self.controls['quality_metric'].currentIndexChanged.connect(self._on_quality_metric_changed)
         metric_layout.addWidget(self.controls['quality_metric'], 0, 1)
 
-        self.quality_metric_note = QLabel()
-        self.quality_metric_note.setWordWrap(True)
+        self.quality_metric_note = WrapLabel()
         self.quality_metric_note.setStyleSheet("color: #666; font-size: 11px;")
         metric_layout.addWidget(self.quality_metric_note, 1, 0, 1, 2)
 
@@ -821,11 +821,10 @@ class UIManager(QWidget):
         self.controls['auto_match_quality'].toggled.connect(self._on_auto_match_toggled)
         match_layout.addWidget(self.controls['auto_match_quality'])
 
-        explain = QLabel(
+        explain = WrapLabel(
             "Each file is sampled, searched and encoded at its own CRF — the queue's CRF slider becomes the "
             "fallback for files the search cannot answer for. The chosen CRF is shown next to the file and "
             "written to its log.")
-        explain.setWordWrap(True)
         explain.setStyleSheet("color: #666; font-size: 11px;")
         match_layout.addWidget(explain)
 
@@ -890,9 +889,8 @@ class UIManager(QWidget):
         )
         verify_layout.addWidget(self.controls['calculate_vmaf'])
 
-        verify_note = QLabel(
+        verify_note = WrapLabel(
             "Measures the whole file, not samples, so it costs roughly one extra pass over each encode.")
-        verify_note.setWordWrap(True)
         verify_note.setStyleSheet("color: #666; font-size: 11px;")
         verify_layout.addWidget(verify_note)
 

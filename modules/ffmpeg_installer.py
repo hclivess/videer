@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
                                QPushButton, QVBoxLayout)
+from modules.widgets import WrapLabel
 
 from config import DEFAULT_QUALITY_METRIC
 from utils.ffmpeg_utils import (MANAGED_BIN_DIR, ffmpeg_has_filter, find_ffmpeg, find_ffprobe,
@@ -220,12 +221,10 @@ class FFmpegSetupDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
+        self.summary = WrapLabel()
         layout.addWidget(self.summary)
 
-        self.detail = QLabel()
-        self.detail.setWordWrap(True)
+        self.detail = WrapLabel()
         self.detail.setStyleSheet("color: #555; font-size: 11px;")
         layout.addWidget(self.detail)
 
@@ -233,8 +232,7 @@ class FFmpegSetupDialog(QDialog):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        self.status = QLabel()
-        self.status.setWordWrap(True)
+        self.status = WrapLabel()
         layout.addWidget(self.status)
 
         buttons = QHBoxLayout()

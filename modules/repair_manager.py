@@ -32,6 +32,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
                                QHeaderView, QLabel, QMessageBox, QProgressBar, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout)
+from modules.widgets import WrapLabel
 
 from utils import childproc
 from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_media_info
@@ -442,11 +443,10 @@ class RepairDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        intro = QLabel(
+        intro = WrapLabel(
             "Decodes every file in the queue from end to end and counts what FFmpeg complains about, then — "
             "if you ask it to — repairs each one and decodes it again, so the fix can be shown to have "
             "worked rather than assumed.")
-        intro.setWordWrap(True)
         intro.setStyleSheet("color: #555;")
         layout.addWidget(intro)
 
@@ -469,8 +469,7 @@ class RepairDialog(QDialog):
         strategy_row.addWidget(self.strategy_combo, 1)
         options_layout.addLayout(strategy_row)
 
-        self.hint_label = QLabel()
-        self.hint_label.setWordWrap(True)
+        self.hint_label = WrapLabel()
         self.hint_label.setStyleSheet("color: #666; font-size: 11px;")
         options_layout.addWidget(self.hint_label)
 
@@ -506,8 +505,7 @@ class RepairDialog(QDialog):
         self.progress_bar.setRange(0, 100)
         layout.addWidget(self.progress_bar)
 
-        self.status_label = QLabel("Ready.")
-        self.status_label.setWordWrap(True)
+        self.status_label = WrapLabel("Ready.")
         layout.addWidget(self.status_label)
 
         self.table = QTableWidget(0, len(self.COLUMNS))
@@ -523,8 +521,7 @@ class RepairDialog(QDialog):
         self.table.setMinimumHeight(240)
         layout.addWidget(self.table)
 
-        self.summary_label = QLabel()
-        self.summary_label.setWordWrap(True)
+        self.summary_label = WrapLabel()
         self.summary_label.setVisible(False)
         layout.addWidget(self.summary_label)
 

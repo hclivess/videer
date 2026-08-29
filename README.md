@@ -15,143 +15,77 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
-## Changes in 3.14.2
+## Changes in 3.15
 
-- **The startup offer to fetch a better FFmpeg could hang an automated start**, because a modal question with
-  nobody at the keyboard is a hang. It is skipped under `VIDEER_SELFTEST` or `VIDEER_NO_FFMPEG_PROMPT` — which
-  is how it was found: it hung videer's own headless smoke test and cost the 3.14 and 3.14.1 releases their
-  Linux binaries.
+Everything since 3.13, in one place: the quality search was taking measurements that did not mean what they
+said, subtitled sources could not be encoded at all, and the window that shows the search was unreadable.
 
+**Quality matching, made to measure the encoder**
 
-## Changes in 3.14.1
-
-- **A target nothing can reach no longer ends in a CRF recommendation.** When no CRF in the range met the
-  target, the search recommended the lowest one it had tried — which is the *largest* file the range allows,
-  proposed for a target it does not meet, to someone who came to save space. On a target that is out of reach
-  for every source in a queue, that is the same low CRF on every file, and the feature is worse than useless.
-  It now recommends nothing, says what the source actually managed and at which CRF, and suggests aiming at
-  that or below. The batch matcher falls back to the queue's own CRF and says so per file; *Apply* in the
-  dialog is disabled, because there is nothing to apply.
-- **And it finds that out in two probes instead of five.** The first CRF to miss the target is now followed
-  straight by the bottom of the range — the best quality on offer. If that misses too, nothing between them
-  can succeed, and the search stops instead of bisecting its way down to a number it will not recommend.
-
-
-## Changes in 3.14
-
-- **videer now fetches an FFmpeg that can do what it needs.** VMAF is not part of a plain FFmpeg build — it
-  has to be compiled in, and the Windows *essentials* build and many distribution packages leave it out, with
-  nothing in the app to say so beyond a greyed-out metric. *Tools ▸ FFmpeg Features* lists exactly what the
-  FFmpeg in use cannot do and offers to download a build that can: the URL, the size and the destination are
-  on screen before anything starts. It fetches from BtbN/FFmpeg-Builds (Windows and Linux, x64 and ARM64),
-  keeps only `ffmpeg` and `ffprobe`, checks that what arrived actually runs and actually has `libvmaf`, and
-  selects VMAF once it does. On macOS it says to use `brew install ffmpeg`, which has libvmaf.
-- The fetched copy lives in `ffmpeg/bin` beside videer and is used in preference to anything on the PATH —
-  the reason for downloading it is usually that the one on the PATH is the one that cannot do the job.
-  Deleting that folder goes back to the system FFmpeg.
-- Missing features are offered once at startup and never again if declined; the Quality tab grows a button
-  for it only while something is actually missing.
-
-
-## Changes in 3.13.5
-
-- **The quality search scored the deinterlacer, not the encoder.** The probe encodes were made with the
-  filter chain the real encode uses; the source they were compared against was not. Deinterlacing in the
-  default `send_field` mode gives the encode two frames for every one of the source's, so the metric lined up
+- **The search scored the deinterlacer, not the encoder.** Probes were encoded with the filter chain the real
+  encode uses; the source they were compared against was not filtered at all. Deinterlacing in the default
+  `send_field` mode gives the encode two frames for every one of the source's, so the metric lined up
   interpolated fields against whole frames half a frame away in time and read **VMAF 65 for an encode worth
-  99**. No CRF can fix that, so the search walked to the bottom of its range and reported the target as never
-  reached — on file after file, in exactly the deinterlacing configuration videer exists for. Measured on the
-  same 1080i source at CRF 20: 65.6 before, 98.7 after; with the frame rate halved as well, 72.4 before,
-  99.9 after.
-- The filter chain is now applied to both sides of the comparison, so what remains to be measured is what the
-  encoder lost — deinterlacing and scaling are choices no CRF can undo, and a search that scores them tells
-  you nothing about the CRF. The result says when this applies and which filters were involved.
+  99**. No CRF can climb out of that, so the search walked to the bottom of its range and reported the target
+  as never reached — in exactly the deinterlacing configuration videer exists for. The chain is now applied to
+  both sides. On one 1080i source at CRF 20: 65.6 before, 98.7 after; with the frame rate halved as well,
+  72.4 before, 99.9 after.
+- **A target set for one metric was used with another.** VMAF counts to 100, SSIM to 1.0, XPSNR in decibels.
+  On an FFmpeg without `libvmaf` — the ordinary Windows *essentials* build has none — videer quietly measured
+  with SSIM and kept the 95 that had been set for VMAF, a score SSIM cannot reach. Every probe read *below
+  target*, every file got the bottom of the range. A number outside a metric's own scale is now refused
+  outright, in the search, in the Quality tab and in loaded presets, and a search that has to substitute a
+  metric says so.
+- **A target nothing can reach no longer ends in a CRF recommendation.** The lowest CRF tried is the *largest*
+  file the range allows; recommending it for a target it does not meet, to someone who came to save space, is
+  worse than saying nothing. It now recommends nothing, names what the source actually managed and at which
+  CRF, and suggests aiming there or below. *Apply* is disabled, and the batch matcher keeps the queue's own
+  CRF and says so per file.
+- **And it finds that out in two probes instead of five**: the first CRF to miss the target is followed
+  straight by the bottom of the range, which is the best quality on offer. If that misses too, nothing between
+  them can succeed.
+- **videer now fetches an FFmpeg that can measure VMAF.** VMAF is not part of a plain FFmpeg build — it has to
+  be compiled in. *Tools ▸ FFmpeg Features* lists what the FFmpeg in use cannot do and offers to download a
+  build that can: the URL, the size and the destination are on screen first. It fetches from BtbN/FFmpeg-Builds
+  (Windows and Linux, x64 and ARM64), keeps only `ffmpeg` and `ffprobe`, checks that what arrived runs and
+  really has `libvmaf`, and selects VMAF once it does. macOS is pointed at `brew install ffmpeg`. The fetched
+  copy lives in `ffmpeg/bin` beside videer and wins over the PATH one, because the PATH one is usually the
+  reason for the download; delete the folder to undo it.
 
+**Encoding**
 
-## Changes in 3.13.4
+- **A subtitle track could take the whole file down with it.** Encoding a subtitled MP4 to MKV failed before a
+  single frame was written: the source's subtitles are `mov_text`, MKV was told to copy them, and Matroska is
+  the one container that cannot hold `mov_text` — `Subtitle codec 94213 is not supported`. Every file in a
+  queue of MP4s went the same way. Each subtitle stream is now decided on its own: copied where the container
+  accepts it, converted where it wants another text format (`mov_text` to SRT for MKV, SRT/ASS to `mov_text`
+  for MP4 and MOV), and left out only when it is a picture no conversion can place, which is said out loud.
+- **And if that judgement is wrong, the file still survives.** A muxer that rejects the subtitles gets the
+  encode again with them converted, and if that is refused too, once more without them. The refusal happens
+  while writing the header, so each retry costs about a second, and a file rescued by one is not reported as
+  a file that failed.
+- **A failed encode says why it failed.** FFmpeg puts the cause on one line ("Opus mapping family undefined
+  for 12 channels") and the failure on the next, and the error scan matched only *error*, *invalid* and
+  *failed* — keeping the line that says nothing. It now knows the vocabulary FFmpeg uses, and any run that
+  exits non-zero prints its last twelve lines of output under the errors.
 
-- **The quality search recommended the bottom of the CRF range on every file, and said the target was never
-  reached.** A target belongs to the metric it was set for: VMAF counts to 100, SSIM to 1.0, XPSNR in
-  decibels. When the FFmpeg in use has no `libvmaf` — the ordinary Windows "essentials" build has none —
-  videer quietly measured with SSIM instead but kept the number 95 that had been set for VMAF. SSIM cannot
-  reach 95; nothing can. So every probe read *below target*, the search walked to the bottom of the range and
-  recommended it, on file after file, for a reason nothing on screen explained.
-- A target from another metric's scale is now refused outright and that metric's own default used instead —
-  in the search, in the Quality tab and in loaded presets alike. The Quality tab no longer selects a metric
-  this build cannot compute, and says why when it has to choose another one. A search that has to substitute
-  says so in its progress and in its result.
-- **"No CRF reached the target" now says what *was* reachable** — "the best anything in that range managed was
-  SSIM 0.9721 at CRF 16, so a target above that is out of reach for this source" — instead of leaving the
-  number that could not be met unstated.
+**Interface**
 
-For VMAF specifically: it needs an FFmpeg built with `libvmaf`. On Windows the gyan.dev *full* builds and the
-BtbN builds have it; the *essentials* build does not.
+- **Wrapped text was drawn on top of the controls around it.** A word-wrapped `QLabel` reports one line's
+  worth of height however much text it holds, and the layout believes it — so the metric note in *Match Source
+  Quality* sat across the two combo boxes beside it and none of the three could be read. Every explanatory
+  label in the app now reports the height its text actually needs.
+- **The Match Source Quality window flooded the console with errors**, because it kept its state in attributes
+  named `metric` and `result` — both names Qt uses on every dialog, for painting and for the `exec()` return
+  code.
+- The startup offer to fetch a better FFmpeg is skipped under `VIDEER_SELFTEST` and `VIDEER_NO_FFMPEG_PROMPT`:
+  a modal question with nobody at the keyboard is a hang, and it cost two releases their Linux binaries.
 
-
-## Changes in 3.13.3
-
-- **A subtitle track no longer takes the whole file down with it.** Encoding a subtitled MP4 to MKV failed
-  before a single frame was written — the source's subtitles are `mov_text`, MKV was told to copy them, and
-  Matroska is the one container that cannot hold `mov_text`. FFmpeg refused to write the header and the
-  encode was over: `Subtitle codec 94213 is not supported`. Every file in a queue of MP4s went the same way.
-  Each subtitle stream is now decided on its own — copied where the container accepts it, converted where it
-  wants another text format (`mov_text` to SRT for MKV, SRT/ASS to `mov_text` for MP4 and MOV), and left out
-  only when it is a picture no conversion can place, which the log and the info panel both say out loud.
-- **And if that judgement is wrong, the file still survives.** Knowing what a container will take means
-  examining the source, and the examination can come back empty — no ffprobe on the machine, an input FFmpeg
-  describes differently, a codec nobody anticipated. So FFmpeg's refusal is now treated as the answer the
-  examination could not give: the encode runs again with the subtitles converted to the container's own text
-  format, and if that is refused too, once more without them. A rejection happens while writing the header,
-  so each retry costs about a second, and a file rescued by one is no longer reported as a file that failed.
-- **The examination itself no longer needs ffprobe**: without it, the subtitle streams are read from the
-  stream listing `ffmpeg -i` prints for any input it opens.
-
-
-## Changes in 3.13.2
-
-- **The Match Source Quality window flooded the console with errors.** It kept the chosen metric in an
-  attribute named `metric` and the finished search in one named `result` — both names Qt already uses on
-  every dialog for its own painting and for the exec() return code — so every repaint of the window ended in
-  `Error calling Python override of QDialog::metric(): 'str' object is not callable`. The search itself was
-  fine; the window it ran in was not.
-- **A failed encode now says why it failed.** FFmpeg reports the cause on one line ("Opus mapping family
-  undefined for 12 channels", "Unsupported channel layout") and the failure itself on the next
-  (`Error initializing output stream 0:1 --`), and the error scan matched only *error*, *invalid* and
-  *failed* — so it kept the line that says nothing and dropped the one that says everything. It now knows the
-  vocabulary FFmpeg actually uses, and any run that exits non-zero prints its last twelve lines of output
-  under the errors.
-
-
-## Changes in 3.13.1
-
-A pass over the older code, after the newer features made it obvious how much of it had never been looked at
-twice.
-
-- **Dragging several files at once silently did nothing to the queue.** The list reordered, the queue did not,
-  and from then on what you saw was not what would encode — and *Remove*, which works on the row you clicked,
-  took out a different file. The queue is now rebuilt from the order the list ends up in, identified by path
-  rather than by row arithmetic, so single and multi-row drags are the same operation.
-- **Replacing an original with a different container produced a file that lies about itself.** Encoding
-  `tape.avi` to MKV with *Replace Original Files* moved Matroska onto the `.avi` name. Now the encode keeps
-  its own extension — `tape.mkv`, with the original at `tape.avi.old.avi` — and refuses rather than
-  overwriting if that name is taken. Repair shares the same code.
-- **A video with no audio track failed outright under AviSynth+ with FFMS2**, because the script called
-  `FFAudioSource` unconditionally and that throws when there is nothing to open. Silent sources are ordinary
-  — a camera in video-only mode, a capture with the audio card unplugged — and are now served as video.
-- **"Reset to Factory Defaults" did not reset everything.** Extra FFmpeg arguments, custom AviSynth code and
-  the custom PAR/DAR values were not in the factory set, so anything left in those boxes survived the reset
-  and quietly joined every encode after it.
-- **Presets are kept beside the application** now, next to `defaults.json` and `queue.json`, instead of
-  wherever the code happened to live — which in a packaged build meant filed away inside the bundle's
-  internal directory. Presets saved by earlier versions are still found and loaded.
-- **Everything the app remembers is written atomically** — the queue autosave, `defaults.json`, preset files.
-  A process killed mid-write used to leave a truncated file, and a truncated settings file is
-  indistinguishable from a corrupt one: the next start falls back to factory defaults with no way to say why.
-- **Output filenames no longer name settings that never applied**: `_copy_copy_crf23_abr256` claimed a CRF for
-  a stream copy and a bitrate for a codec that has none. CRF appears for CRF-based encoders, the audio bitrate
-  for codecs that have one.
-- The queue's buttons moved to two rows — the seventh no longer gets its label elided at the minimum window
-  size — and the repair dialog now says that audio (or video) set to copy limits what a repair can achieve.
+**Earlier in this line** — a pass over code the newer features had made it obvious nobody had looked at twice:
+multi-row queue drags that reordered the list but not the queue; *Replace Original Files* moving Matroska onto
+a `.avi` name; AviSynth+ failing outright on a video with no audio track; *Reset to Factory Defaults* leaving
+extra FFmpeg arguments and custom PAR/DAR behind; presets filed inside a packaged bundle instead of beside the
+application; settings written non-atomically; and output filenames naming a CRF for a stream copy.
 
 
 ## Changes in 3.13
