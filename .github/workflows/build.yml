@@ -69,4 +69,10 @@ jobs:
         run: |
           TAG="${{ inputs.tag }}"
           if [ -z "$TAG" ]; then TAG="${GITHUB_REF#refs/tags/}"; fi
+          # Create the release if it does not exist yet, so the order of "push the tag" and "write the
+          # release" stops mattering: the fastest OS can otherwise reach this step first and fail with
+          # nothing wrong with the build.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" \
+                 --notes "Binaries below. See the README for what changed."
           gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
