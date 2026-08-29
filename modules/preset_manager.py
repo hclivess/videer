@@ -238,7 +238,8 @@ class PresetManager(QObject):
         if 'quality_metric' in settings:
             ui._select_quality_metric(settings['quality_metric'])
         if 'quality_target' in settings:
-            ui.controls['quality_target'].setValue(float(settings['quality_target']))
+            # After the metric, and through the guard: a target saved for VMAF is not a target for SSIM
+            ui.set_quality_target(settings['quality_target'])
         if 'quality_pool' in settings:
             index = ui.controls['quality_pool'].findData(settings['quality_pool'])
             if index >= 0:

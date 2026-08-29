@@ -24,7 +24,9 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    DEFAULT_QUALITY_POOL)
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
-                                      format_score, metric_spec, resolved_search_range)
+                                      metric_target, format_score, metric_spec,
+                                      resolved_search_range)
+from config import QUALITY_METRICS
 from modules.repair_manager import RepairDialog
 
 
@@ -908,6 +910,10 @@ class UIManager(QWidget):
         well would re-run it with no remembered value and overwrite the target the user last set for this
         metric with the factory one.
         """
+        # A metric this build cannot compute is in the list but greyed out; selecting it anyway would leave
+        # the tab showing a target that nothing measures against. Settle for one that can be measured.
+        requested = metric
+        metric = choose_metric(metric)
         combo = self.controls['quality_metric']
         index = combo.findData(metric)
         if index < 0:
@@ -918,6 +924,18 @@ class UIManager(QWidget):
             # Already the current index, so no signal is coming — the first call is exactly this case.
             self._current_quality_metric = metric
             self._configure_quality_target(metric, self._quality_targets_seen.get(metric))
+
+        if metric != requested and requested in QUALITY_METRICS:
+            # Say it where the choice is made, rather than leaving a greyed-out entry to explain itself
+            self.quality_metric_note.setText(
+                f"{metric_spec(requested)['label']} needs an FFmpeg built with "
+                f"{metric_spec(requested)['filter']}, and this one has no such filter — "
+                f"{metric_spec(metric)['label']} selected instead.")
+
+    def set_quality_target(self, value: Any):
+        """Set the target the Quality tab shows, but only if it is a score the current metric can produce"""
+        metric = self.controls['quality_metric'].currentData() or DEFAULT_QUALITY_METRIC
+        self.controls['quality_target'].setValue(metric_target(metric, value))
 
     def _configure_quality_target(self, metric: str, value: Optional[float] = None):
         """0-100, 0-1 and decibels share no numbers: the target control is rebuilt per metric"""

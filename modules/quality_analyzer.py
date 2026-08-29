@@ -124,6 +124,33 @@ def choose_metric(preferred: str = DEFAULT_QUALITY_METRIC) -> str:
     return DEFAULT_QUALITY_METRIC
 
 
+def metric_target(metric: str, value: Any = None) -> float:
+    """
+    A target that means something on this metric's scale.
+
+    VMAF counts to 100, SSIM to 1.0, XPSNR in decibels. A number carried over from another metric is not a
+    demanding target, it is an impossible one: 95 asked of SSIM can never be met, so every probe reads "below
+    target", the search walks to the bottom of the CRF range and recommends it — on every file, for a reason
+    nothing on screen explains. Anything outside the metric's own range is therefore not a target at all, and
+    the metric's default is used instead.
+    """
+    spec = metric_spec(metric)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(spec['default_target'])
+    low, high = spec['range']
+    return number if low <= number <= high else float(spec['default_target'])
+
+
+def substitution_note(requested: str, used: str, target: float) -> str:
+    """Why the search is not measuring what it was asked to measure"""
+    asked, actual = metric_spec(requested), metric_spec(used)
+    return (f"This FFmpeg has no {asked['filter']} filter, so {asked['label']} cannot be measured — "
+            f"searching on {actual['label']} \u2265 {target:g}{actual['unit']} instead. VMAF and MS-SSIM need "
+            f"an FFmpeg built with libvmaf; SSIM, PSNR and XPSNR are in every build.")
+
+
 def format_score(metric: str, value: Optional[float]) -> str:
     """'VMAF 95.2' / 'PSNR 42.10 dB' — the number with enough context to be read on its own"""
     if value is None:
@@ -299,9 +326,12 @@ class QualitySearch:
         self._should_stop = should_stop or (lambda: False)
         self._on_process = on_process
 
-        self.metric = choose_metric(self.settings.get('quality_metric', DEFAULT_QUALITY_METRIC))
-        self.target = float(self.settings.get('quality_target')
-                            or metric_spec(self.metric)['default_target'])
+        requested = self.settings.get('quality_metric', DEFAULT_QUALITY_METRIC)
+        self.metric = choose_metric(requested)
+        # A target set for a metric this build cannot compute belongs to that metric, not to the stand-in
+        self.substituted_for = requested if (requested != self.metric and requested in QUALITY_METRICS) else None
+        self.target = metric_target(self.metric,
+                                    None if self.substituted_for else self.settings.get('quality_target'))
         self.pool = self.settings.get('quality_pool', DEFAULT_QUALITY_POOL)
         self.sample_count = int(self.settings.get('quality_samples') or QUALITY_SAMPLE_COUNT)
         self.sample_seconds = float(self.settings.get('quality_sample_seconds') or QUALITY_SAMPLE_SECONDS)
@@ -377,6 +407,8 @@ class QualitySearch:
             f"{metric_spec(self.metric)['label']} ≥ {self.target:g} "
             f"({pool_label(self.pool).lower()}), CRF {self.crf_low}–{self.crf_high} "
             f"— about {probes_expected} probes.")
+        if self.substituted_for:
+            self._progress(substitution_note(self.substituted_for, self.metric, self.target))
 
         self._workdir = tempfile.mkdtemp(prefix=WORKDIR_PREFIX)
 
@@ -542,15 +574,21 @@ class QualitySearch:
         """Turn the probes into a recommendation plus the caveats that go with it"""
         source_size = info.get('size')
         notes: List[str] = []
+        if self.substituted_for:
+            notes.append(substitution_note(self.substituted_for, self.metric, self.target))
 
         if best is None:
             # Nothing in the range held the target. The closest attempt is the honest recommendation, and the
             # reason is almost always grain or noise: detail that costs a great many bits to reproduce.
             closest = max(results.values(), key=lambda p: p['score']) if results else None
+            best_line = (f" The best anything in that range managed was "
+                         f"{format_score(self.metric, closest['score'])} at CRF {closest['crf']}, so a target "
+                         f"above that is out of reach for this source." if closest else "")
             notes.append(
-                f"No CRF in {self.crf_low}–{self.crf_high} reached the target. The source is probably grainy, "
-                f"noisy or already heavily compressed — quality that expensive to keep is a sign that "
-                f"re-encoding it will not save much.")
+                f"No CRF in {self.crf_low}–{self.crf_high} reached "
+                f"{format_score(self.metric, self.target)}.{best_line} A grainy, noisy or already heavily "
+                f"compressed source is the usual reason — detail that expensive to keep is also a sign "
+                f"that re-encoding it will not save much.")
             recommended = closest
         else:
             recommended = best
@@ -847,8 +885,7 @@ class QualityMatchDialog(QDialog):
         """Start from the Quality tab, so the dialog and the batch matcher agree until told otherwise"""
         index = self.metric_combo.findData(self.metric_key)
         self.metric_combo.setCurrentIndex(index if index >= 0 else 0)
-        self._configure_target(float(settings.get('quality_target')
-                                     or metric_spec(self.metric_key)['default_target']))
+        self._configure_target(metric_target(self.metric_key, settings.get('quality_target')))
 
         pool_index = self.pool_combo.findData(settings.get('quality_pool', DEFAULT_QUALITY_POOL))
         self.pool_combo.setCurrentIndex(pool_index if pool_index >= 0 else 0)

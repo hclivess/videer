@@ -15,6 +15,26 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.13.4
+
+- **The quality search recommended the bottom of the CRF range on every file, and said the target was never
+  reached.** A target belongs to the metric it was set for: VMAF counts to 100, SSIM to 1.0, XPSNR in
+  decibels. When the FFmpeg in use has no `libvmaf` — the ordinary Windows "essentials" build has none —
+  videer quietly measured with SSIM instead but kept the number 95 that had been set for VMAF. SSIM cannot
+  reach 95; nothing can. So every probe read *below target*, the search walked to the bottom of the range and
+  recommended it, on file after file, for a reason nothing on screen explained.
+- A target from another metric's scale is now refused outright and that metric's own default used instead —
+  in the search, in the Quality tab and in loaded presets alike. The Quality tab no longer selects a metric
+  this build cannot compute, and says why when it has to choose another one. A search that has to substitute
+  says so in its progress and in its result.
+- **"No CRF reached the target" now says what *was* reachable** — "the best anything in that range managed was
+  SSIM 0.9721 at CRF 16, so a target above that is out of reach for this source" — instead of leaving the
+  number that could not be met unstated.
+
+For VMAF specifically: it needs an FFmpeg built with `libvmaf`. On Windows the gyan.dev *full* builds and the
+BtbN builds have it; the *essentials* build does not.
+
+
 ## Changes in 3.13.3
 
 - **A subtitle track no longer takes the whole file down with it.** Encoding a subtitled MP4 to MKV failed
