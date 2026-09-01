@@ -12,7 +12,8 @@ from typing import Dict, Any, Optional, List, Tuple
 import subprocess
 from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
-                    VP9_CPU_USED_MAPPING, PAR_PRESETS, DAR_PRESETS,
+                    VP9_CPU_USED_MAPPING, LIBAOM_CPU_USED_MAPPING, VVENC_PRESET_MAPPING,
+                    NVENC_ENCODERS, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
                     QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR)
 
@@ -81,10 +82,11 @@ def find_ffprobe() -> Optional[str]:
 
 def forget_ffmpeg() -> None:
     """Drop everything cached about the FFmpeg in use, so a newly installed one is picked up at once"""
-    global _ffmpeg_cache, _ffprobe_cache, _filters_cache
+    global _ffmpeg_cache, _ffprobe_cache, _filters_cache, _encoders_cache
     _ffmpeg_cache = None
     _ffprobe_cache = None
     _filters_cache = None
+    _encoders_cache = None
 
 
 def probe_duration(filepath: str) -> Optional[float]:
@@ -103,9 +105,19 @@ def probe_duration(filepath: str) -> Optional[float]:
         return None
 
 
-# Encoders whose quality is a single CRF/CQ number — the ones a quality search can tune. ProRes, rawvideo
+# Encoders whose quality is a single CRF/CQ/QP number — the ones a quality search can tune. ProRes, rawvideo
 # and stream copy have no such knob, so there is nothing for the search to move.
-CRF_ENCODERS = ('libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'libsvtav1', 'libvpx-vp9')
+CRF_ENCODERS = ('libx264', 'libx265', 'libvvenc', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc',
+                'libsvtav1', 'libaom-av1', 'libvpx-vp9')
+
+# Encoders that take their input at 10 bits only. Asking for yuv420p makes FFmpeg print a warning and pick
+# this itself; asking for it outright keeps the log clean and the intention visible in the command.
+TEN_BIT_ONLY_ENCODERS = {'libvvenc': 'yuv420p10le'}
+
+
+def output_pixel_format(video_codec: str) -> str:
+    return TEN_BIT_ONLY_ENCODERS.get(video_codec, 'yuv420p')
+
 
 _filters_cache: Optional[set] = None
 
@@ -130,6 +142,41 @@ def ffmpeg_filters(refresh: bool = False) -> set:
             pass
     _filters_cache = names
     return names
+
+
+_encoders_cache: Optional[set] = None
+
+
+def ffmpeg_encoders(refresh: bool = False) -> set:
+    """Names of the encoders this FFmpeg build has (cached). Empty when the build could not be asked."""
+    global _encoders_cache
+    if _encoders_cache is not None and not refresh:
+        return _encoders_cache
+
+    names = set()
+    ffmpeg = find_ffmpeg()
+    if ffmpeg:
+        try:
+            result = childproc.run([ffmpeg, '-hide_banner', '-encoders'], text=True, timeout=30)
+            for line in (result.stdout or '').splitlines():
+                # " V....D libvvenc  description": six flag characters, then the name. The legend above the
+                # table puts one flag character and '=' where those would be.
+                parts = line.split()
+                if len(parts) >= 2 and len(parts[0]) == 6 and parts[0][0] in 'VAS' and parts[1] != '=':
+                    names.add(parts[1])
+        except (subprocess.SubprocessError, OSError):
+            pass
+    _encoders_cache = names
+    return names
+
+
+def ffmpeg_has_encoder(name: str) -> bool:
+    """
+    Whether the FFmpeg in use provides an encoder. Same rule as for filters: an FFmpeg that could not be asked
+    answers True, so a failed probe never disables anything — the encode itself will say what is wrong.
+    """
+    encoders = ffmpeg_encoders()
+    return name in encoders if encoders else True
 
 
 def ffmpeg_has_filter(name: str) -> bool:
@@ -400,7 +447,7 @@ class FFmpegCommandBuilder:
         
         # Hardware acceleration for NVENC
         video_codec = self.settings.get('video_codec', 'libx265')
-        if video_codec in ["hevc_nvenc", "h264_nvenc"]:
+        if video_codec in NVENC_ENCODERS:
             cmd.extend(['-hwaccel', 'cuda'])
         
         # Robustness for damaged transport streams: regenerate PTS, drop corrupt packets
@@ -469,10 +516,10 @@ class FFmpegCommandBuilder:
         # NVENC gets its B-frame count from _add_nvenc_quality_settings instead.
         if video_codec in ('libx264', 'libx265'):
             cmd.extend(['-bf', '2', '-flags', '+cgop'])
-        elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
+        elif video_codec in NVENC_ENCODERS:
             cmd.extend(['-flags', '+cgop'])
         if video_codec not in ('copy', 'rawvideo', 'prores_ks'):
-            cmd.extend(['-pix_fmt', 'yuv420p'])
+            cmd.extend(['-pix_fmt', output_pixel_format(video_codec)])
 
         # Container-specific options
         if output_format == 'mp4':
@@ -500,12 +547,17 @@ class FFmpegCommandBuilder:
         preset_name = self.settings.get('preset', 'Medium')
         if video_codec in ('libx264', 'libx265'):
             cmd.extend(['-preset', PRESET_MAPPING.get(preset_name, 'medium')])
-        elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
+        elif video_codec in NVENC_ENCODERS:
             cmd.extend(['-preset', NVENC_PRESET_MAPPING.get(preset_name, 'p4'),
                         '-tune', 'hq', '-rc', 'vbr'])
             self._add_nvenc_quality_settings(cmd)
         elif video_codec == 'libsvtav1':
             cmd.extend(['-preset', SVTAV1_PRESET_MAPPING.get(preset_name, '6')])
+        elif video_codec == 'libaom-av1':
+            # row-mt is what lets libaom use more than a couple of cores; it is off by default
+            cmd.extend(['-cpu-used', LIBAOM_CPU_USED_MAPPING.get(preset_name, '4'), '-row-mt', '1'])
+        elif video_codec == 'libvvenc':
+            cmd.extend(['-preset', VVENC_PRESET_MAPPING.get(preset_name, 'medium')])
         elif video_codec == 'libvpx-vp9':
             cmd.extend(['-deadline', 'good',
                         '-cpu-used', VP9_CPU_USED_MAPPING.get(preset_name, '2'),
@@ -553,10 +605,12 @@ class FFmpegCommandBuilder:
         cmd.extend(['-c:v', video_codec])
         crf = str(self.settings.get('crf', 23))
 
-        if video_codec in ("hevc_nvenc", "h264_nvenc"):
+        if video_codec in NVENC_ENCODERS:
             cmd.extend(['-cq', crf, '-b:v', '0'])
-        elif video_codec == 'libvpx-vp9':
+        elif video_codec in ('libvpx-vp9', 'libaom-av1'):
             cmd.extend(['-crf', crf, '-b:v', '0'])   # constant quality mode
+        elif video_codec == 'libvvenc':
+            cmd.extend(['-qp', crf])                  # VVenC has no CRF; its constant-quality knob is the QP
         elif video_codec == 'prores_ks':
             cmd.extend(['-profile:v', '3'])           # ProRes 422 HQ; no CRF
         elif video_codec == 'rawvideo':
@@ -704,7 +758,7 @@ class FFmpegCommandBuilder:
         """
         cmd = self._base_command(err_detect=False)
         video_codec = self.settings.get('video_codec', 'libx265')
-        if video_codec in ("hevc_nvenc", "h264_nvenc"):
+        if video_codec in NVENC_ENCODERS:
             cmd.extend(['-hwaccel', 'cuda'])
 
         # -ss before -i: FFmpeg seeks to the preceding keyframe and decodes forward to the exact timestamp,
@@ -725,9 +779,9 @@ class FFmpegCommandBuilder:
 
         if video_codec in ('libx264', 'libx265'):
             cmd.extend(['-bf', '2', '-flags', '+cgop'])
-        elif video_codec in ('h264_nvenc', 'hevc_nvenc'):
+        elif video_codec in NVENC_ENCODERS:
             cmd.extend(['-flags', '+cgop'])
-        cmd.extend(['-pix_fmt', 'yuv420p'])
+        cmd.extend(['-pix_fmt', output_pixel_format(video_codec)])
 
         cmd.extend(['-f', 'matroska', output_file])
         return cmd

@@ -9,7 +9,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.15"
+APP_VERSION = "3.16"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -23,10 +23,13 @@ VIDEO_EXTENSIONS = [
 VIDEO_CODECS = [
     ("H.264 (x264)", "libx264"),
     ("H.265/HEVC (x265)", "libx265"),
+    ("H.266/VVC (VVenC)", "libvvenc"),
     ("AV1 (SVT-AV1)", "libsvtav1"),
+    ("AV1 (libaom, reference encoder)", "libaom-av1"),
     ("VP9 (libvpx)", "libvpx-vp9"),
     ("NVIDIA H.264 (NVENC)", "h264_nvenc"),
     ("NVIDIA H.265/HEVC (NVENC)", "hevc_nvenc"),
+    ("NVIDIA AV1 (NVENC, RTX 40 series or newer)", "av1_nvenc"),
     ("ProRes (HQ)", "prores_ks"),
     ("Raw/Uncompressed", "rawvideo"),
     ("Copy (No Re-encoding)", "copy")
@@ -64,6 +67,10 @@ PRESET_MAPPING = {
     "Slower": "slower",
     "Very Slow": "veryslow"
 }
+
+# The encoders that run on NVIDIA hardware. They share the p1..p7 presets, the CQ quality scale and the
+# quality options on the Advanced tab; AV1 needs an Ada card (RTX 40 series) or newer.
+NVENC_ENCODERS = ('h264_nvenc', 'hevc_nvenc', 'av1_nvenc')
 
 # NVENC presets p1 (fastest) .. p7 (best quality)
 NVENC_PRESET_MAPPING = {
@@ -104,6 +111,45 @@ VP9_CPU_USED_MAPPING = {
     "Very Slow": "0"
 }
 
+# libaom-av1 -cpu-used 8 (fastest) .. 0 (slowest). This is the reference encoder, not a fast one: 0 is left
+# out on purpose — it is measured in hours per minute of video, and 1 is already a long way past the point
+# where SVT-AV1 at its slowest is the better use of the time.
+LIBAOM_CPU_USED_MAPPING = {
+    "Ultra Fast": "8",
+    "Super Fast": "7",
+    "Very Fast": "6",
+    "Faster": "6",
+    "Fast": "5",
+    "Medium": "4",
+    "Slow": "3",
+    "Slower": "2",
+    "Very Slow": "1"
+}
+
+# VVenC has five presets, faster .. slower; the nine speeds map onto them with the ends doubled up
+VVENC_PRESET_MAPPING = {
+    "Ultra Fast": "faster",
+    "Super Fast": "faster",
+    "Very Fast": "faster",
+    "Faster": "faster",
+    "Fast": "fast",
+    "Medium": "medium",
+    "Slow": "slow",
+    "Slower": "slower",
+    "Very Slow": "slower"
+}
+
+# How far the quality slider goes per encoder. x264, x265 and NVENC H.264/HEVC count to 51; the AV1
+# encoders, VP9 and VVenC (where the number is a QP) count to 63.
+CRF_SCALE_MAX = {
+    "libsvtav1": 63,
+    "libaom-av1": 63,
+    "libvpx-vp9": 63,
+    "av1_nvenc": 63,
+    "libvvenc": 63,
+}
+DEFAULT_CRF_SCALE_MAX = 51
+
 # Deinterlacers: display name -> key
 DEINTERLACERS = [
     ("QTGMC (AviSynth+, best quality)", "qtgmc"),
@@ -113,10 +159,15 @@ DEINTERLACERS = [
 
 # Codecs allowed per container (None = anything goes)
 CONTAINER_VIDEO_CODECS = {
-    "webm": {"libvpx-vp9", "libsvtav1", "copy"},
+    "webm": {"libvpx-vp9", "libsvtav1", "libaom-av1", "av1_nvenc", "copy"},
 }
 CONTAINER_AUDIO_CODECS = {
     "webm": {"libopus", "copy"},
+}
+# Containers allowed per codec, for codecs the usual containers cannot all take. VVC has no AVI fourcc — the
+# muxer writes the stream anyway and nothing can play the result — and WebM refuses it while writing the header.
+VIDEO_CODEC_CONTAINERS = {
+    "libvvenc": {"mkv", "mp4", "mov"},
 }
 
 # PAR (Pixel Aspect Ratio) presets
@@ -335,8 +386,11 @@ QUALITY_SEARCH_RANGE = {
     "libx265": (16, 36),
     "h264_nvenc": (14, 38),
     "hevc_nvenc": (16, 40),
+    "av1_nvenc": (18, 50),
     "libsvtav1": (18, 50),
+    "libaom-av1": (18, 50),
     "libvpx-vp9": (18, 50),
+    "libvvenc": (20, 44),       # a QP, not a CRF; VVenC's own default is 32
 }
 DEFAULT_QUALITY_SEARCH_RANGE = (16, 36)
 
@@ -450,6 +504,15 @@ QUALITY_PRESETS = {
         "video_codec": "libsvtav1",
         "audio_codec": "libopus",
         "crf": 30,
+        "abr": 160,
+        "preset": "Medium",
+        "output_format": "MKV"
+    },
+    "vvc": {
+        "name": "Next Generation (H.266 VVC/Opus)",
+        "video_codec": "libvvenc",
+        "audio_codec": "libopus",
+        "crf": 32,
         "abr": 160,
         "preset": "Medium",
         "output_format": "MKV"

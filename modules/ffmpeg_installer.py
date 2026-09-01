@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMessageBox, QProgr
 from modules.widgets import WrapLabel
 
 from config import DEFAULT_QUALITY_METRIC
-from utils.ffmpeg_utils import (MANAGED_BIN_DIR, ffmpeg_has_filter, find_ffmpeg, find_ffprobe,
-                                forget_ffmpeg)
+from utils.ffmpeg_utils import (MANAGED_BIN_DIR, ffmpeg_has_encoder, ffmpeg_has_filter, find_ffmpeg,
+                                find_ffprobe, forget_ffmpeg)
 
 BUILD_BASE = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/"
 
@@ -49,6 +49,13 @@ BUILDS = {
 WANTED_FILTERS = {
     'libvmaf': "VMAF, VMAF NEG, VMAF 4K and MS-SSIM quality measurement",
     'xpsnr': "XPSNR quality measurement",
+}
+# Encoders that many builds leave out. VVenC is the newest of them: FFmpeg has had it since 7.1, and the
+# distribution packages built from 6.x have never heard of it.
+WANTED_ENCODERS = {
+    'libvvenc': "H.266/VVC encoding",
+    'libsvtav1': "AV1 encoding with SVT-AV1",
+    'libaom-av1': "AV1 encoding with libaom",
 }
 
 MACOS_ADVICE = ("On macOS the usual source is Homebrew: `brew install ffmpeg` installs a build with libvmaf. "
@@ -71,6 +78,8 @@ def missing_features() -> List[str]:
         return ["FFmpeg itself was not found"]
     missing = [f"{purpose} (needs the {name} filter)"
                for name, purpose in WANTED_FILTERS.items() if not ffmpeg_has_filter(name)]
+    missing += [f"{purpose} (needs the {name} encoder)"
+                for name, purpose in WANTED_ENCODERS.items() if not ffmpeg_has_encoder(name)]
     if not find_ffprobe():
         missing.append("reading durations and stream layouts (needs ffprobe beside ffmpeg)")
     return missing
@@ -267,7 +276,8 @@ class FFmpegSetupDialog(QDialog):
             self.detail.setText(
                 (f"In use: {version}\n{current}\n\n" if version else "No FFmpeg found on this machine.\n\n")
                 + "VMAF is not part of a plain FFmpeg build; it has to be compiled in. The Windows "
-                  "'essentials' build and many distribution packages leave it out.")
+                  "'essentials' build and many distribution packages leave it out, and the same goes for "
+                  "the VVenC encoder behind H.266/VVC.")
 
         if not self.build:
             self.get_button.setEnabled(False)
@@ -320,7 +330,7 @@ class FFmpegSetupDialog(QDialog):
         self.cancel_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.get_button.setEnabled(True)
-        self.status.setText(f"Installed: {version}\nVMAF and every other metric are available now.")
+        self.status.setText(f"Installed: {version}\nVMAF, every other metric and every encoder are available now.")
         self._describe_after()
 
     def _on_failed(self, message: str):

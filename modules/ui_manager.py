@@ -22,7 +22,7 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
                    QUALITY_PRESETS, APP_NAME, APP_VERSION, QUALITY_POOLS,
                    QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC,
-                   DEFAULT_QUALITY_POOL)
+                   DEFAULT_QUALITY_POOL, NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX)
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
                                       metric_target, format_score, metric_spec,
@@ -449,9 +449,8 @@ class UIManager(QWidget):
 
         # Connected here, not in the Video tab: the NVENC group lives on the Advanced tab, which is built
         # after the codec radios
-        self.codec_groups['video'].buttonToggled.connect(
-            lambda *_: self._update_nvenc_group_enabled())
-        self._update_nvenc_group_enabled()
+        self.codec_groups['video'].buttonToggled.connect(lambda *_: self._on_video_codec_changed())
+        self._on_video_codec_changed()
 
         layout.addWidget(self.tabs)
         
@@ -494,12 +493,17 @@ class UIManager(QWidget):
         crf_layout.setContentsMargins(0, 0, 0, 0)
         
         self.controls['crf_slider'] = QSlider(Qt.Orientation.Horizontal)
-        self.controls['crf_slider'].setRange(0, 51)
+        self.controls['crf_slider'].setRange(0, DEFAULT_CRF_SCALE_MAX)
         self.controls['crf_slider'].setValue(DEFAULT_CRF)
         
         self.controls['crf'] = QSpinBox()
-        self.controls['crf'].setRange(0, 51)
+        self.controls['crf'].setRange(0, DEFAULT_CRF_SCALE_MAX)
         self.controls['crf'].setValue(DEFAULT_CRF)
+        for name in ('crf_slider', 'crf'):
+            self.controls[name].setToolTip(
+                "Constant quality: lower is better and larger. The scale is the encoder's own — 0–51 for x264, "
+                "x265 and NVENC H.264/HEVC, 0–63 for the AV1 encoders, VP9 and VVC (a QP, for VVenC), and the "
+                "NVENC encoders call it CQ.")
         
         self.controls['crf_slider'].valueChanged.connect(self.controls['crf'].setValue)
         self.controls['crf'].valueChanged.connect(self.controls['crf_slider'].setValue)
@@ -1092,9 +1096,9 @@ class UIManager(QWidget):
     
     def _create_nvenc_group(self) -> QGroupBox:
         """
-        NVENC quality options. FFmpeg's defaults leave lookahead, adaptive quantisation and multi-pass off,
-        which is most of the quality gap against x264/x265. These are on by default and cost encoding speed;
-        the group is only enabled while an NVENC codec is selected.
+        NVENC quality options, shared by the H.264, HEVC and AV1 encoders. FFmpeg's defaults leave lookahead,
+        adaptive quantisation and multi-pass off, which is most of the quality gap against x264/x265. These
+        are on by default and cost encoding speed; the group is only enabled while an NVENC codec is selected.
         """
         self.nvenc_group = QGroupBox("NVIDIA NVENC Quality")
         grid = QGridLayout()
@@ -1163,7 +1167,21 @@ class UIManager(QWidget):
     def _update_nvenc_group_enabled(self):
         """Grey the group out unless one of the NVENC encoders is selected"""
         codec = self._get_selected_codec('video')
-        self.nvenc_group.setEnabled(codec in ('h264_nvenc', 'hevc_nvenc'))
+        self.nvenc_group.setEnabled(codec in NVENC_ENCODERS)
+
+    def _update_crf_scale(self):
+        """
+        The quality slider counts as far as the selected encoder does: 51 for x264, x265 and NVENC H.264/HEVC,
+        63 for the AV1 encoders, VP9 and VVC. A value above the new ceiling is clamped, which is what the
+        encoder would have done anyway, only with an error.
+        """
+        top = CRF_SCALE_MAX.get(self._get_selected_codec('video'), DEFAULT_CRF_SCALE_MAX)
+        for name in ('crf_slider', 'crf'):
+            self.controls[name].setMaximum(top)
+
+    def _on_video_codec_changed(self):
+        self._update_nvenc_group_enabled()
+        self._update_crf_scale()
 
     def _create_output_tab(self):
         """Create output settings tab"""

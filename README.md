@@ -15,6 +15,31 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.16
+
+**Two more generations of codec**
+
+- **H.266/VVC**, through Fraunhofer's VVenC (`libvvenc`). VVC is HEVC's successor and, in the standard's own
+  tests, needs around 40 % fewer bits than HEVC for the same quality — paid for in encoding time and, for now,
+  in players: FFmpeg 7 and anything built on it (mpv, for one) decodes it, browsers and most hardware do not
+  yet. VVenC has no CRF; its constant-quality knob is a QP on a 0–63 scale, and that is what the quality
+  slider and the *Match Source Quality* search set for it (the search defaults to 20–44). It takes 10-bit
+  input only, so it is fed `yuv420p10le`; its five presets are spread over videer's nine speeds. VVC goes into
+  MKV, MP4 or MOV — AVI has no tag for it and writes a file nothing can play, WebM refuses it — and the settings
+  check says so before a queue starts.
+- **AV1 by two more encoders**, alongside SVT-AV1: `libaom-av1`, the AOMedia reference encoder — the slowest
+  and the most thorough, run with `-row-mt` so it uses the cores it has — and `av1_nvenc` for the RTX 40
+  series and newer, which gets the same lookahead / adaptive-quantisation / multi-pass / B-frame options as
+  the other NVENC encoders. Both are searchable by *Match Source Quality*, and both are allowed in WebM.
+- **The quality slider knows the encoder's scale**: 0–51 for x264, x265 and NVENC H.264/HEVC, 0–63 for the AV1
+  encoders, VP9 and VVC. Switching encoder moves the ceiling, and a value above it is clamped instead of being
+  refused by the encoder later.
+- **An encoder this FFmpeg was built without is named before the encode starts**, not by a failed job: the
+  settings check warns, and *Tools ▸ FFmpeg Features* lists VVC and AV1 encoding among what the build cannot do
+  and offers the one that can. The BtbN builds videer fetches carry VVenC, libaom and SVT-AV1; the FFmpeg 6.1
+  that distributions still package has never heard of VVenC.
+- A bundled *Next Generation (H.266 VVC/Opus)* preset, next to the AV1 one.
+
 ## Changes in 3.15
 
 Everything since 3.13, in one place: the quality search was taking measurements that did not mean what they
@@ -312,8 +337,9 @@ are running into issues, you should try with ffms2 enabled.
 
 ### Encoding
 
-- Video: H.264 (x264), H.265/HEVC (x265), AV1 (SVT-AV1), VP9, NVIDIA NVENC H.264/HEVC (`p1`–`p7` presets), ProRes,
-  raw, or stream copy; CRF quality and per-encoder speed presets
+- Video: H.264 (x264), H.265/HEVC (x265), H.266/VVC (VVenC), AV1 (SVT-AV1 or the libaom reference encoder), VP9,
+  NVIDIA NVENC H.264/HEVC/AV1 (`p1`–`p7` presets), ProRes, raw, or stream copy; CRF quality on each encoder's own
+  scale and per-encoder speed presets
 - NVENC quality options (Advanced tab): rate-control lookahead, spatial + temporal adaptive quantisation with
   strength, quarter- or full-resolution multi-pass, B-frame count and B-frames-as-reference. All on by default —
   FFmpeg ships them off — and each can be turned back off when throughput matters more than quality
@@ -328,8 +354,8 @@ are running into issues, you should try with ffms2 enabled.
   problematic inputs, and a free-form script box; every plugin QTGMC needs across *all* its presets is bundled in
   `plugins/` (masktools2, mvtools2, nnedi3, RgTools, ffms2, yadifmod2 for *Ultra Fast*, FFT3DFilter + FFTW for *Very Slow*)
 - CUDA GPU acceleration support; 64-bit implementation
-- Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1
-  presets; `defaults.json` support for your own startup defaults
+- Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1 /
+  VVC presets; `defaults.json` support for your own startup defaults
 
 ### File handling
 

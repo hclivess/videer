@@ -18,11 +18,13 @@ from typing import List, Dict, Any, Optional, Callable
 from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
 from models.file_models import VideoFile, FAILURE_CONTEXT_LINES
-from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS
+from utils.ffmpeg_utils import (FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS,
+                                ffmpeg_has_encoder)
 from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
 from utils import childproc
-from config import CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS, DEFAULT_QUALITY_METRIC
+from config import (CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS, VIDEO_CODEC_CONTAINERS,
+                    DEFAULT_QUALITY_METRIC)
 
 
 # FFmpeg run with -progress pipe:1 reports continuously while it is working. Total silence for this long means
@@ -1047,6 +1049,18 @@ class ProcessManager(QObject):
         if allowed_a and audio_codec not in allowed_a:
             issues.append(f"{output_format.upper()} only supports Opus audio — "
                           f"'{audio_codec}' will fail.")
+        allowed_c = VIDEO_CODEC_CONTAINERS.get(video_codec)
+        if allowed_c and output_format not in allowed_c and not (allowed_v and video_codec not in allowed_v):
+            names = ', '.join(sorted(c.upper() for c in allowed_c))
+            issues.append(f"'{video_codec}' can only be stored in {names} — {output_format.upper()} either "
+                          f"refuses it or writes a file nothing can play.")
+
+        # An encoder this build was compiled without fails on the first file with "Unknown encoder"; better
+        # to hear it here, with the way to fix it, than from every file in the queue.
+        for codec in (video_codec, audio_codec):
+            if codec and codec != 'copy' and not ffmpeg_has_encoder(codec):
+                issues.append(f"This FFmpeg has no '{codec}' encoder — every file will fail. "
+                              f"Tools ▸ FFmpeg Features can fetch a build that has it.")
 
         if video_codec == 'prores_ks' and output_format not in ('mov', 'mkv'):
             issues.append("ProRes works best in MOV or MKV containers.")

@@ -23,7 +23,8 @@ FAILURE_CONTEXT_LINES = 12
 
 # Which codecs the CRF and audio-bitrate numbers actually mean something for; the output filename names
 # only the settings that applied.
-CRF_CODECS = ('libx264', 'libx265', 'libsvtav1', 'libvpx-vp9', 'h264_nvenc', 'hevc_nvenc')
+CRF_CODECS = ('libx264', 'libx265', 'libvvenc', 'libsvtav1', 'libaom-av1', 'libvpx-vp9',
+              'h264_nvenc', 'hevc_nvenc', 'av1_nvenc')
 BITRATELESS_AUDIO_CODECS = ('copy', 'flac', 'pcm_s32le')
 
 # Same spew reaches the per-file log. Rotate so one bad input cannot fill the media drive overnight.

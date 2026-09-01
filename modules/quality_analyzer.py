@@ -911,7 +911,7 @@ class QualityMatchDialog(QDialog):
         self.analyze_button.setEnabled(searchable)
         if not searchable:
             self.status_label.setText(
-                f"‘{codec}’ has no CRF to search — pick x264, x265, AV1, VP9 or NVENC on the Video tab.")
+                f"‘{codec}’ has no CRF to search — pick x264, x265, VVC, AV1, VP9 or NVENC on the Video tab.")
 
     def _load_from_settings(self, settings: Dict[str, Any]):
         """Start from the Quality tab, so the dialog and the batch matcher agree until told otherwise"""
