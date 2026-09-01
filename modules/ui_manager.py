@@ -22,7 +22,8 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
                    QUALITY_PRESETS, APP_NAME, APP_VERSION, QUALITY_POOLS,
                    QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC,
-                   DEFAULT_QUALITY_POOL, NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX)
+                   DEFAULT_QUALITY_POOL, NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX,
+                   QUALITY_SCALE, quality_knob, convert_quality)
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
                                       metric_target, format_score, metric_spec,
@@ -487,7 +488,8 @@ class UIManager(QWidget):
         self.controls['preset'].setCurrentIndex(5)
         quality_layout.addWidget(self.controls['preset'], 0, 1)
         
-        quality_layout.addWidget(QLabel("CRF (Quality):"), 1, 0)
+        self.controls['crf_label'] = QLabel("CRF (Quality):")
+        quality_layout.addWidget(self.controls['crf_label'], 1, 0)
         crf_widget = QWidget()
         crf_layout = QHBoxLayout(crf_widget)
         crf_layout.setContentsMargins(0, 0, 0, 0)
@@ -501,9 +503,9 @@ class UIManager(QWidget):
         self.controls['crf'].setValue(DEFAULT_CRF)
         for name in ('crf_slider', 'crf'):
             self.controls[name].setToolTip(
-                "Constant quality: lower is better and larger. The scale is the encoder's own — 0–51 for x264, "
-                "x265 and NVENC H.264/HEVC, 0–63 for the AV1 encoders, VP9 and VVC (a QP, for VVenC), and the "
-                "NVENC encoders call it CQ.")
+                "Constant quality: lower is better and larger. The scale and the name are the encoder's own — "
+                "CRF to 51 for x264 and x265, CRF to 63 for the AV1 encoders and VP9, CQ for NVENC, QP for "
+                "VVenC — and switching encoders converts the number to its rough equivalent on the new scale.")
         
         self.controls['crf_slider'].valueChanged.connect(self.controls['crf'].setValue)
         self.controls['crf'].valueChanged.connect(self.controls['crf_slider'].setValue)
@@ -814,12 +816,12 @@ class UIManager(QWidget):
         match_layout = QVBoxLayout()
 
         self.controls['auto_match_quality'] = QCheckBox(
-            "Find each file's own CRF before encoding it")
+            "Find each file's own quality setting before encoding it")
         self.controls['auto_match_quality'].setStyleSheet("font-weight: bold;")
         self.controls['auto_match_quality'].setToolTip(
-            "Run the quality search on every file in the queue and encode each one at the CRF it needs.\n"
-            "A clean cartoon and a grainy film print do not want the same number, and a batch encoded at one\n"
-            "CRF gets one of them wrong.\n\n"
+            "Run the quality search on every file in the queue and encode each one at the CRF, CQ or QP it\n"
+            "needs. A clean cartoon and a grainy film print do not want the same number, and a batch encoded\n"
+            "at one setting gets one of them wrong.\n\n"
             "Costs a few probe encodes per file before its real encode starts."
         )
         self.controls['auto_match_quality'].toggled.connect(self._on_auto_match_toggled)
@@ -851,7 +853,8 @@ class UIManager(QWidget):
         sample_layout.addWidget(self.controls['quality_sample_seconds'])
         sample_layout.addSpacing(16)
 
-        sample_layout.addWidget(QLabel("CRF range:"))
+        self.controls['quality_crf_range_label'] = QLabel("CRF range:")
+        sample_layout.addWidget(self.controls['quality_crf_range_label'])
         self.controls['quality_crf_low'] = QSpinBox()
         self.controls['quality_crf_low'].setRange(0, 63)
         self.controls['quality_crf_low'].setSpecialValueText("auto")
@@ -1169,19 +1172,36 @@ class UIManager(QWidget):
         codec = self._get_selected_codec('video')
         self.nvenc_group.setEnabled(codec in NVENC_ENCODERS)
 
-    def _update_crf_scale(self):
+    def _update_quality_scale(self):
         """
-        The quality slider counts as far as the selected encoder does: 51 for x264, x265 and NVENC H.264/HEVC,
-        63 for the AV1 encoders, VP9 and VVC. A value above the new ceiling is clamped, which is what the
-        encoder would have done anyway, only with an error.
+        The quality number follows the encoder: it is called what the encoder calls it (CRF, CQ, QP), it
+        counts as far as the encoder does (51 or 63), and it is converted to its rough equivalent on the new
+        scale — x265's CRF 23 carried unchanged onto VVenC is QP 23, a visibly different and larger encode.
+        The value is remembered against the encoder it was set for, so a detour through ProRes or stream
+        copy, which have no scale, converts from the last encoder that had one.
         """
-        top = CRF_SCALE_MAX.get(self._get_selected_codec('video'), DEFAULT_CRF_SCALE_MAX)
+        codec = self._get_selected_codec('video')
+        if codec is None:
+            return
+        knob = quality_knob(codec)
+        self.controls['crf_label'].setText(f"{knob} (Quality):")
+        self.controls['quality_crf_range_label'].setText(f"{knob} range:")
+
+        top = CRF_SCALE_MAX.get(codec, DEFAULT_CRF_SCALE_MAX)
+        previous = getattr(self, '_quality_codec', None)
+        if codec in QUALITY_SCALE:
+            if previous and previous != codec:
+                # Widen first: the converted value may sit above the old ceiling
+                for name in ('crf_slider', 'crf'):
+                    self.controls[name].setMaximum(max(top, self.controls[name].maximum()))
+                self.controls['crf'].setValue(convert_quality(self.controls['crf'].value(), previous, codec))
+            self._quality_codec = codec
         for name in ('crf_slider', 'crf'):
             self.controls[name].setMaximum(top)
 
     def _on_video_codec_changed(self):
         self._update_nvenc_group_enabled()
-        self._update_crf_scale()
+        self._update_quality_scale()
 
     def _create_output_tab(self):
         """Create output settings tab"""
@@ -1400,7 +1420,7 @@ class UIManager(QWidget):
         for file in files:
             label = f"{file.filename} ({file.get_file_size_mb():.1f} MB)"
             if getattr(file, 'matched_crf', None) is not None:
-                label += f" | CRF {file.matched_crf}"
+                label += f" | {quality_knob(self._get_selected_codec('video'))} {file.matched_crf}"
             if file.vmaf_score is not None:
                 label += f" | {format_score(getattr(file, 'quality_metric', None) or 'vmaf', file.vmaf_score)}"
             item = QListWidgetItem(label)
@@ -1532,10 +1552,11 @@ class UIManager(QWidget):
             item.setText(f"{item.text()} | {format_score(metric, score)}")
 
     def set_file_matched_crf(self, index: int, crf: int):
-        """Show the CRF the per-file search picked, as soon as it is known"""
+        """Show the CRF/CQ/QP the per-file search picked, as soon as it is known"""
         item = self.file_list.item(index)
-        if item and f"| CRF {crf}" not in item.text():
-            item.setText(f"{item.text()} | CRF {crf}")
+        knob = quality_knob(self._get_selected_codec('video'))
+        if item and f"| {knob} {crf}" not in item.text():
+            item.setText(f"{item.text()} | {knob} {crf}")
 
     def update_ffmpeg_status(self, available):
         """Update FFmpeg status in status bar"""

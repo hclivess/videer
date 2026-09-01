@@ -9,7 +9,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.16"
+APP_VERSION = "3.16.1"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -149,6 +149,49 @@ CRF_SCALE_MAX = {
     "libvvenc": 63,
 }
 DEFAULT_CRF_SCALE_MAX = 51
+
+# What the quality number is called on each encoder. One slider drives them all, but "CRF 32" on VVenC is a
+# claim about a control it does not have: x264, x265, the AV1 encoders and VP9 have a CRF, NVENC has a CQ,
+# VVenC has a QP.
+QUALITY_KNOB = {
+    "h264_nvenc": "CQ",
+    "hevc_nvenc": "CQ",
+    "av1_nvenc": "CQ",
+    "libvvenc": "QP",
+}
+
+
+def quality_knob(video_codec) -> str:
+    return QUALITY_KNOB.get(video_codec, "CRF")
+
+
+# Rough equivalence between the encoders' quality scales: for each, the two values that correspond to x265
+# CRF 18 and CRF 28 (about "visually lossless" and "streaming quality"), linear between and beyond. These are
+# the pairings FFmpeg's own guides and the encoders' defaults suggest — the H.265 guide's "x265 CRF 28 looks
+# like x264 CRF 23", SVT-AV1's default 35 and VVenC's default 32 sitting where x265's 28 does — and NVENC's
+# CQ tracks the software encoder of the same codec. Good enough to keep the *meaning* of the number when the
+# encoder changes, which is all it is used for; the right number is still the one Match Source Quality measures.
+QUALITY_SCALE = {
+    "libx264": (15, 23),
+    "libx265": (18, 28),
+    "h264_nvenc": (15, 23),
+    "hevc_nvenc": (18, 28),
+    "av1_nvenc": (25, 35),
+    "libsvtav1": (25, 35),
+    "libaom-av1": (25, 35),
+    "libvpx-vp9": (24, 34),
+    "libvvenc": (24, 32),
+}
+
+
+def convert_quality(value: int, from_codec, to_codec) -> int:
+    """The value on to_codec's scale that means about what `value` meant on from_codec's; clamped to its range"""
+    top = CRF_SCALE_MAX.get(to_codec, DEFAULT_CRF_SCALE_MAX)
+    src, dst = QUALITY_SCALE.get(from_codec), QUALITY_SCALE.get(to_codec)
+    if src and dst and from_codec != to_codec:
+        position = (value - src[0]) / (src[1] - src[0])
+        value = round(dst[0] + position * (dst[1] - dst[0]))
+    return max(0, min(top, int(value)))
 
 # Deinterlacers: display name -> key
 DEINTERLACERS = [

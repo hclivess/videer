@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 from collections import deque
 from typing import Optional, List, Dict, Any
+from config import quality_knob
 
 # A damaged source encoded with -err_detect can make FFmpeg emit an error line per packet. Keeping all of them
 # costs gigabytes of RAM per hour and drives the machine into swap, so keep a head (what went wrong first) and
@@ -150,7 +151,8 @@ class VideoFile:
         codec_suffix = f"_{video_codec}_{audio_codec}"
         quality_suffix = ""
         if video_codec in CRF_CODECS:
-            quality_suffix += f"_crf{crf}"
+            # ...and named for what it is: a CQ on NVENC, a QP on VVenC, a CRF elsewhere
+            quality_suffix += f"_{quality_knob(video_codec).lower()}{crf}"
         if audio_codec not in BITRATELESS_AUDIO_CODECS:
             quality_suffix += f"_abr{abr}"
 

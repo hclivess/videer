@@ -15,6 +15,19 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.16.1
+
+- **The quality number is named for the encoder, and carried across when the encoder changes.** The slider
+  said *CRF* whatever was selected — on VVenC the number is a QP, on NVENC a CQ — and it kept its value
+  through a change of encoder, which is the wrong value: x265's CRF 23 is not VVenC's QP 23 (nearer 28), nor
+  SVT-AV1's CRF 23 (nearer 30). The label now follows the encoder — *CRF*, *CQ* or *QP* — on the Video tab,
+  the Quality tab, in the search window, the log and the queue, and switching encoders converts the number to
+  its rough equivalent on the new scale, using the pairings FFmpeg's own guides and the encoders' defaults
+  suggest: x264 23 ≈ x265 28 ≈ SVT-AV1 / libaom 35 ≈ VP9 34 ≈ VVenC 32, with NVENC's CQ tracking the software
+  encoder of the same codec. Rough is the word — it keeps the *meaning* of the number through a change of
+  encoder, and *Match Source Quality* is still how to get the right one. Output filenames name the knob too:
+  `_cq30` for NVENC and `_qp32` for VVC, `_crf23` as before for the rest.
+
 ## Changes in 3.16
 
 **Two more generations of codec**

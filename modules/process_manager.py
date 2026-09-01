@@ -24,7 +24,7 @@ from modules.avisynth_handler import AviSynthHandler
 from utils.file_utils import FileOperations
 from utils import childproc
 from config import (CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS, VIDEO_CODEC_CONTAINERS,
-                    DEFAULT_QUALITY_METRIC)
+                    DEFAULT_QUALITY_METRIC, quality_knob)
 
 
 # FFmpeg run with -progress pipe:1 reports continuously while it is working. Total silence for this long means
@@ -623,7 +623,8 @@ class ProcessThread(QThread):
         # top would be a cycle.
         from modules.quality_analyzer import QualitySearch, format_score
 
-        file.log_info("Quality match: searching for this file's own CRF")
+        knob = quality_knob(self.settings.get('video_codec'))
+        file.log_info(f"Quality match: searching for this file's own {knob}")
         self.info_signal.emit(f"Matching quality for {file.filename}…")
         self._phase_start = time.time()
 
@@ -656,9 +657,9 @@ class ProcessThread(QThread):
             if not self.should_stop:
                 reason = search.error or "no result"
                 file.log_info(f"Quality match did not finish ({reason}); "
-                              f"using the queue's CRF {self.settings.get('crf')}")
+                              f"using the queue's {knob} {self.settings.get('crf')}")
                 self.info_signal.emit(f"{file.filename}: quality match failed ({reason}) — "
-                                      f"encoding at CRF {self.settings.get('crf')}")
+                                      f"encoding at {knob} {self.settings.get('crf')}")
             return None
 
         recommended = result.get('recommended')
@@ -668,20 +669,20 @@ class ProcessThread(QThread):
             # at it — for a target none of them met — is the opposite of what the search is for.
             probes = result.get('probes') or []
             best = max(probes, key=lambda p: p['score']) if probes else None
-            detail = (f"the best in CRF {search.crf_low}–{search.crf_high} was "
-                      f"{format_score(result['metric'], best['score'])} at CRF {best['crf']}"
+            detail = (f"the best in {knob} {search.crf_low}–{search.crf_high} was "
+                      f"{format_score(result['metric'], best['score'])} at {knob} {best['crf']}"
                       if best else "nothing measurable")
-            file.log_info(f"Quality match: no CRF reached {result['target']:g} ({detail}); "
-                          f"using the queue's CRF {self.settings.get('crf')}")
-            self.info_signal.emit(f"{file.filename}: no CRF reached the target — {detail}; "
-                                  f"encoding at the queue's CRF {self.settings.get('crf')}")
+            file.log_info(f"Quality match: no {knob} reached {result['target']:g} ({detail}); "
+                          f"using the queue's {knob} {self.settings.get('crf')}")
+            self.info_signal.emit(f"{file.filename}: no {knob} reached the target — {detail}; "
+                                  f"encoding at the queue's {knob} {self.settings.get('crf')}")
             for note in result.get('notes', []):
                 file.log_info(f"[quality] {note}")
             return None
 
         crf = int(recommended['crf'])
         file.matched_crf = crf
-        summary = (f"Quality match: CRF {crf} at "
+        summary = (f"Quality match: {knob} {crf} at "
                    f"{format_score(result['metric'], recommended['score'])} "
                    f"(target {result['target']:g}, pooled by {result['pool']})")
         if result.get('estimated_size'):
@@ -1105,7 +1106,7 @@ class ProcessManager(QObject):
                           "the frame count and will make the comparison fail.")
         if settings.get('auto_match_quality'):
             if video_codec not in CRF_ENCODERS:
-                issues.append(f"Automatic CRF matching needs a CRF-based encoder; '{video_codec}' has no CRF, "
+                issues.append(f"Automatic quality matching needs an encoder with a CRF, CQ or QP; '{video_codec}' has none, "
                               f"so every file will use the queue's setting instead.")
             elif settings.get('use_avisynth'):
                 issues.append("Automatic CRF matching samples the source directly, without the AviSynth+ "

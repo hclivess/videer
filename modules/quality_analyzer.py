@@ -44,7 +44,7 @@ from modules.widgets import WrapLabel
 
 from config import (DEFAULT_QUALITY_METRIC, DEFAULT_QUALITY_POOL, DEFAULT_QUALITY_SEARCH_RANGE,
                     QUALITY_METRICS, QUALITY_POOLS, QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_MARGIN,
-                    QUALITY_SAMPLE_SECONDS, QUALITY_SEARCH_RANGE, VIDEO_EXTENSIONS)
+                    QUALITY_SAMPLE_SECONDS, QUALITY_SEARCH_RANGE, VIDEO_EXTENSIONS, quality_knob)
 from modules.process_manager import format_duration, format_size
 from utils import childproc
 from utils.ffmpeg_utils import (CRF_ENCODERS, FFmpegCommandBuilder, ffmpeg_has_filter,
@@ -337,6 +337,7 @@ class QualitySearch:
         self.sample_count = int(self.settings.get('quality_samples') or QUALITY_SAMPLE_COUNT)
         self.sample_seconds = float(self.settings.get('quality_sample_seconds') or QUALITY_SAMPLE_SECONDS)
         self.crf_low, self.crf_high = resolved_search_range(self.settings)
+        self.knob = quality_knob(self.settings.get('video_codec'))     # what the number is called here
 
         self.error: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
@@ -382,7 +383,7 @@ class QualitySearch:
             self.error = "FFmpeg was not found."
             return None
         if self.settings.get('video_codec') not in CRF_ENCODERS:
-            self.error = f"'{self.settings.get('video_codec')}' has no CRF to search."
+            self.error = f"'{self.settings.get('video_codec')}' has no quality setting to search."
             return None
         if not metric_available(self.metric):
             self.error = (f"This FFmpeg build has no {metric_spec(self.metric)['filter']} filter, "
@@ -406,7 +407,7 @@ class QualitySearch:
         self._progress(
             f"{len(samples)} sample(s) of {format_duration(samples[0][1])}, "
             f"{metric_spec(self.metric)['label']} ≥ {self.target:g} "
-            f"({pool_label(self.pool).lower()}), CRF {self.crf_low}–{self.crf_high} "
+            f"({pool_label(self.pool).lower()}), {self.knob} {self.crf_low}–{self.crf_high} "
             f"— about {probes_expected} probes.")
         if self.substituted_for:
             self._progress(substitution_note(self.substituted_for, self.metric, self.target))
@@ -443,7 +444,7 @@ class QualitySearch:
             # the old loop arrived at — the bottom of the range — is not an answer at all: it is the largest
             # file the range allows, recommended for a target it does not meet.
             floor_tested = True
-            self._progress(f"CRF {crf} missed the target; checking whether CRF {low} can reach it at all.")
+            self._progress(f"{self.knob} {crf} missed the target; checking whether {self.knob} {low} can reach it at all.")
             floor = self._evaluate(low, samples, info)
             if floor is None:
                 return None
@@ -474,7 +475,7 @@ class QualitySearch:
         for number, (start, length) in enumerate(samples, start=1):
             if self.cancelled():
                 return None
-            label = f"CRF {crf} · sample {number}/{len(samples)} at {format_duration(start)}"
+            label = f"{self.knob} {crf} · sample {number}/{len(samples)} at {format_duration(start)}"
 
             sample_path = os.path.join(self._workdir, f"probe_crf{crf}_{number}.mkv")
             self._progress(f"{label}: encoding…")
@@ -482,7 +483,7 @@ class QualitySearch:
             if self._run(command) != 0:
                 if self.cancelled():
                     return None
-                self.error = f"The probe encode at CRF {crf} failed — see the log for FFmpeg's reason."
+                self.error = f"The probe encode at {self.knob} {crf} failed — see the log for FFmpeg's reason."
                 return None
             self._advance()
 
@@ -500,7 +501,7 @@ class QualitySearch:
                 # An older libvmaf has the filter but not the options the NEG and 4K models need, so
                 # "the filter is missing" would be the wrong thing to tell the user. FFmpeg's own last
                 # error line says which it is.
-                self.error = (f"Could not read a {metric_spec(self.metric)['label']} score at CRF {crf}"
+                self.error = (f"Could not read a {metric_spec(self.metric)['label']} score at {self.knob} {crf}"
                               + (f": {complaint}" if complaint else
                                  f". Check that this FFmpeg build has the "
                                  f"{metric_spec(self.metric)['filter']} filter."))
@@ -521,7 +522,7 @@ class QualitySearch:
         if score is None:
             score = pool_scores([s for s in sample_scores if s is not None], 'mean')
         if score is None:
-            self.error = f"No usable {metric_spec(self.metric)['label']} score at CRF {crf}."
+            self.error = f"No usable {metric_spec(self.metric)['label']} score at {self.knob} {crf}."
             return None
 
         bitrate = (encoded_bytes * 8 / encoded_seconds) if encoded_seconds else None
@@ -539,7 +540,7 @@ class QualitySearch:
             'meets_target': score >= self.target,
         }
         self._progress(
-            f"CRF {crf}: {format_score(self.metric, score)} "
+            f"{self.knob} {crf}: {format_score(self.metric, score)} "
             f"({'meets' if probe['meets_target'] else 'below'} target)"
             + (f", ≈{format_size(estimated)}" if estimated else ""))
         return probe
@@ -607,16 +608,16 @@ class QualitySearch:
             # target it does not meet, to someone who came here to save space.
             closest = max(results.values(), key=lambda p: p['score']) if results else None
             best_line = (f" The best anything in that range managed was "
-                         f"{format_score(self.metric, closest['score'])} at CRF {closest['crf']}, so a target "
+                         f"{format_score(self.metric, closest['score'])} at {self.knob} {closest['crf']}, so a target "
                          f"above that is out of reach for this source." if closest else "")
             notes.append(
-                f"No CRF in {self.crf_low}–{self.crf_high} reached "
+                f"No {self.knob} in {self.crf_low}–{self.crf_high} reached "
                 f"{format_score(self.metric, self.target)}.{best_line} A grainy, noisy or already heavily "
                 f"compressed source is the usual reason — detail that expensive to keep is also a sign "
                 f"that re-encoding it will not save much.")
             if closest:
                 notes.append(
-                    f"CRF {closest['crf']} is not being recommended for it: it is the largest file in the "
+                    f"{self.knob} {closest['crf']} is not being recommended for it: it is the largest file in the "
                     f"range and still misses the target. Aim at "
                     f"{format_score(self.metric, closest['score'])} or below, pool on the mean rather than a "
                     f"percentile, or leave this source alone.")
@@ -625,11 +626,11 @@ class QualitySearch:
             recommended = best
             if best['crf'] >= self.crf_high:
                 notes.append(
-                    f"CRF {self.crf_high} was the top of the search range and still met the target — raise "
+                    f"{self.knob} {self.crf_high} was the top of the search range and still met the target — raise "
                     f"the range to find out how much further this file can go.")
             if best['crf'] <= self.crf_low:
                 notes.append(
-                    f"CRF {self.crf_low} was the bottom of the range; a lower one may be needed for this "
+                    f"{self.knob} {self.crf_low} was the bottom of the range; a lower one may be needed for this "
                     f"source.")
 
         estimated = recommended.get('estimated_size') if recommended else None
@@ -652,7 +653,7 @@ class QualitySearch:
             notes.append(
                 f"The filter chain ({', '.join(chain)}) is applied to both sides of the comparison, so the "
                 f"score is what the encoder lost and not what deinterlacing or scaling changed — those are "
-                f"choices no CRF can undo.")
+                f"choices no {self.knob} can undo.")
         if self.settings.get('use_avisynth'):
             notes.append("AviSynth+ processing is enabled but is not applied to the probes, so the real "
                          "encode will differ from this estimate.")
@@ -729,6 +730,7 @@ class QualityMatchDialog(QDialog):
         self.search_result: Optional[Dict[str, Any]] = None
         self._syncing_target = False
         self._targets_seen: Dict[str, float] = {}
+        self.knob = "CRF"                       # renamed for the encoder in _sync_to_codec
 
         settings = main_window.ui_manager.get_current_settings()
         self.metric_key = choose_metric(settings.get('quality_metric', DEFAULT_QUALITY_METRIC))
@@ -745,9 +747,9 @@ class QualityMatchDialog(QDialog):
         layout = QVBoxLayout(self)
 
         intro = WrapLabel(
-            "Encodes a few short samples of the source at different CRF values, compares each against the "
-            "original, and reports the highest CRF — the smallest file — that still meets the quality you "
-            "ask for.")
+            "Encodes a few short samples of the source at different quality settings, compares each against "
+            "the original, and reports the highest setting — the smallest file — that still meets the quality "
+            "you ask for.")
         intro.setStyleSheet("color: #555;")
         layout.addWidget(intro)
 
@@ -824,7 +826,8 @@ class QualityMatchDialog(QDialog):
         range_layout.addWidget(QLabel("to"))
         range_layout.addWidget(self.crf_high_spin)
         range_layout.addStretch()
-        form.addRow("Search CRF range:", range_row)
+        self.range_label = QLabel("Search CRF range:")
+        form.addRow(self.range_label, range_row)
 
         self.encoder_label = WrapLabel()
         self.encoder_label.setStyleSheet("color: #555;")
@@ -883,7 +886,7 @@ class QualityMatchDialog(QDialog):
 
     def _label_table(self):
         self.table.setHorizontalHeaderLabels(
-            ["CRF", metric_spec(self.metric_key)['label'], "Est. video", "vs source", "Verdict"])
+            [self.knob, metric_spec(self.metric_key)['label'], "Est. video", "vs source", "Verdict"])
 
     # ------------------------------------------------------------------
     # State
@@ -902,6 +905,10 @@ class QualityMatchDialog(QDialog):
         codec = settings.get('video_codec')
         self.encoder_label.setText(
             f"{codec} · speed preset “{settings.get('preset')}”")
+        self.knob = quality_knob(codec)
+        self.range_label.setText(f"Search {self.knob} range:")
+        self.apply_button.setText(f"Use this {self.knob}")
+        self._label_table()
 
         low, high = resolved_search_range(settings)
         self.crf_low_spin.setValue(low)
@@ -911,7 +918,8 @@ class QualityMatchDialog(QDialog):
         self.analyze_button.setEnabled(searchable)
         if not searchable:
             self.status_label.setText(
-                f"‘{codec}’ has no CRF to search — pick x264, x265, VVC, AV1, VP9 or NVENC on the Video tab.")
+                f"‘{codec}’ has no quality setting to search — pick x264, x265, VVC, AV1, VP9 or NVENC on the "
+                f"Video tab.")
 
     def _load_from_settings(self, settings: Dict[str, Any]):
         """Start from the Quality tab, so the dialog and the batch matcher agree until told otherwise"""
@@ -1021,7 +1029,7 @@ class QualityMatchDialog(QDialog):
 
         if self.crf_low_spin.value() > self.crf_high_spin.value():
             QMessageBox.warning(self, "Check the range",
-                                "The low end of the CRF range must not be above the high end.")
+                                f"The low end of the {self.knob} range must not be above the high end.")
             return
 
         if not metric_available(self.metric_key):
@@ -1102,10 +1110,10 @@ class QualityMatchDialog(QDialog):
             probes = result.get('probes') or []
             if probes:
                 closest = max(probes, key=lambda p: p['score'])
-                headline = (f"No CRF between {self.crf_low_spin.value()} and {self.crf_high_spin.value()} "
+                headline = (f"No {self.knob} between {self.crf_low_spin.value()} and {self.crf_high_spin.value()} "
                             f"reached {format_score(self.metric_key, result.get('target'))} "
                             f"({pool_label(result['pool']).lower()}). The best this source managed was "
-                            f"{format_score(self.metric_key, closest['score'])} at CRF {closest['crf']}.")
+                            f"{format_score(self.metric_key, closest['score'])} at {self.knob} {closest['crf']}.")
                 detail = "\n".join(f"• {note}" for note in result.get('notes', []))
                 self.result_label.setText(headline + (f"\n{detail}" if detail else ""))
                 self.result_label.setStyleSheet("font-weight: bold; color: #8a6d3b;")
@@ -1118,7 +1126,7 @@ class QualityMatchDialog(QDialog):
             return
 
         savings = result.get('savings')
-        headline = (f"Recommended CRF {recommended['crf']} — "
+        headline = (f"Recommended {self.knob} {recommended['crf']} — "
                     f"{format_score(self.metric_key, recommended['score'])} "
                     f"({pool_label(result['pool']).lower()})")
         if result.get('estimated_size'):
@@ -1164,7 +1172,7 @@ class QualityMatchDialog(QDialog):
             'quality_crf_high': self.crf_high_spin.value(),
         })
         ui.update_status(
-            f"CRF set to {crf} from the quality match of {os.path.basename(self.search_result['file'])} "
+            f"{self.knob} set to {crf} from the quality match of {os.path.basename(self.search_result['file'])} "
             f"({format_score(self.metric_key, self.search_result['recommended']['score'])})")
         self.accept()
 
