@@ -36,7 +36,7 @@ from modules.widgets import WrapLabel
 
 from utils import childproc
 from utils.ffmpeg_utils import FFmpegCommandBuilder, find_ffmpeg, probe_media_info
-from utils.file_utils import FileOperations
+from utils.file_utils import FileOperations, backup_path
 from modules.process_manager import format_duration, format_size
 
 # Strategies, cheapest first. 'auto' is the one worth using: it tries the lossless fix, measures, and only
@@ -100,9 +100,12 @@ def build_reencode_command(settings: Dict[str, Any], source: str, output: str) -
 
 
 def repaired_path(filepath: str, extension: Optional[str] = None) -> str:
-    """<name>.repaired.<ext> next to the original"""
+    """
+    <name>.repaired.<ext> next to the original. The extension is the container's, lower-cased: FFmpeg picks
+    the muxer from it, and it is what the file will be called if it goes on to replace the original.
+    """
     base, original_ext = os.path.splitext(filepath)
-    return base + REPAIRED_SUFFIX + (extension or original_ext)
+    return base + REPAIRED_SUFFIX + (extension or original_ext).lower()
 
 
 class RepairWorker(QThread):
@@ -310,8 +313,7 @@ class RepairWorker(QThread):
                           f"{os.path.basename(repaired)}.")
         if os.path.splitext(target)[1].lower() == os.path.splitext(original)[1].lower():
             return target, "Original kept as .old next to it."
-        return target, (f"Original kept as {os.path.basename(original)}.old"
-                        f"{os.path.splitext(original)[1]}; the repair is "
+        return target, (f"Original kept as {os.path.basename(backup_path(original))}; the repair is "
                         f"{os.path.splitext(target)[1]}, so it kept its own extension.")
 
     @staticmethod

@@ -15,6 +15,16 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.16.2
+
+- **A replaced file always wears its container's extension.** *Replace Original Files* built a fresh name only
+  when the output container differed from the source's; when they matched it reused the original filename
+  as it was, so the extension came from the file being replaced rather than from the encode — `TAPE.MKV`
+  re-encoded to MKV stayed `TAPE.MKV`. The destination is now always the original's stem plus the encode's
+  own extension, lower-cased, whatever the source was called: `tape.avi` becomes `tape.mkv`, `TAPE.MKV`
+  becomes `TAPE.mkv`, and a batch of mixed containers all come out under the one chosen. The backup keeps
+  the original's extension (`tape.avi.old.avi`), and the repair tool follows the same rule.
+
 ## Changes in 3.16.1
 
 - **The quality number is named for the encoder, and carried across when the encoder changes.** The slider
@@ -376,8 +386,9 @@ are running into issues, you should try with ffms2 enabled.
   are copied from the original. Only the settings that actually applied are named — a stream copy has no CRF and
   FLAC has no bitrate
 - **Replace Original Files**: the encode takes over the original filename; the original is kept as `<name>.old<ext>`.
-  When the output container differs from the source's, the encode keeps its own extension — `tape.avi` becomes
-  `tape.mkv` with the original at `tape.avi.old.avi` — because a `.avi` file holding Matroska lies about what it is
+  The encode always carries its own container's extension, never the source's — `tape.avi` becomes `tape.mkv`
+  with the original at `tape.avi.old.avi`, `TAPE.MKV` comes back as `TAPE.mkv` — because a `.avi` file holding
+  Matroska lies about what it is
 - **Delete Source Files After Processing**: permanently deletes each source right after *its* encode succeeds — one by
   one as the queue progresses, so disk space is freed while long batches are still running. The source is only removed
   when the output exists and is non-empty; files that fail or are stopped keep their source. Combined with *Replace

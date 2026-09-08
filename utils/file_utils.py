@@ -65,6 +65,34 @@ def _set_creation_time_windows(path: str, timestamp: float) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def replacement_path(original_file: str, new_file: str) -> str:
+    """
+    Where *new_file* lands when it takes over from *original_file*: the original's stem with the new file's
+    own extension, lower-cased. The extension names the container, so it comes from the file that has the
+    container, never from the file being replaced.
+    """
+    stem = os.path.splitext(original_file)[0]
+    return stem + os.path.splitext(new_file)[1].lower()
+
+
+def backup_path(original_file: str) -> str:
+    """
+    Where the original goes: <name>.old<ext>, the whole original filename plus a marker, ending in the
+    original's own extension so the backup stays openable — tape.avi becomes tape.avi.old.avi.
+    """
+    return f"{original_file}.old{os.path.splitext(original_file)[1]}"
+
+
+def _same_path(a: str, b: str) -> bool:
+    """Whether two paths name one file: the same spelling, or one inode on a case-insensitive filesystem"""
+    if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
+        return True
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 class FileOperations:
     """Handles file operations and metadata preservation"""
 
@@ -101,11 +129,12 @@ class FileOperations:
         """
         Put *new_file* where *original_file* was, keeping the original as <name>.old<ext>.
 
-        The extension decides the destination name, not the original's filename. Encoding an .avi source into
-        MKV and replacing the original used to move Matroska onto the .avi name: the file then lies about
-        what it is, which players mostly paper over by sniffing the content and other tools do not. When the
-        containers differ the original steps aside and the encode keeps its own extension, so the pair on
-        disk is tape.mkv (new) and tape.avi.old.avi (original).
+        The destination is always the original's stem with the new file's own extension. Nothing about the
+        original's name is carried over except the stem: not its container, not even the way its extension
+        happened to be spelt. Encoding an .avi source into MKV and replacing the original used to move
+        Matroska onto the .avi name: the file then lies about what it is, which players mostly paper over by
+        sniffing the content and other tools do not. So the pair on disk is tape.mkv (new) and
+        tape.avi.old.avi (original), and a TAPE.MKV re-encoded into MKV comes back as TAPE.mkv.
 
         Returns the path the file ended up at, or None if nothing was moved.
         """
@@ -114,12 +143,9 @@ class FileOperations:
                 logger.error(f"New file is missing or empty: {new_file}")
             return None
 
-        original_ext = os.path.splitext(original_file)[1]
-        new_ext = os.path.splitext(new_file)[1]
-        same_container = original_ext.lower() == new_ext.lower()
-        target = original_file if same_container else os.path.splitext(original_file)[0] + new_ext
+        target = replacement_path(original_file, new_file)
 
-        if not same_container and os.path.exists(target):
+        if os.path.exists(target) and not _same_path(target, original_file):
             # Something else already owns that name; overwriting it would be a deletion nobody asked for
             if logger:
                 logger.error(f"Not replacing: {target} already exists")
@@ -127,7 +153,7 @@ class FileOperations:
 
         try:
             st = os.stat(original_file)
-            backup = f"{original_file}.old{original_ext}"
+            backup = backup_path(original_file)
             if os.path.exists(backup):
                 os.remove(backup)
             os.rename(original_file, backup)

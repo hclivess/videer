@@ -1230,8 +1230,8 @@ class UIManager(QWidget):
             "Move the encoded output over the original filename.\n"
             "The original is kept next to it as <name>.old<ext> unless\n"
             "'Delete Source Files' is also enabled.\n\n"
-            "When the output container differs from the source's, the encode keeps its own\n"
-            "extension (tape.avi becomes tape.mkv, the original becomes tape.avi.old.avi):\n"
+            "The encode always carries its own container's extension, never the source's\n"
+            "(tape.avi becomes tape.mkv, the original becomes tape.avi.old.avi):\n"
             "a .avi file holding Matroska lies about what it is."
         )
         file_layout.addWidget(self.controls['replace_files'])
