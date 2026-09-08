@@ -15,7 +15,11 @@ from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, LIBAOM_CPU_USED_MAPPING, VVENC_PRESET_MAPPING,
                     NVENC_ENCODERS, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
-                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR)
+                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR,
+                    APP_VERSION, quality_knob)
+
+# Written into every encode's tags, so a file can say what it was made with
+VIDEER_URL = "https://github.com/hclivess/videer"
 
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -509,8 +513,17 @@ class FFmpegCommandBuilder:
         if extra:
             cmd.extend(shlex.split(extra, posix=(os.name != 'nt')))
 
-        # Add application metadata
-        cmd.extend(['-metadata', 'comment=Made with videer'])
+        # Tag the file with what made it and how. The settings a file was encoded with are otherwise gone the
+        # moment the batch ends — the log is deleted, the preset changes — and "what CRF was this?" is the
+        # first question asked of any encode years later. The tags land after -map_metadata so they overwrite
+        # whatever the source carried under the same names. AVI's INFO chunk has a comment but no
+        # description, so there the settings ride along in the comment rather than being dropped.
+        made_with = f'Made with videer {APP_VERSION} {VIDEER_URL}; {self.encoding_description()}'
+        if output_format == 'avi':
+            cmd.extend(['-metadata', f'comment={made_with}; settings: {self.encoding_settings_json()}'])
+        else:
+            cmd.extend(['-metadata', f'comment={made_with}',
+                        '-metadata', f'description={self.encoding_settings_json()}'])
 
         # Standard video settings (not applicable to stream copy / raw / ProRes).
         # NVENC gets its B-frame count from _add_nvenc_quality_settings instead.
@@ -542,6 +555,92 @@ class FFmpegCommandBuilder:
         
         return cmd
     
+    def _encoder_preset(self, video_codec: str) -> Optional[str]:
+        """The speed option as the encoder sees it, e.g. 'preset medium', 'preset p4', 'cpu-used 4'"""
+        preset_name = self.settings.get('preset', 'Medium')
+        if video_codec in ('libx264', 'libx265'):
+            return f"preset {PRESET_MAPPING.get(preset_name, 'medium')}"
+        if video_codec in NVENC_ENCODERS:
+            return f"preset {NVENC_PRESET_MAPPING.get(preset_name, 'p4')}"
+        if video_codec == 'libsvtav1':
+            return f"preset {SVTAV1_PRESET_MAPPING.get(preset_name, '6')}"
+        if video_codec == 'libaom-av1':
+            return f"cpu-used {LIBAOM_CPU_USED_MAPPING.get(preset_name, '4')}"
+        if video_codec == 'libvvenc':
+            return f"preset {VVENC_PRESET_MAPPING.get(preset_name, 'medium')}"
+        if video_codec == 'libvpx-vp9':
+            return f"cpu-used {VP9_CPU_USED_MAPPING.get(preset_name, '2')}"
+        return None
+
+    def encoding_settings_json(self) -> str:
+        """
+        The complete settings this encode was made with, as one line of JSON — every key the queue ran
+        with, in the order the settings tabs hold them, the CRF being the one this file actually got. The
+        readable summary in the comment answers "what is this"; this answers "reproduce it", and a
+        settings file can be rebuilt from it.
+        """
+        settings = {key: value for key, value in self.settings.items()
+                    if isinstance(value, (str, int, float, bool)) or value is None}
+        return json.dumps({"videer": APP_VERSION, "settings": settings},
+                          ensure_ascii=False, separators=(',', ':'))
+
+    def encoding_description(self) -> str:
+        """
+        One line naming the settings this encode was made with, for the file's own tags: the encoder and its
+        quality number, the speed preset, the audio codec and bitrate, and whatever else changed the picture
+        — scaling, deinterlacing, PAR/DAR, a frame-rate halving, extra FFmpeg options. Only what applied is
+        named; a stream copy has no CRF and FLAC has no bitrate.
+        """
+        video_codec = self.settings.get('video_codec', 'libx265')
+        audio_codec = self.settings.get('audio_codec', 'aac')
+
+        video = [video_codec]
+        if video_codec in NVENC_ENCODERS or video_codec in ('libx264', 'libx265', 'libvvenc', 'libsvtav1',
+                                                            'libaom-av1', 'libvpx-vp9'):
+            video.append(f"{quality_knob(video_codec)} {self.settings.get('crf', 23)}")
+        elif video_codec == 'prores_ks':
+            video.append("profile 3 (422 HQ)")
+        preset = self._encoder_preset(video_codec)
+        if preset:
+            video.append(preset)
+        parts = [f"Video: {', '.join(video)}"]
+
+        audio = [audio_codec]
+        if audio_codec not in ('copy', 'flac', 'pcm_s32le'):
+            audio.append(f"{self.settings.get('abr', 256)} kbps")
+        if self.settings.get('stereo', False) and audio_codec != 'copy':
+            audio.append("stereo")
+        parts.append(f"Audio: {', '.join(audio)}")
+
+        if video_codec != 'copy':
+            mode = self.settings.get('resolution_mode') or ''
+            if mode and not mode.startswith('Original'):
+                if mode == 'Custom':
+                    width = int(self.settings.get('custom_width') or 0)
+                    height = int(self.settings.get('custom_height') or 0)
+                    if width > 0 or height > 0:
+                        parts.append(f"Resolution: {width if width > 0 else 'auto'}x"
+                                     f"{height if height > 0 else 'auto'}")
+                else:
+                    parts.append(f"Resolution: {mode.split(' ')[0]}")
+            if self.settings.get('deinterlace', False):
+                deinterlacer = self.settings.get('deinterlacer', 'qtgmc')
+                field = 'tff' if self.settings.get('tff', False) else 'bff'
+                rate = 'halved to frame rate' if self.settings.get('reduce_fps', False) else 'field rate'
+                parts.append(f"Deinterlace: {deinterlacer}, {field}, {rate}")
+            par, dar = self._resolved_par(), self._resolved_dar()
+            if par:
+                parts.append(f"PAR: {par} ({self.settings.get('par_handling', 'metadata')})")
+            if dar:
+                parts.append(f"DAR: {dar}")
+
+        extra = (self.settings.get('ffmpeg_extras') or '').strip()
+        if extra:
+            parts.append(f"FFmpeg extras: {extra}")
+        if self.settings.get('use_avisynth', False):
+            parts.append("AviSynth+")
+        return "; ".join(parts)
+
     def _add_speed_preset(self, cmd: List[str], video_codec: str):
         """Add the encoder-specific speed/quality trade-off option"""
         preset_name = self.settings.get('preset', 'Medium')

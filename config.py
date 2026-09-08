@@ -9,7 +9,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.16.2"
+APP_VERSION = "3.16.3"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -468,7 +468,7 @@ DEFAULT_SETTINGS = {
     "par_mode": "auto",
     "par_value": "1:1",
     "dar_mode": "auto",
-    "dar_value": "16:9",
+    "dar_value": "auto",
     # Everything the UI can produce belongs here, or "Reset to Factory Defaults" cannot put it back:
     # extra FFmpeg arguments left in the box would otherwise survive a reset and quietly join every encode.
     "par_handling": "metadata",

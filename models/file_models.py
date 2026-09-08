@@ -111,6 +111,10 @@ class VideoFile:
         self.display_aspect_ratio: Optional[str] = None
         self.pixel_aspect_ratio: Optional[str] = None
 
+        # Sizes, measured when the encode completes (bytes)
+        self.source_size: Optional[int] = None
+        self.output_size: Optional[int] = None
+
         # Quality metrics
         self.vmaf_score: Optional[float] = None      # score from the verification pass, in whatever metric
         self.quality_metric: Optional[str] = None    # which metric produced vmaf_score

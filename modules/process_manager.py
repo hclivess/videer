@@ -140,6 +140,8 @@ class ProcessThread(QThread):
         """Main processing loop — pulls files dynamically from the shared queue"""
         self.start_time = time.time()
         self.success_count = 0
+        self._batch_source_bytes = 0
+        self._batch_output_bytes = 0
 
         index = 0
         while not self.should_stop:
@@ -181,6 +183,7 @@ class ProcessThread(QThread):
 
             if success:
                 self.success_count += 1
+                self._log_sizes(file)
 
                 # Score before any file replacement (the original is the reference)
                 if (self.settings.get('calculate_vmaf')
@@ -220,6 +223,50 @@ class ProcessThread(QThread):
             file.clear_errors()
 
             index += 1
+
+        self._log_batch_sizes()
+
+    def _log_sizes(self, file: VideoFile):
+        """
+        Record what the encode did to the size, per file and running for the batch. The size is the number
+        most people encode for, and it was nowhere: the log had the command and FFmpeg's chatter, the queue
+        had a tick. Measured before any replacement, while both files are still under their own names.
+        """
+        file.source_size = self._size_of(file.filepath)
+        file.output_size = self._size_of(file.get_full_output_path())
+        if file.output_size is None:
+            return
+        self._batch_source_bytes += file.source_size or 0
+        self._batch_output_bytes += file.output_size
+        message = (f"{file.filename}: {format_size(file.source_size)} -> {format_size(file.output_size)}"
+                   f"{self._size_ratio(file.source_size, file.output_size)}")
+        file.log_info(message)
+        self.info_signal.emit(message)
+
+    def _log_batch_sizes(self):
+        """The batch's total, once it is over — the number that says whether the evening was worth it"""
+        if not self._batch_output_bytes:
+            return
+        self.info_signal.emit(f"Batch: {format_size(self._batch_source_bytes)} -> "
+                              f"{format_size(self._batch_output_bytes)}"
+                              f"{self._size_ratio(self._batch_source_bytes, self._batch_output_bytes)}")
+
+    @staticmethod
+    def _size_of(path: str) -> Optional[int]:
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
+    @staticmethod
+    def _size_ratio(source: Optional[int], output: Optional[int]) -> str:
+        if not source or output is None:
+            return ""
+        percent = output / source * 100
+        saved = source - output
+        if saved >= 0:
+            return f" ({percent:.0f}% of the original, {format_size(saved)} saved)"
+        return f" ({percent:.0f}% of the original, {format_size(-saved)} larger)"
 
     def _process_file(self, file: VideoFile) -> bool:
         """Process a single file"""

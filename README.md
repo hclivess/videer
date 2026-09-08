@@ -15,6 +15,25 @@ and a grainy film print never wanted the same one.
 
 ![videer processing a queue](thumb.png)
 
+## Changes in 3.16.3
+
+- **Every encode is tagged with the full settings it was made with.** The old builds wrote the codec,
+  preset, CRF and audio settings into the file's `description` tag, and that went missing in a rewrite;
+  the file only said *Made with videer*. It is back, and complete: the `description` tag now holds the
+  whole configuration the file was encoded with, as one line of JSON — every setting on every tab, with
+  the CRF the file actually got when *Match Source Quality* ran — so an encode can be reproduced, or its
+  settings rebuilt into a preset, from the file alone. The `comment` tag stays readable: the videer
+  version, the project URL, and a one-line summary — the encoder and its quality number (`CRF 23`,
+  `CQ 30`, `QP 32`), the speed preset as the encoder saw it, the audio codec and bitrate, and whatever
+  else changed the picture (scaling, deinterlacing, PAR/DAR, extra FFmpeg options). AVI has no
+  description field, so there both go into the comment. `ffprobe`, MediaInfo, mpv and most players show
+  them.
+- **File sizes are logged.** Each finished file reports its size before and after in the log and the
+  per-file log — `205.5 KB -> 54.9 KB (27% of the original, 150.5 KB saved)` — and the batch reports its
+  total at the end. Measured before any replacement, while both files are still under their own names.
+- The stock settings claimed a 16:9 display aspect ratio with the mode on *Auto*; the UI always overrode it,
+  but anything building a command straight from the defaults got `-aspect 16:9`. Now `auto` like the mode.
+
 ## Changes in 3.16.2
 
 - **A replaced file always wears its container's extension.** *Replace Original Files* built a fresh name only
