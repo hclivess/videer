@@ -170,7 +170,8 @@ def checksum(path: str) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     out = path + ".sha256"
-    with open(out, "w", encoding="utf-8") as fh:
+    # newline="\n": `sha256sum -c` reads a CRLF line as a file name ending in \r, and finds no such file
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(f"{digest.hexdigest()}  {os.path.basename(path)}\n")
     return out
 
