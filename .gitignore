@@ -18,3 +18,5 @@ dist/
 
 # FFmpeg fetched through Tools > FFmpeg Features
 ffmpeg/
+# VapourSynth installed through Tools > VapourSynth (QTempGaussMC)
+vapoursynth/

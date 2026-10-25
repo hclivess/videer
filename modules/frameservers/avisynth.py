@@ -1,17 +1,22 @@
 """
-AviSynth Handler for videer
-Handles AviSynth script generation and management
+AviSynth+ frameserver: QTGMC, the source filter and the user's own script lines, in an .avs that FFmpeg opens
+directly.
 """
 
 import os
+import sys
 import multiprocessing
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List
 from models.file_models import VideoFile
 from utils.ffmpeg_utils import has_audio_stream
+from modules.frameservers.base import Frameserver, FrameserverError, FrameserverInput
 
 
-class AviSynthHandler:
-    """Handles AviSynth+ script generation"""
+class AviSynthFrameserver(Frameserver):
+    """Writes the AviSynth+ script; FFmpeg reads it as its input, audio included"""
+
+    name = "AviSynth+"
+    script_extension = ".avs"
 
     # Every plugin QTGMC can call across all its presets is bundled in plugins/:
     # "Ultra Fast" uses yadifmod2, "Very Slow" uses FFT3DFilter (needs FFTW).
@@ -29,39 +34,49 @@ class AviSynthHandler:
     RUNTIME_DLLS = ["libfftw3f-3.dll"]
 
     def __init__(self, settings: Dict[str, Any]):
-        self.settings = settings
+        super().__init__(settings)
         self.cpu_count = multiprocessing.cpu_count()
         self.plugins_path = self._get_plugins_path()
     
     def _get_plugins_path(self) -> str:
         """Get path to AviSynth plugins directory"""
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(os.path.dirname(current_dir), "plugins")
+        # modules/frameservers/ -> the application root, where plugins/ lives (also inside a frozen bundle)
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(root, "plugins")
     
-    def create_script(self, video_file: VideoFile) -> bool:
-        """
-        Create AviSynth script for the video file
-        Returns True if successful
-        """
-        if not video_file.avs_file:
-            # Next to the source, never in the process CWD
-            video_file.avs_file = os.path.join(video_file.directory, f"{video_file.basename}.avs")
-        
+    def prepare(self, video_file: VideoFile, source: str) -> FrameserverInput:
+        script = self.script_path(video_file)
+        video_file.script_file = script
         try:
-            with open(video_file.avs_file, "w") as avs:
+            with open(script, "w") as avs:
                 self._write_plugins(avs)
                 self._write_mt_setup(avs)
-                self._write_source(avs, video_file)
+                self._write_source(avs, source)
                 self._write_processing(avs)
                 self._write_custom_extras(avs)
                 self._write_deinterlacing(avs)
                 self._write_prefetch(avs)
-            
-            return True
-        except Exception as e:
-            if video_file.logger:
-                video_file.logger.error(f"Failed to create AVS script: {e}")
-            return False
+        except OSError as e:
+            raise FrameserverError(f"Failed to create AviSynth script: {e}") from e
+        # The script serves audio as well (AudioDub / AVISource), and the user's own lines may trim or
+        # retime it — so it is the only input; a companion's audio could no longer be trusted to line up.
+        return FrameserverInput(script=script, video_args=['-i', script])
+
+    def problems(self) -> List[str]:
+        issues = []
+        if not sys.platform.startswith('win'):
+            issues.append("AviSynth+ is only available on Windows; disable it or use bwdif/yadif.")
+        missing = self.get_missing_plugins()
+        if missing:
+            issues.append("Missing AviSynth plugins in plugins/: " + ", ".join(missing))
+        return issues
+
+    def child_env(self, env: Dict[str, str]) -> Dict[str, str]:
+        # Plugins that pull in runtime DLLs via LoadLibrary (fft3dfilter -> libfftw3f-3.dll) resolve them
+        # through PATH, so expose plugins/.
+        env = dict(env)
+        env['PATH'] = self.plugins_path + os.pathsep + env.get('PATH', '')
+        return env
     
     def _write_plugins(self, avs_file):
         """Write plugin loading section"""
@@ -96,15 +111,15 @@ class AviSynthHandler:
         
         avs_file.write('\n')
     
-    def _write_source(self, avs_file, video_file: VideoFile):
+    def _write_source(self, avs_file, source: str):
         """Write source loading section"""
         avs_file.write('# Source loading\n')
         
         if self.settings.get('use_ffms2', False):
             # Use FFMS2 for better compatibility
-            avs_file.write(f'v = FFVideoSource("{video_file.filepath}", track=-1)\n')
-            if has_audio_stream(video_file.filepath):
-                avs_file.write(f'a = FFAudioSource("{video_file.filepath}", track=-1)\n')
+            avs_file.write(f'v = FFVideoSource("{source}", track=-1)\n')
+            if has_audio_stream(source):
+                avs_file.write(f'a = FFAudioSource("{source}", track=-1)\n')
                 avs_file.write('AudioDub(v, a)\n')
             else:
                 # FFAudioSource throws when there is no audio track, and that error fails the whole file.
@@ -114,7 +129,7 @@ class AviSynthHandler:
                 avs_file.write('v\n')
         else:
             # Use AVISource (requires AVI input)
-            avs_file.write(f'AVISource("{video_file.filepath}", audio=true)\n')
+            avs_file.write(f'AVISource("{source}", audio=true)\n')
         
         avs_file.write('\n')
     
@@ -166,11 +181,9 @@ class AviSynthHandler:
 
     def _write_deinterlacing(self, avs_file):
         """Write QTGMC deinterlacing section if enabled (ffmpeg handles yadif/bwdif)"""
-        if not self.settings.get('deinterlace', False):
+        if not self._uses_qtgmc():
             return
-        if self.settings.get('deinterlacer', 'qtgmc') != 'qtgmc':
-            return
-        
+
         avs_file.write('# Deinterlacing\n')
         
         # Field order
@@ -195,7 +208,7 @@ class AviSynthHandler:
     def _write_prefetch(self, avs_file):
         """Write prefetch for multi-threading"""
         threads = self._prefetch_threads()
-        avs_file.write(f'# Enable multi-threaded processing\n')
+        avs_file.write('# Enable multi-threaded processing\n')
         avs_file.write(f'Prefetch({threads})\n')
     
     def validate_plugins(self) -> Dict[str, bool]:

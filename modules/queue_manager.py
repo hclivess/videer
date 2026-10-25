@@ -212,7 +212,7 @@ class QueueManager(QObject):
         power cut loses at most the file that was in flight. Failures are silent: an unwritable install
         directory must not interrupt encoding or block the app from closing.
         """
-        if self._restoring:
+        if self._restoring or os.environ.get("VIDEER_SELFTEST"):
             return
         files = self.main_window.file_manager.get_queue()
         try:

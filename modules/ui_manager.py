@@ -3,35 +3,35 @@ UI Manager for videer
 Handles all UI creation and management
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                              QCheckBox, QRadioButton, QPushButton, QLineEdit, 
-                              QSlider, QTextEdit, QFileDialog, QButtonGroup, 
-                              QGroupBox, QListWidget, QStyle, QProgressBar, 
-                              QSplitter, QMenuBar, QMenu, QStatusBar, QListWidgetItem,
-                              QTabWidget, QSpinBox, QDoubleSpinBox, QComboBox, QGridLayout, QFrame,
-                              QSizePolicy, QMessageBox)
+                              QCheckBox, QPushButton, QLineEdit, QSlider, 
+                              QTextEdit, QFileDialog, QGroupBox, QListWidget, 
+                              QProgressBar, QSplitter, QStatusBar, QListWidgetItem, 
+                              QTabWidget, QSpinBox, QDoubleSpinBox, QComboBox, QGridLayout,
+                              QFrame, QSizePolicy, QMessageBox)
 from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
-from PySide6.QtGui import (QAction, QIcon, QDragEnterEvent, QDragMoveEvent, QDropEvent,
-                           QFont, QColor, QBrush)
+from PySide6.QtGui import (QAction, QDragEnterEvent, QDragMoveEvent, QDropEvent, QColor,
+                           QBrush)
 from modules.widgets import WrapLabel
 
 from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS,
-                   ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS,
+                   ENCODING_PRESETS, PAR_PRESETS, DAR_PRESETS, DEINTERLACERS, FRAMESERVER_DEINTERLACERS,
                    RESOLUTION_PRESETS, SCALE_ALGORITHMS, DEFAULT_SCALE_ALGORITHM,
-                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, DEFAULT_SETTINGS,
-                   QUALITY_PRESETS, APP_NAME, APP_VERSION, QUALITY_POOLS,
-                   QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC,
-                   DEFAULT_QUALITY_POOL, NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX,
-                   QUALITY_SCALE, quality_knob, convert_quality)
+                   DEFAULT_CRF, DEFAULT_ABR, MAX_THREADS, QUALITY_PRESETS,
+                   APP_NAME, APP_VERSION, QUALITY_POOLS, QUALITY_SAMPLE_COUNT,
+                   QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC, DEFAULT_QUALITY_POOL,
+                   NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX, QUALITY_SCALE,
+                   quality_knob, convert_quality)
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
-                                      metric_target, format_score, metric_spec,
-                                      resolved_search_range)
+                                      metric_target, format_score, metric_spec)
 from config import QUALITY_METRICS
 from utils.ffmpeg_utils import check_ffmpeg_status
 from modules.repair_manager import RepairDialog
 from modules.ffmpeg_installer import FFmpegSetupDialog, missing_features
+from modules.vapoursynth_installer import StatusCheck, VapourSynthSetupDialog
+from modules.frameservers.vapoursynth import forget_checks
 
 
 class FileListWidget(QListWidget):
@@ -103,7 +103,6 @@ class UIManager(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.codec_groups = {}
         self.controls = {}
         
     def setup_ui(self):
@@ -158,6 +157,7 @@ class UIManager(QWidget):
         self._add_action(tools_menu, 'Match Source Quality…', 'Ctrl+M', self.open_quality_match)
         self._add_action(tools_menu, 'Check && Repair Files…', 'Ctrl+R', self.open_repair)
         self._add_action(tools_menu, 'FFmpeg Features…', None, self.open_ffmpeg_setup)
+        self._add_action(tools_menu, 'VapourSynth (QTempGaussMC)…', None, self.open_vapoursynth_setup)
 
         # Help menu
         help_menu = menubar.addMenu('Help')
@@ -449,9 +449,10 @@ class UIManager(QWidget):
         self.tabs.addTab(self._create_output_tab(), "Output")
 
         # Connected here, not in the Video tab: the NVENC group lives on the Advanced tab, which is built
-        # after the codec radios
-        self.codec_groups['video'].buttonToggled.connect(lambda *_: self._on_video_codec_changed())
+        # after the codec list
+        self.controls['video_codec'].currentIndexChanged.connect(lambda *_: self._on_video_codec_changed())
         self._on_video_codec_changed()
+        self.refresh_vapoursynth_status()
 
         layout.addWidget(self.tabs)
         
@@ -465,16 +466,8 @@ class UIManager(QWidget):
         # Video codec
         codec_group = QGroupBox("Video Codec")
         codec_layout = QVBoxLayout()
-        
-        self.codec_groups['video'] = QButtonGroup()
-        for text, value in VIDEO_CODECS:
-            radio = QRadioButton(text)
-            radio.setProperty("value", value)
-            self.codec_groups['video'].addButton(radio)
-            codec_layout.addWidget(radio)
-            if value == "libx265":
-                radio.setChecked(True)
-        
+        self.controls['video_codec'] = self._codec_combo(VIDEO_CODECS, "libx265")
+        codec_layout.addWidget(self.controls['video_codec'])
         codec_group.setLayout(codec_layout)
         layout.addWidget(codec_group)
         
@@ -635,16 +628,8 @@ class UIManager(QWidget):
         # Audio codec
         codec_group = QGroupBox("Audio Codec")
         codec_layout = QVBoxLayout()
-        
-        self.codec_groups['audio'] = QButtonGroup()
-        for text, value in AUDIO_CODECS:
-            radio = QRadioButton(text)
-            radio.setProperty("value", value)
-            self.codec_groups['audio'].addButton(radio)
-            codec_layout.addWidget(radio)
-            if value == "aac":
-                radio.setChecked(True)
-        
+        self.controls['audio_codec'] = self._codec_combo(AUDIO_CODECS, "aac")
+        codec_layout.addWidget(self.controls['audio_codec'])
         codec_group.setLayout(codec_layout)
         layout.addWidget(codec_group)
         
@@ -703,13 +688,38 @@ class UIManager(QWidget):
             self.controls['deinterlacer'].addItem(text, value)
         self.controls['deinterlacer'].setToolTip(
             "QTGMC: highest quality, needs AviSynth+ (Windows).\n"
+            "QTempGaussMC: the vs-jetpack rewrite of QTGMC — faster, high-bit-depth correct; needs VapourSynth\n"
+            "    (any OS: pip install -r requirements-vapoursynth.txt).\n"
             "bwdif / yadif: built into FFmpeg, work on every OS and with any input."
         )
         self.controls['deinterlacer'].currentIndexChanged.connect(self._on_deinterlacer_changed)
         deint_row.addWidget(self.controls['deinterlacer'], 1)
 
+        # Whether QTempGaussMC can run here, and the way to make it so — shown while it is the one selected
+        self.vapoursynth_status = WrapLabel("")
+        self.vapoursynth_status.setStyleSheet("color: #555; font-size: 11px;")
+        vs_buttons = QHBoxLayout()
+        self.vapoursynth_install_button = QPushButton("Install VapourSynth…")
+        self.vapoursynth_install_button.setToolTip(
+            "Downloads a private Python and installs VapourSynth with the QTempGaussMC plugins into it, "
+            "beside videer. Nothing else on the machine is changed.")
+        self.vapoursynth_install_button.clicked.connect(self.open_vapoursynth_setup)
+        self.vapoursynth_recheck_button = QPushButton("Re-check")
+        self.vapoursynth_recheck_button.setToolTip("Look for VapourSynth again, e.g. after installing it yourself")
+        self.vapoursynth_recheck_button.clicked.connect(lambda: self.refresh_vapoursynth_status(force=True))
+        vs_buttons.addWidget(self.vapoursynth_install_button)
+        vs_buttons.addWidget(self.vapoursynth_recheck_button)
+        vs_buttons.addStretch()
+        self.vapoursynth_panel = QWidget()
+        vs_panel_layout = QVBoxLayout(self.vapoursynth_panel)
+        vs_panel_layout.setContentsMargins(0, 0, 0, 0)
+        vs_panel_layout.addWidget(self.vapoursynth_status)
+        vs_panel_layout.addLayout(vs_buttons)
+        self._vapoursynth_check: Optional[StatusCheck] = None
+
         deint_layout.addWidget(self.controls['deinterlace'])
         deint_layout.addLayout(deint_row)
+        deint_layout.addWidget(self.vapoursynth_panel)
         deint_layout.addWidget(self.controls['tff'])
         deint_layout.addWidget(self.controls['reduce_fps'])
         
@@ -734,7 +744,7 @@ class UIManager(QWidget):
         avs_group.setLayout(avs_layout)
         layout.addWidget(avs_group)
 
-        # Auto-link: deinterlace requires AviSynth+, disabling AviSynth+ disables deinterlace
+        # Auto-link: each frameserver deinterlacer switches on what it needs and off what it cannot run with
         self.controls['deinterlace'].toggled.connect(self._on_deinterlace_toggled)
         self.controls['use_avisynth'].toggled.connect(self._on_avisynth_toggled)
 
@@ -1279,8 +1289,11 @@ class UIManager(QWidget):
         """Handle DAR mode change"""
         self.controls['dar_custom'].setEnabled(text == "Custom")
 
-    def _uses_qtgmc(self) -> bool:
-        return self.controls['deinterlacer'].currentData() == 'qtgmc'
+    def _selected_frameserver(self) -> Optional[str]:
+        """The frameserver the selected deinterlacer runs in, while deinterlacing is on"""
+        if not self.controls['deinterlace'].isChecked():
+            return None
+        return FRAMESERVER_DEINTERLACERS.get(self.controls['deinterlacer'].currentData())
 
     def _enable_qtgmc_prereqs(self):
         """
@@ -1291,20 +1304,62 @@ class UIManager(QWidget):
         self.controls['use_avisynth'].setChecked(True)
         self.controls['use_ffms2'].setChecked(True)
 
-    def _on_deinterlace_toggled(self, checked):
-        if checked and self._uses_qtgmc():
+    def _apply_frameserver_prereqs(self):
+        """
+        QTGMC needs AviSynth+ on; QTempGaussMC runs in VapourSynth and needs it off, since one encode goes
+        through one frameserver.
+        """
+        frameserver = self._selected_frameserver()
+        if frameserver == 'avisynth':
             self._enable_qtgmc_prereqs()
+        elif frameserver == 'vapoursynth':
+            self.controls['use_avisynth'].setChecked(False)
+
+    def _on_deinterlace_toggled(self, _checked):
+        self._apply_frameserver_prereqs()
 
     def _on_deinterlacer_changed(self, _index):
-        if self.controls['deinterlace'].isChecked() and self._uses_qtgmc():
-            self._enable_qtgmc_prereqs()
+        self._apply_frameserver_prereqs()
+        self.refresh_vapoursynth_status()
+
+    def refresh_vapoursynth_status(self, force: bool = False):
+        """
+        Show whether QTempGaussMC can run, while it is the selected deinterlacer. The check runs it once in
+        vspipe, so it happens on a worker thread and its answer is cached; `force` drops the cache.
+        """
+        selected = self.controls['deinterlacer'].currentData() == 'qtempgaussmc'
+        self.vapoursynth_panel.setVisible(selected)
+        if not selected:
+            return
+        if self._vapoursynth_check is not None and self._vapoursynth_check.isRunning():
+            return
+        if force:
+            forget_checks()
+        self.vapoursynth_status.setText("QTempGaussMC: checking VapourSynth…")
+        self._vapoursynth_check = StatusCheck(self.main_window)
+        self._vapoursynth_check.done.connect(self.vapoursynth_status.setText)
+        self._vapoursynth_check.start()
+
+    def open_vapoursynth_setup(self):
+        """The QTempGaussMC backend: its state, and the offer to install it"""
+        VapourSynthSetupDialog(self.main_window).exec()
+        self.refresh_vapoursynth_status()
+
+    def _select_deinterlacer(self, key: str):
+        index = self.controls['deinterlacer'].findData(key)
+        if index >= 0:
+            self.controls['deinterlacer'].setCurrentIndex(index)
 
     def _on_avisynth_toggled(self, checked):
-        """Turning AviSynth+ off makes QTGMC unavailable — fall back to bwdif"""
-        if not checked and self.controls['deinterlace'].isChecked() and self._uses_qtgmc():
-            index = self.controls['deinterlacer'].findData('bwdif')
-            if index >= 0:
-                self.controls['deinterlacer'].setCurrentIndex(index)
+        """
+        Turning AviSynth+ off makes QTGMC unavailable — fall back to bwdif. Turning it on while QTempGaussMC
+        is selected asks for AviSynth+ processing, and QTGMC is the deinterlacer that runs there.
+        """
+        frameserver = self._selected_frameserver()
+        if not checked and frameserver == 'avisynth':
+            self._select_deinterlacer('bwdif')
+        elif checked and frameserver == 'vapoursynth':
+            self._select_deinterlacer('qtgmc')
 
     def _on_rows_moved(self, *_args):
         """
@@ -1408,7 +1463,7 @@ class UIManager(QWidget):
             "• AviSynth+ integration\n"
             "• PAR/DAR support\n"
             "• Optional resolution scaling\n"
-            "• QTGMC / bwdif / yadif deinterlacing\n"
+            "• QTGMC / QTempGaussMC / bwdif / yadif deinterlacing\n"
             "• Batch processing\n\n"
             "Drag and drop files or folders to process."
         )
@@ -1679,14 +1734,28 @@ class UIManager(QWidget):
         
         return settings
     
-    def _get_selected_codec(self, group_name):
-        """Get selected codec from button group"""
-        group = self.codec_groups.get(group_name)
-        if group:
-            selected = group.checkedButton()
-            if selected:
-                return selected.property("value")
-        return None
+    @staticmethod
+    def _codec_combo(codecs, default: str) -> QComboBox:
+        """A dropdown of (label, key) codecs with `default` selected; the key is the item's data"""
+        combo = QComboBox()
+        for text, value in codecs:
+            combo.addItem(text, value)
+        combo.setCurrentIndex(max(0, combo.findData(default)))
+        return combo
+
+    def select_codec(self, kind: str, codec: str) -> bool:
+        """Select `codec` in the 'video' or 'audio' list; False when this build lists no such codec"""
+        combo = self.controls[f'{kind}_codec']
+        index = combo.findData(codec)
+        if index < 0:
+            return False
+        combo.setCurrentIndex(index)
+        return True
+
+    def _get_selected_codec(self, kind):
+        """The selected 'video' or 'audio' codec key"""
+        combo = self.controls.get(f'{kind}_codec')
+        return combo.currentData() if combo is not None else None
     
     def load_settings(self, qsettings: QSettings):
         """Load all settings from QSettings"""

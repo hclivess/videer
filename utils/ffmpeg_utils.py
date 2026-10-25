@@ -8,27 +8,29 @@ import os
 import re
 import shlex
 import shutil
-from typing import Dict, Any, Optional, List, Tuple
+from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple
 import subprocess
 from utils import childproc
 from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, LIBAOM_CPU_USED_MAPPING, VVENC_PRESET_MAPPING,
                     NVENC_ENCODERS, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
-                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR,
-                    APP_VERSION, quality_knob)
+                    QUALITY_METRICS, DEFAULT_QUALITY_METRIC, APP_DIR, DATA_DIR,
+                    APP_VERSION, FRAMESERVER_DEINTERLACERS, quality_knob)
+
+if TYPE_CHECKING:                       # the frameservers import this module; only the type comes back
+    from modules.frameservers.base import FrameserverInput
 
 # Written into every encode's tags, so a file can say what it was made with
 VIDEER_URL = "https://github.com/hclivess/videer"
 
 
-_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ffmpeg_cache: Optional[str] = None
 
 # Where a build fetched through Tools > FFmpeg Features lands. It comes first in the search: putting it there
 # was a deliberate act, and the reason for doing it is usually that the FFmpeg already on the PATH is the one
 # that cannot do the job. Deleting the folder goes back to the system copy.
-MANAGED_BIN_DIR = os.path.join(APP_DIR, "ffmpeg", "bin")
+MANAGED_BIN_DIR = os.path.join(DATA_DIR, "ffmpeg", "bin")
 
 
 def _managed(name: str) -> List[str]:
@@ -43,7 +45,8 @@ def find_ffmpeg(refresh: bool = False) -> Optional[str]:
 
     candidates = _managed('ffmpeg') + [shutil.which('ffmpeg')]
     for name in ('ffmpeg.exe', 'ffmpeg'):
-        candidates.append(os.path.join(_APP_DIR, name))
+        # Beside the executable — APP_DIR, not this file's folder, which in a frozen build is _internal/
+        candidates.append(os.path.join(APP_DIR, name))
 
     for path in candidates:
         if path and os.path.isfile(path):
@@ -69,7 +72,7 @@ def find_ffprobe() -> Optional[str]:
         return _ffprobe_cache
 
     candidates = _managed('ffprobe') + [shutil.which('ffprobe')]
-    dirs = [_APP_DIR]
+    dirs = [APP_DIR]
     ffmpeg = find_ffmpeg()
     if ffmpeg:
         dirs.append(os.path.dirname(ffmpeg))
@@ -107,6 +110,28 @@ def probe_duration(filepath: str) -> Optional[float]:
         return float(value[0]) if value else None
     except (subprocess.SubprocessError, ValueError, OSError):
         return None
+
+
+def probe_video_start_offset(filepath: str) -> float:
+    """
+    How many seconds the first video stream starts after the file's first stream — the gap FFmpeg keeps
+    between picture and sound when it reads the file itself. A frameserver serves the picture from zero, so
+    the gap has to be put back for the source's own audio to stay in sync. 0.0 when there is none, or when
+    it cannot be measured.
+    """
+    ffprobe = find_ffprobe()
+    if not ffprobe or not os.path.exists(filepath):
+        return 0.0
+    try:
+        result = childproc.run(
+            [ffprobe, '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+             'stream=start_time:format=start_time', '-of', 'json', filepath], text=True, timeout=30)
+        data = json.loads(result.stdout or '{}')
+        video = float((data.get('streams') or [{}])[0].get('start_time'))
+        first = float((data.get('format') or {}).get('start_time'))
+    except (subprocess.SubprocessError, ValueError, TypeError, OSError):
+        return 0.0
+    return max(0.0, round(video - first, 6))
 
 
 # Encoders whose quality is a single CRF/CQ/QP number — the ones a quality search can tune. ProRes, rawvideo
@@ -369,7 +394,8 @@ class FFmpegCommandBuilder:
         cmd.extend(self.PROGRESS_ARGS)
         return cmd
 
-    def _subtitle_plan(self, input_file: str, output_format: str) -> Tuple[List[str], List[str]]:
+    def _subtitle_plan(self, input_file: str, output_format: str,
+                       input_index: int = 0) -> Tuple[List[str], List[str]]:
         """
         How the source's subtitle streams reach the output: the -map arguments and the -c:s arguments.
 
@@ -380,8 +406,9 @@ class FFmpegCommandBuilder:
 
         A source that cannot be probed (an AviSynth script, no ffprobe) keeps the old blanket behaviour: it is
         better to run the command and let FFmpeg speak than to drop subtitles on the strength of a failed
-        probe.
+        probe. `input_index` is the FFmpeg input the subtitles come from.
         """
+        every = ['-map', f'{input_index}:s?']
         self.dropped_subtitles = []
         configured = self.SUBTITLE_CODEC_BY_CONTAINER.get(output_format, 'copy')
         if not configured or self.subtitle_override == 'drop':
@@ -391,11 +418,11 @@ class FFmpegCommandBuilder:
         if self.subtitle_override == 'convert':
             # The muxer refused what was chosen and we may not know why: convert everything text-shaped into
             # the container's own format, which is the one thing it is guaranteed to accept.
-            return ['-map', '0:s?'], ['-c:s', rules['text'] if rules else configured]
+            return every, ['-c:s', rules['text'] if rules else configured]
 
         codecs = probe_subtitle_codecs(input_file) if rules else []
         if not codecs:
-            return ['-map', '0:s?'], ['-c:s', configured]
+            return every, ['-c:s', configured]
 
         keep: List[int] = []
         targets: List[str] = []
@@ -416,9 +443,9 @@ class FFmpegCommandBuilder:
             return ['-sn'], []
 
         if len(keep) == len(codecs):
-            mapping = ['-map', '0:s?']
+            mapping = every
         else:
-            mapping = [arg for index in keep for arg in ('-map', f'0:s:{index}')]
+            mapping = [arg for index in keep for arg in ('-map', f'{input_index}:s:{index}')]
 
         if len(set(targets)) == 1:
             return mapping, ['-c:s', targets[0]]
@@ -444,22 +471,45 @@ class FFmpegCommandBuilder:
         
         return cmd
     
-    def build_main_command(self, input_file: str, output_file: str,
-                          use_avisynth: bool = False) -> List[str]:
-        """Build main FFmpeg encoding command"""
-        cmd = self._base_command()
-        
-        # Hardware acceleration for NVENC
+    def _add_inputs(self, cmd: List[str], input_file: str,
+                    served: Optional['FrameserverInput']) -> Tuple[int, str]:
+        """
+        The input arguments, for a file FFmpeg reads itself or for one a frameserver serves. Returns the input
+        the audio, subtitles, chapters and tags are taken from, and the file that input is.
+        """
         video_codec = self.settings.get('video_codec', 'libx265')
-        if video_codec in NVENC_ENCODERS:
-            cmd.extend(['-hwaccel', 'cuda'])
-        
-        # Robustness for damaged transport streams: regenerate PTS, drop corrupt packets
-        if self.settings.get('corrupt_fix', False):
-            cmd.extend(['-fflags', '+genpts+discardcorrupt'])
+        # Robustness for damaged transport streams: regenerate PTS, drop corrupt packets. It concerns how the
+        # source file is demuxed, so it goes on whichever input actually reads it.
+        demux_fix = ['-fflags', '+genpts+discardcorrupt'] if self.settings.get('corrupt_fix', False) else []
 
-        # Input file
-        cmd.extend(['-i', input_file, '-y'])
+        if served is None:
+            # Hardware decoding for NVENC; a frameserver hands over decoded frames, so there it has no work
+            if video_codec in NVENC_ENCODERS:
+                cmd.extend(['-hwaccel', 'cuda'])
+            cmd.extend(demux_fix + ['-i', input_file])
+            return 0, input_file
+
+        if served.companion is None:
+            # The script is the whole input, audio included
+            cmd.extend(demux_fix + served.video_args)
+            return 0, served.script
+
+        if served.video_offset > 0:
+            cmd.extend(['-itsoffset', f'{served.video_offset:.6f}'])
+        cmd.extend(served.video_args)
+        cmd.extend(demux_fix + ['-i', served.companion])
+        return 1, served.companion
+
+    def build_main_command(self, input_file: str, output_file: str,
+                           served: Optional['FrameserverInput'] = None) -> List[str]:
+        """
+        Build main FFmpeg encoding command. `input_file` is the media being encoded (the source, or its raw
+        intermediate); `served` says how a frameserver delivers its frames instead, when one is in use.
+        """
+        cmd = self._base_command()
+        video_codec = self.settings.get('video_codec', 'libx265')
+        streams, streams_file = self._add_inputs(cmd, input_file, served)
+        cmd.append('-y')
 
         copy_video = video_codec == 'copy'
         audio_codec = self.settings.get('audio_codec', 'aac')
@@ -474,8 +524,8 @@ class FFmpegCommandBuilder:
         self._add_speed_preset(cmd, video_codec)
 
         # Mapping (subtitles only where the container can carry them, and only in a form it accepts)
-        cmd.extend(['-map', '0:v', '-map', '0:a?'])
-        subtitle_map, subtitle_codec_args = self._subtitle_plan(input_file, output_format)
+        cmd.extend(['-map', '0:v', '-map', f'{streams}:a?'])
+        subtitle_map, subtitle_codec_args = self._subtitle_plan(streams_file, output_format, streams)
         cmd.extend(subtitle_map)
 
         # Stereo downmix (only possible when audio is re-encoded)
@@ -502,7 +552,7 @@ class FFmpegCommandBuilder:
         # Metadata: keep global tags/chapters, but drop per-stream statistics tags
         # (BPS, NUMBER_OF_BYTES, ...) written by mkvmerge for streams we re-encode —
         # otherwise media tools show the *source* bitrate for the new stream.
-        cmd.extend(['-map_metadata', '0', '-map_chapters', '0'])
+        cmd.extend(['-map_metadata', str(streams), '-map_chapters', str(streams)])
         if not copy_video:
             self._clear_stat_tags(cmd, 'v')
         if audio_codec != 'copy':
@@ -639,6 +689,8 @@ class FFmpegCommandBuilder:
             parts.append(f"FFmpeg extras: {extra}")
         if self.settings.get('use_avisynth', False):
             parts.append("AviSynth+")
+        elif FRAMESERVER_DEINTERLACERS.get(self.settings.get('deinterlacer')) == 'vapoursynth'                 and self.settings.get('deinterlace', False) and video_codec != 'copy':
+            parts.append("VapourSynth")
         return "; ".join(parts)
 
     def _add_speed_preset(self, cmd: List[str], video_codec: str):
@@ -793,11 +845,11 @@ class FFmpegCommandBuilder:
         return f'scale=-2:{target_height}'
 
     def _deinterlace_filter(self) -> Optional[str]:
-        """yadif/bwdif filter when deinterlacing without AviSynth+"""
+        """yadif/bwdif filter, when the deinterlacer is FFmpeg's own and no frameserver has done it already"""
         if not self.settings.get('deinterlace', False):
             return None
         deinterlacer = self.settings.get('deinterlacer', 'qtgmc')
-        if deinterlacer == 'qtgmc' or self.settings.get('use_avisynth', False):
+        if deinterlacer in FRAMESERVER_DEINTERLACERS or self.settings.get('use_avisynth', False):
             return None
         mode = 'send_frame' if self.settings.get('reduce_fps', False) else 'send_field'
         parity = 'tff' if self.settings.get('tff', False) else 'bff'
@@ -811,7 +863,7 @@ class FFmpegCommandBuilder:
         par = self._resolved_par()
         dar = self._resolved_dar()
 
-        # FFmpeg-side deinterlacing (QTGMC is done in the AviSynth script instead)
+        # FFmpeg-side deinterlacing (QTGMC and QTempGaussMC are done in the frameserver's script instead)
         deint = self._deinterlace_filter()
         if deint:
             filters.append(deint)

@@ -17,6 +17,8 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,21 +41,129 @@ jobs:
           python -m pip install -r requirements.txt pyinstaller
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+            sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 ffmpeg
+          fi
+          if [ "$RUNNER_OS" = "Windows" ] && [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
+            choco install innosetup --no-progress -y
           fi
 
-      - name: Build with PyInstaller
-        run: python build.py
+      - name: Build with PyInstaller, package archive and installer
+        shell: bash
+        env:
+          # Set these two repository secrets to ship a signed Windows build. Without them the build is
+          # unsigned and SmartScreen will warn about an unknown publisher - see README, "Windows says the app
+          # is not safe". Any Authenticode certificate works (Azure Trusted Signing, SignPath, Certum, EV...).
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_PFX_BASE64" ]; then
+            echo "$WINDOWS_PFX_BASE64" | base64 -d > "$RUNNER_TEMP/cert.pfx"
+            SIGNTOOL=$(cygpath -w "$(ls -1 "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe | tail -1)")
+            echo "Signing with $SIGNTOOL"
+            export SIGN_COMMAND="\"$SIGNTOOL\" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f \"$(cygpath -w "$RUNNER_TEMP/cert.pfx")\" /p \"$WINDOWS_PFX_PASSWORD\" {file}"
+          fi
+          python build.py
+          rm -f "$RUNNER_TEMP/cert.pfx"
+
+      # Windows code signing through SignPath (free for open-source projects): the packaged .zip is submitted,
+      # SignPath signs videer.exe inside it and sends the archive back. Skipped entirely until the
+      # SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable are set, so an unconfigured fork
+      # still builds. The slugs below must match the project set up in SignPath.
+      - name: Upload the unsigned Windows archive for signing
+        id: unsigned
+        if: runner.os == 'Windows' && env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: videer-windows-unsigned
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Sign the Windows archive (SignPath)
+        if: runner.os == 'Windows' && env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: videer
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-zip
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Refresh the checksum of the signed archive
+        if: runner.os == 'Windows' && env.SIGNPATH_API_TOKEN != ''
+        shell: bash
+        run: python build.py --checksum dist/*.zip
+
+      - name: Every expected file was built
+        shell: bash
+        run: |
+          VERSION=$(python -c "import config; print(config.APP_VERSION)")
+          case "$RUNNER_OS" in
+            Windows) expected="videer-$VERSION-windows-x64.zip videer-$VERSION-windows-x64-setup.exe" ;;
+            Linux)   expected="videer-$VERSION-linux-x64.tar.gz videer-$VERSION-linux-x64.deb" ;;
+            macOS)   expected="videer-$VERSION-macos-arm64.tar.gz videer-$VERSION-macos-arm64.dmg" ;;
+          esac
+          for f in $expected; do
+            test -s "dist/$f" || { echo "missing: dist/$f"; exit 1; }
+            test -s "dist/$f.sha256" || { echo "missing: dist/$f.sha256"; exit 1; }
+            echo "ok: $f"
+          done
+
+      # The frozen build installs VapourSynth into a private Python with its own code, then proves QTempGaussMC
+      # runs in it - on every OS, since every wheel it depends on is built per platform.
+      - name: In-app VapourSynth install (frozen build)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/frozen"
+          case "$RUNNER_OS" in
+            Windows) unzip -q dist/*.zip -d "$RUNNER_TEMP/frozen"; APP=$(ls -d "$RUNNER_TEMP"/frozen/*/videer.exe) ;;
+            Linux)   tar xzf dist/*.tar.gz -C "$RUNNER_TEMP/frozen"; APP=$(ls -d "$RUNNER_TEMP"/frozen/*/videer) ;;
+            macOS)   tar xzf dist/*.tar.gz -C "$RUNNER_TEMP/frozen"; APP="$RUNNER_TEMP/frozen/videer.app/Contents/MacOS/videer" ;;
+          esac
+          timeout 900 "$APP" --install-vapoursynth
+          ls "$(dirname "$APP")/vapoursynth/installed.json"
 
       - name: Smoke-test the frozen build (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y ffmpeg
           ffmpeg -y -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -f lavfi -i sine=frequency=440 -t 3 -c:v libx264 -c:a aac /tmp/clip.mp4
-          mkdir -p /tmp/frozen && tar xzf dist/*.tar.gz -C /tmp/frozen
-          QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/tmp/clip.mp4 timeout 600 /tmp/frozen/*/videer
+          QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/tmp/clip.mp4 timeout 600 "$RUNNER_TEMP"/frozen/*/videer
           ls -la /tmp/clip_libx264_aac_crf30_abr96.mkv
           test ! -e /tmp/clip_libx264_aac_crf30_abr96.part.mkv
+
+      - name: Deinterlace with QTempGaussMC through the frozen build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # 25i in, 50p out: QTempGaussMC bobs every field into a frame of its own
+          ffmpeg -y -loglevel error -f lavfi -i "testsrc2=size=720x576:rate=50,interlace=scan=tff,setfield=tff" -f lavfi -i sine=frequency=440 -t 3 -c:v libx264 -flags +ilme+ildct -c:a aac /tmp/interlaced.mkv
+          QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/tmp/interlaced.mkv \
+            VIDEER_SELFTEST_SETTINGS='{"deinterlace": true, "deinterlacer": "qtempgaussmc", "tff": true}' \
+            timeout 600 "$RUNNER_TEMP"/frozen/*/videer
+          OUT=/tmp/interlaced_libx264_aac_crf30_abr96.mkv
+          ffprobe -v error -count_frames -select_streams v -show_entries stream=r_frame_rate,nb_read_frames -of csv=p=0 "$OUT" | tee /tmp/probe.txt
+          grep -q "^50/1,150$" /tmp/probe.txt
+          ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$OUT" | grep -q aac
+
+      - name: Install the .deb and run the installed copy (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./dist/*.deb
+          test -x /usr/bin/videer && test -f /usr/share/applications/videer.desktop
+          # /opt is not the user's to write to: what videer keeps goes to ~/.local/share/videer instead
+          rm -f /tmp/clip_libx264_aac_crf30_abr96.mkv
+          QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/tmp/clip.mp4 timeout 600 videer
+          ls -la /tmp/clip_libx264_aac_crf30_abr96.mkv
+          test -d "$HOME/.local/share/videer"
+
+      - name: The disk image mounts and holds the app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil attach dist/*.dmg -mountpoint /tmp/videer-dmg -nobrowse
+          test -x /tmp/videer-dmg/videer.app/Contents/MacOS/videer
+          test -L /tmp/videer-dmg/Applications
+          hdiutil detach /tmp/videer-dmg
 
       - uses: actions/upload-artifact@v4
         with:

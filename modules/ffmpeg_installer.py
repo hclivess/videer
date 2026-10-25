@@ -20,14 +20,15 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
-                               QPushButton, QVBoxLayout)
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QMessageBox, QProgressBar, QPushButton,
+                               QVBoxLayout)
 from modules.widgets import WrapLabel
 
 from config import DEFAULT_QUALITY_METRIC
+from utils.download import download
 from utils.ffmpeg_utils import (MANAGED_BIN_DIR, ffmpeg_has_encoder, ffmpeg_has_filter, find_ffmpeg,
                                 find_ffprobe, forget_ffmpeg)
 
@@ -94,26 +95,6 @@ def managed_build_installed() -> bool:
 # ----------------------------------------------------------------------
 # The work itself, free of Qt so it can be tested and driven from anywhere
 # ----------------------------------------------------------------------
-def download(url: str, target: str,
-             on_progress: Optional[Callable[[int, int], None]] = None,
-             should_stop: Optional[Callable[[], bool]] = None) -> None:
-    """Fetch a file, reporting bytes as they arrive. Raises on anything that goes wrong."""
-    request = urllib.request.Request(url, headers={'User-Agent': 'videer'})
-    with urllib.request.urlopen(request, timeout=60) as response, open(target, 'wb') as handle:
-        total = int(response.headers.get('Content-Length') or 0)
-        done = 0
-        while True:
-            if should_stop and should_stop():
-                raise InterruptedError("cancelled")
-            chunk = response.read(256 * 1024)
-            if not chunk:
-                break
-            handle.write(chunk)
-            done += len(chunk)
-            if on_progress:
-                on_progress(done, total)
-
-
 def extract_binaries(archive: str, kind: str, destination: str) -> List[str]:
     """
     Pull just ffmpeg and ffprobe out of the archive — the rest of a build is documentation, presets and
