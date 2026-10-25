@@ -1337,8 +1337,12 @@ class UIManager(QWidget):
             forget_checks()
         self.vapoursynth_status.setText("QTempGaussMC: checking VapourSynth…")
         self._vapoursynth_check = StatusCheck(self.main_window)
-        self._vapoursynth_check.done.connect(self.vapoursynth_status.setText)
+        self._vapoursynth_check.done.connect(self._show_vapoursynth_status)
         self._vapoursynth_check.start()
+
+    def _show_vapoursynth_status(self, line: str, detail: str):
+        self.vapoursynth_status.setText(line)
+        self.vapoursynth_status.setToolTip(detail)
 
     def open_vapoursynth_setup(self):
         """The QTempGaussMC backend: its state, and the offer to install it"""

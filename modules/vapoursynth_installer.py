@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.error
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, Tuple
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout, QPlainTextEdit
@@ -143,7 +143,7 @@ def install_vapoursynth(on_status: Callable[[str], None],
     if not os.path.isfile(vspipe):
         raise InstallError("VapourSynth installed, but it brought no vspipe")
     if sys.platform != 'win32':
-        _configure_vsscript(python, vspipe)
+        _configure_vsscript(home, python, vspipe)
 
     on_status("Checking that QTempGaussMC runs…")
     problem = check_environment(vspipe)
@@ -184,15 +184,38 @@ def _pip_install(python: str, requirements: str, on_status: Callable[[str], None
         raise InstallError("pip could not install the VapourSynth packages:\n" + "\n".join(tail))
 
 
-def _configure_vsscript(python: str, vspipe: str) -> None:
+# VapourSynth's own configuration writer, run inside the managed Python, with one addition: where its search for
+# the Python library comes up empty, it is handed the one this install ships. python-build-standalone links the
+# interpreter statically on Linux, so the search — which asks the dynamic loader where the running interpreter's
+# symbols live — finds the executable, and its fallback looks in the build machine's directories. The file format
+# stays VapourSynth's business.
+_CONFIGURE_SCRIPT = """import sys
+from pathlib import Path
+import vapoursynth._utils as utils
+shipped = Path(sys.argv[1])
+search = utils._find_python_symbol_path
+utils._find_python_symbol_path = lambda: search() or (shipped if shipped.is_file() else None)
+utils.vapoursynth_config()
+"""
+
+
+def _shipped_libpython(home: str) -> str:
+    short = ".".join(PYTHON_VERSION.split(".")[:2])
+    name = f"libpython{short}.dylib" if sys.platform == 'darwin' else f"libpython{short}.so.1.0"
+    return os.path.join(home, "lib", name)
+
+
+def _configure_vsscript(home: str, python: str, vspipe: str) -> None:
     """
-    Tell VSScript which Python to embed. `vapoursynth config` writes vapoursynth.toml under $XDG_CONFIG_HOME, which
-    for this install is a folder inside it (see MANAGED_CONFIG_HOME) — the user's own configuration is not touched.
+    Tell VSScript which Python to embed. VapourSynth's configuration lives in vapoursynth.toml under
+    $XDG_CONFIG_HOME, which for this install is a folder inside it (see MANAGED_CONFIG_HOME) — the user's own
+    configuration is not touched.
     """
     os.makedirs(MANAGED_CONFIG_HOME, exist_ok=True)
     try:
-        result = childproc.run([python, '-m', 'vapoursynth', 'config'], text=True, encoding='utf-8',
-                               errors='replace', timeout=120, env=vspipe_env(vspipe))
+        result = childproc.run([python, '-c', _CONFIGURE_SCRIPT, _shipped_libpython(home)],
+                               text=True, encoding='utf-8', errors='replace', timeout=120,
+                               env=vspipe_env(vspipe))
     except (OSError, subprocess.SubprocessError) as exc:
         raise InstallError(f"could not configure VapourSynth: {exc}") from exc
     if result.returncode != 0 or 'successfully' not in (result.stdout or '').lower():
@@ -238,30 +261,39 @@ class VapourSynthInstaller(QThread):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
-def describe_status() -> str:
-    """One line for the Processing tab: is QTempGaussMC usable here, and with which vspipe"""
+def describe_status() -> Tuple[str, str]:
+    """
+    (one line, detail) for the Processing tab: whether QTempGaussMC is usable here and where its VapourSynth
+    comes from. The line names the source, the detail the full path — paths are long, and a status line is
+    read at a glance (and turns up in screenshots).
+    """
     vspipe = find_vspipe()
     if not vspipe:
         if available_build() is None:
-            return "QTempGaussMC: not available on this platform (VapourSynth has no build for it)."
-        return "QTempGaussMC: VapourSynth is not installed."
+            return "QTempGaussMC: not available on this platform (VapourSynth has no build for it).", ""
+        return "QTempGaussMC: VapourSynth is not installed.", ""
     problem = check_environment(vspipe)
     if problem:
-        return f"QTempGaussMC: VapourSynth found but cannot run it — {problem}"
-    origin = "installed by videer" if vspipe == managed_vspipe() else "found"
-    return f"QTempGaussMC: ready — VapourSynth {origin} ({vspipe})"
+        return f"QTempGaussMC: VapourSynth found but cannot run it — {problem}", vspipe
+    if vspipe == managed_vspipe():
+        origin = "installed by videer"
+    elif os.environ.get('VIDEER_VSPIPE'):
+        origin = "from VIDEER_VSPIPE"
+    else:
+        origin = "found on this machine"
+    return f"QTempGaussMC: ready — VapourSynth {origin}", vspipe
 
 
 class StatusCheck(QThread):
     """describe_status() off the GUI thread: the check runs QTempGaussMC once, which takes a few seconds"""
 
-    done = Signal(str)
+    done = Signal(str, str)             # line, detail
 
     def run(self):
         try:
-            self.done.emit(describe_status())
+            self.done.emit(*describe_status())
         except Exception as exc:                          # noqa: BLE001 - shown, never swallowed
-            self.done.emit(f"QTempGaussMC: could not check VapourSynth — {type(exc).__name__}: {exc}")
+            self.done.emit(f"QTempGaussMC: could not check VapourSynth — {type(exc).__name__}: {exc}", "")
 
 
 class VapourSynthSetupDialog(QDialog):
@@ -309,7 +341,9 @@ class VapourSynthSetupDialog(QDialog):
         self._describe()
 
     def _describe(self):
-        self.summary.setText(describe_status())
+        line, detail = describe_status()
+        self.summary.setText(line)
+        self.summary.setToolTip(detail)
         self.remove_button.setEnabled(os.path.isdir(MANAGED_VS_DIR))
         if not self.build:
             self.install_button.setEnabled(False)
