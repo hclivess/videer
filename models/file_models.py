@@ -115,6 +115,11 @@ class VideoFile:
         self.source_size: Optional[int] = None
         self.output_size: Optional[int] = None
 
+        # Per-file settings. Sparse on purpose: only the keys this file wants different from the queue's
+        # are present, so a later change to the queue's own settings still reaches every file that did not
+        # ask to differ. Restricted to config.PER_FILE_KEYS by the editor that writes it.
+        self.overrides: Dict[str, Any] = {}
+
         # Quality metrics
         self.vmaf_score: Optional[float] = None      # score from the verification pass, in whatever metric
         self.quality_metric: Optional[str] = None    # which metric produced vmaf_score
@@ -200,6 +205,40 @@ class VideoFile:
         stem, ext = os.path.splitext(self.get_full_output_path(output_dir))
         return f"{stem}.part{ext}"
     
+    # ------------------------------------------------------------------
+    # Per-file settings
+    # ------------------------------------------------------------------
+    def settings_with_overrides(self, base: Dict[str, Any]) -> Dict[str, Any]:
+        """The queue's settings as they apply to this file"""
+        if not self.overrides:
+            return base
+        return {**base, **self.overrides}
+
+    def set_overrides(self, overrides: Optional[Dict[str, Any]]):
+        """Replace this file's overrides. Empty or None clears them."""
+        self.overrides = dict(overrides) if overrides else {}
+
+    def clear_overrides(self):
+        self.overrides = {}
+
+    @property
+    def has_overrides(self) -> bool:
+        return bool(self.overrides)
+
+    def override_summary(self, labels: Optional[Dict[str, str]] = None) -> str:
+        """Short 'Quality 18, grain-aware' style line naming what this file does differently"""
+        if not self.overrides:
+            return ""
+        labels = labels or {}
+        parts = []
+        for key, value in self.overrides.items():
+            name = labels.get(key, key)
+            if isinstance(value, bool):
+                parts.append(name if value else f"no {name[0].lower()}{name[1:]}")
+            else:
+                parts.append(f"{name} {value}")
+        return ", ".join(parts)
+
     def get_file_size_mb(self) -> float:
         """Get file size in MB"""
         try:

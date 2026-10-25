@@ -18,6 +18,7 @@ from typing import List, Dict, Any, Optional, Callable
 from PySide6.QtCore import QThread, Signal, QObject, QMutex
 
 from models.file_models import VideoFile, FAILURE_CONTEXT_LINES
+from config import PER_FILE_LABELS
 from utils.ffmpeg_utils import (FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS,
                                 ffmpeg_has_encoder)
 from modules.frameservers import FrameserverError, FrameserverInput, frameserver_for, frameserver_issues
@@ -741,20 +742,31 @@ class ProcessThread(QThread):
 
     def _settings_for(self, file: VideoFile, index: int) -> Dict[str, Any]:
         """
-        The settings this particular file is encoded with. Identical to the queue's unless per-file quality
-        matching is on, in which case the CRF is the one this file's own search asked for.
+        The settings this particular file is encoded with, resolved in order of specificity:
+
+          1. the queue's settings
+          2. this file's own overrides, if it has any
+          3. the CRF its own quality search asked for, if per-file quality matching is on
+
+        A file's override of 'crf' is deliberately overruled by a quality search, which measures rather
+        than guesses — but a file that overrode its *codec* still searches against that codec.
         """
-        if not self.settings.get('auto_match_quality'):
-            return self.settings
-        if self.settings.get('video_codec') not in CRF_ENCODERS:
-            return self.settings
+        settings = file.settings_with_overrides(self.settings)
+        if settings is not self.settings:
+            file.log_info(f"Per-file settings: {file.override_summary(PER_FILE_LABELS)}")
+
+        if not settings.get('auto_match_quality'):
+            return settings
+        if settings.get('video_codec') not in CRF_ENCODERS:
+            return settings
         if self.should_stop:
-            return self.settings
+            return settings
 
-        crf = self._match_quality(file, index)
-        return self.settings if crf is None else {**self.settings, 'crf': crf}
+        crf = self._match_quality(file, index, settings)
+        return settings if crf is None else {**settings, 'crf': crf}
 
-    def _match_quality(self, file: VideoFile, index: int) -> Optional[int]:
+    def _match_quality(self, file: VideoFile, index: int,
+                       settings: Optional[Dict[str, Any]] = None) -> Optional[int]:
         """
         Search this file for the CRF it needs. Returns None to fall back to the queue's CRF — a search that
         cannot answer must not fail the file, because the fallback still produces a perfectly good encode.
@@ -763,7 +775,8 @@ class ProcessThread(QThread):
         # top would be a cycle.
         from modules.quality_analyzer import QualitySearch, format_score
 
-        knob = quality_knob(self.settings.get('video_codec'))
+        settings = settings if settings is not None else self.settings
+        knob = quality_knob(settings.get('video_codec'))
         file.log_info(f"Quality match: searching for this file's own {knob}")
         self.info_signal.emit(f"Matching quality for {file.filename}…")
         self._phase_start = time.time()
@@ -785,7 +798,7 @@ class ProcessThread(QThread):
         self._emit_search_progress(file, 0, 1)
 
         search = QualitySearch(
-            file.filepath, self.settings,
+            file.filepath, settings,
             on_progress=on_progress,
             on_step=on_step,
             should_stop=lambda: self.should_stop,

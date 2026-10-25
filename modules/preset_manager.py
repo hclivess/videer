@@ -9,7 +9,8 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 
-from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION, DATA_DIR
+from config import (QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION, DATA_DIR,
+                    PRESET_SHAPED_KEYS, output_action_of)
 from utils.file_utils import write_json_atomic
 
 
@@ -243,7 +244,7 @@ class PresetManager(QObject):
 
         # Checkboxes
         checkbox_fields = [
-            'stereo', 'deinterlace', 'tff', 'reduce_fps',
+            'stereo', 'deinterlace', 'tff', 'reduce_fps', 'grain_mode',
             'use_avisynth', 'use_ffms2', 'transcode_video',
             'transcode_audio', 'corrupt_fix', 'replace_files', 'delete_source',
             'calculate_vmaf', 'no_upscale', 'nvenc_aq', 'nvenc_b_ref', 'auto_match_quality'
@@ -252,6 +253,11 @@ class PresetManager(QObject):
         for field in checkbox_fields:
             if field in settings and field in ui.controls:
                 ui.controls[field].setChecked(settings[field])
+
+        # replace_files / delete_source are still the stored keys, so old presets and queue files keep
+        # working, but the UI offers them as one ordered choice — translate on the way in.
+        if ('replace_files' in settings or 'delete_source' in settings) and 'output_action' in ui.controls:
+            ui.set_output_action(output_action_of(settings))
         
         # Text fields
         if 'ffmpeg_extras' in settings:
@@ -266,8 +272,11 @@ class PresetManager(QObject):
             return
         
         preset = QUALITY_PRESETS[preset_name]
-        settings = {k: v for k, v in preset.items() if k != 'name'}
-        self.apply_settings(settings)
+        chosen = {k: v for k, v in preset.items() if k != 'name'}
+        # A bundled preset describes a whole way of encoding, so the keys it is answerable for start from
+        # the factory value rather than from whatever the last preset left behind.
+        baseline = {k: DEFAULT_SETTINGS[k] for k in PRESET_SHAPED_KEYS if k in DEFAULT_SETTINGS}
+        self.apply_settings({**baseline, **chosen})
     
     def get_available_presets(self) -> List[Dict[str, str]]:
         """

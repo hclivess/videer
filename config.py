@@ -10,7 +10,7 @@ import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.17"
+APP_VERSION = "3.17.1"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -454,6 +454,121 @@ DEFAULT_THREADS = MAX_THREADS
 LOG_FORMAT = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
 
 # Processing defaults
+# ---------------------------------------------------------------------------
+# Film grain
+# ---------------------------------------------------------------------------
+# Grain is the hardest thing for a modern encoder to keep. Its detail is random, so the psychovisual
+# models that make x264/x265 efficient read it as noise worth discarding, and at a normal CRF a grainy
+# 35mm transfer comes out plastic and smeared. Every encoder has its own answer, so there is no single
+# flag to set:
+#
+#   x264/x265   --tune grain      stops the encoder throwing grain away, at a real bitrate cost
+#   SVT-AV1     film-grain=N      removes the grain, then synthesises it back at playback (cheap)
+#   libaom      denoise-noise-level  the same idea under a different name
+#   NVENC       nothing comparable; the hardware encoder has no grain-aware mode
+#
+# GRAIN_TUNE maps each encoder to how it is asked. "tune" values go to -tune, "params" values are
+# appended to that encoder's own -<codec>-params option.
+GRAIN_TUNE = {
+    'libx264':    {'tune': 'grain'},
+    'libx265':    {'tune': 'grain'},
+    'libsvtav1':  {'params': 'film-grain=8:film-grain-denoise=0'},
+    'libaom-av1': {'params': 'denoise-noise-level=8'},
+}
+
+# Encoders whose -params option is named after the codec rather than the encoder
+PARAMS_OPTION = {
+    'libx264': '-x264-params',
+    'libx265': '-x265-params',
+    'libsvtav1': '-svtav1-params',
+    'libaom-av1': '-aom-params',
+}
+
+# How much to lower CRF when grain preservation is on. Grain costs bitrate; keeping the same CRF as a
+# clean source would spend it on the grain and take it from everything else.
+GRAIN_CRF_OFFSET = 2
+
+# Encoders with no grain-aware mode at all, so the option is shown as unavailable rather than ignored
+GRAIN_UNSUPPORTED_NOTE = ("This encoder has no grain-aware mode. Grain preservation applies to "
+                          "x264, x265, SVT-AV1 and libaom-AV1.")
+
+# ---------------------------------------------------------------------------
+# Per-file settings
+# ---------------------------------------------------------------------------
+# Settings a single queue entry may override. Deliberately not everything: the keys here are the ones
+# that differ between files of the same batch (a grainy film wants a different CRF and tune from the
+# rest), while things like thread count or the output directory belong to the run as a whole and would
+# only cause confusion if they could differ per file.
+PER_FILE_KEYS = (
+    'video_codec',
+    'audio_codec',
+    'crf',
+    'abr',
+    'preset',
+    'output_format',
+    'grain_mode',
+    'stereo',
+    'deinterlace',
+    'tff',
+    'reduce_fps',
+    'resolution_mode',
+    'custom_width',
+    'custom_height',
+    'ffmpeg_extras',
+)
+
+# Human labels for the per-file dialog and the queue list's override summary
+PER_FILE_LABELS = {
+    'video_codec': 'Video codec',
+    'audio_codec': 'Audio codec',
+    'crf': 'Quality',
+    'abr': 'Audio bitrate',
+    'preset': 'Speed preset',
+    'output_format': 'Container',
+    'grain_mode': 'Preserve film grain',
+    'stereo': 'Downmix to stereo',
+    'deinterlace': 'Deinterlace',
+    'tff': 'Top field first',
+    'reduce_fps': 'Halve frame rate after deinterlacing',
+    'resolution_mode': 'Resolution',
+    'custom_width': 'Custom width',
+    'custom_height': 'Custom height',
+    'ffmpeg_extras': 'Extra FFmpeg arguments',
+}
+
+# ---------------------------------------------------------------------------
+# What happens to the source file when an encode succeeds
+# ---------------------------------------------------------------------------
+# Stored as two independent booleans for backward compatibility with saved presets and queue files, but
+# only three of the four combinations mean anything, so the UI offers them as one choice.
+#   keep     output lands beside the source, both kept          replace_files=False delete_source=False
+#   backup   output takes the source's name, source kept as .old replace_files=True  delete_source=False
+#   replace  output takes the source's name, source deleted      replace_files=True  delete_source=True
+# (replace_files=False with delete_source=True also deletes the source, keeping the encode under its own
+# new name — reachable from old presets, so it is still honoured, just not offered.)
+OUTPUT_ACTIONS = (
+    ('keep', 'Keep both — write the encode alongside the original',
+     {'replace_files': False, 'delete_source': False}),
+    ('backup', 'Replace, keep a backup — original becomes <name>.old<ext>',
+     {'replace_files': True, 'delete_source': False}),
+    ('replace', 'Replace and delete the original — no undo',
+     {'replace_files': True, 'delete_source': True}),
+)
+
+
+def output_action_of(settings) -> str:
+    """Which of the three offered source-handling choices a settings dict represents"""
+    replace = bool(settings.get('replace_files'))
+    delete = bool(settings.get('delete_source'))
+    if replace and delete:
+        return 'replace'
+    if replace:
+        return 'backup'
+    if delete:
+        return 'replace_no_rename'   # legacy combination; honoured, not offered
+    return 'keep'
+
+
 DEFAULT_SETTINGS = {
     "video_codec": "libx265",
     "audio_codec": "aac",
@@ -466,6 +581,7 @@ DEFAULT_SETTINGS = {
     "deinterlacer": "qtgmc",
     "tff": False,
     "reduce_fps": False,
+    "grain_mode": False,
     "use_avisynth": False,
     "use_ffms2": False,
     "transcode_video": False,
@@ -563,6 +679,20 @@ QUEUE_AUTOSAVE_FILE = os.path.join(DATA_DIR, "queue.json")
 QUEUE_FILE_FORMAT = 1
 
 # Preset configurations
+# Keys a bundled preset is answerable for. Presets declare only what they care about, so without this
+# a preset picked after another one inherits the leftovers — choosing "Animation" straight after
+# "Interlaced TV / DVD" would quietly keep deinterlacing on. Applying a bundled preset resets these to
+# the factory value first, then overlays the preset, so the same preset always gives the same encode.
+# Deliberately excludes the run's own settings — thread count, source handling, quality matching,
+# PAR/DAR — which belong to how you work rather than to the preset.
+PRESET_SHAPED_KEYS = (
+    'video_codec', 'audio_codec', 'crf', 'abr', 'preset', 'output_format',
+    'grain_mode', 'stereo',
+    'deinterlace', 'deinterlacer', 'tff', 'reduce_fps',
+    'use_avisynth', 'use_ffms2',
+    'resolution_mode', 'custom_width', 'custom_height', 'no_upscale', 'scale_algorithm',
+)
+
 QUALITY_PRESETS = {
     "web": {
         "name": "Web Quality (H.264/AAC)",
@@ -598,6 +728,101 @@ QUALITY_PRESETS = {
         "abr": 160,
         "preset": "Medium",
         "output_format": "MKV"
+    },
+    # ---- film-sourced material -------------------------------------------------
+    "grain": {
+        "name": "Film Grain (H.265, grain-aware)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 20,
+        "abr": 256,
+        "preset": "Slow",
+        "output_format": "MKV",
+        "grain_mode": True
+    },
+    "grain_av1": {
+        "name": "Film Grain (AV1, synthesised)",
+        "video_codec": "libsvtav1",
+        "audio_codec": "copy",
+        "crf": 28,
+        "abr": 256,
+        "preset": "Medium",
+        "output_format": "MKV",
+        "grain_mode": True
+    },
+    # ---- the common job: a bloated source, audio left alone --------------------
+    "shrink": {
+        "name": "Shrink Bloated Source (H.265, audio untouched)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 23,
+        "abr": 256,
+        "preset": "Medium",
+        "output_format": "MKV",
+        "grain_mode": False
+    },
+    "shrink_hard": {
+        "name": "Shrink Hard (H.265, smaller, audio untouched)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 26,
+        "abr": 256,
+        "preset": "Slow",
+        "output_format": "MKV",
+        "grain_mode": False
+    },
+    # ---- interlaced capture ----------------------------------------------------
+    "tv": {
+        "name": "Interlaced TV / DVD (QTGMC to frame rate)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 20,
+        "abr": 256,
+        "preset": "Slow",
+        "output_format": "MKV",
+        "deinterlace": True,
+        "deinterlacer": "qtgmc",
+        "reduce_fps": True,
+        "use_avisynth": True,
+        "use_ffms2": True
+    },
+    "tv_smooth": {
+        "name": "Interlaced TV / DVD (QTGMC to field rate, 50p/60p)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 20,
+        "abr": 256,
+        "preset": "Slow",
+        "output_format": "MKV",
+        "deinterlace": True,
+        "deinterlacer": "qtgmc",
+        "reduce_fps": False,
+        "use_avisynth": True,
+        "use_ffms2": True
+    },
+    # ---- animation -------------------------------------------------------------
+    "animation": {
+        "name": "Animation (H.265, flat colour, no grain)",
+        "video_codec": "libx265",
+        "audio_codec": "copy",
+        "crf": 22,
+        "abr": 192,
+        "preset": "Slow",
+        "output_format": "MKV",
+        "grain_mode": False
+    },
+    # ---- small files -----------------------------------------------------------
+    "phone": {
+        "name": "Phone / Tablet (720p, stereo)",
+        "video_codec": "libx265",
+        "audio_codec": "aac",
+        "crf": 28,
+        "abr": 128,
+        "preset": "Fast",
+        "output_format": "MP4",
+        "stereo": True,
+        "resolution_mode": "720p (HD)",
+        "no_upscale": True
     },
     "vvc": {
         "name": "Next Generation (H.266 VVC/Opus)",

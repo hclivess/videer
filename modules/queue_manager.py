@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog
                                QLabel, QMessageBox, QPushButton, QVBoxLayout)
 
 from utils.file_utils import write_json_atomic
-from config import APP_NAME, APP_VERSION, QUEUE_AUTOSAVE_FILE, QUEUE_FILE_FORMAT, stateless
+from config import (PER_FILE_KEYS, APP_NAME, APP_VERSION, QUEUE_AUTOSAVE_FILE, QUEUE_FILE_FORMAT,
+                    stateless)
 from models.file_models import canonical_path
 
 QUEUE_FILE_FILTER = "videer Queue (*.json);;All Files (*.*)"
@@ -36,9 +37,18 @@ def serialize_queue(files: List[Any], settings: Optional[Dict[str, Any]] = None)
         "version": APP_VERSION,
         "saved_at": datetime.now().isoformat(timespec='seconds'),
         "settings": settings,
-        "files": [{"path": os.path.abspath(f.filepath),
-                   "status": getattr(f, 'status', 'pending')} for f in files],
+        "files": [_serialize_file(f) for f in files],
     }
+
+
+def _serialize_file(f: Any) -> Dict[str, Any]:
+    """One queue entry. 'overrides' is omitted when empty so ordinary queue files stay unchanged."""
+    entry = {"path": os.path.abspath(f.filepath),
+             "status": getattr(f, 'status', 'pending')}
+    overrides = getattr(f, 'overrides', None)
+    if overrides:
+        entry["overrides"] = dict(overrides)
+    return entry
 
 
 def write_queue_file(path: str, data: Dict[str, Any]):
@@ -262,12 +272,21 @@ class QueueManager(QObject):
                 file_manager.clear_queue()
             added = file_manager.add_files([e['path'] for e in wanted], preserve_order=True)
 
-            # Re-attach the saved status so a restored queue still shows what already succeeded or failed
-            status_by_path = {canonical_path(e['path']): e['status'] for e in wanted}
+            # Re-attach the saved status so a restored queue still shows what already succeeded or failed,
+            # and the per-file settings it was queued with
+            by_path = {canonical_path(e['path']): e for e in wanted}
             for file in file_manager.get_queue():
-                status = status_by_path.get(file.canonical)
+                entry = by_path.get(file.canonical)
+                if not entry:
+                    continue
+                status = entry.get('status')
                 if status and status != 'running':      # an interrupted file is pending again, not running
                     file.status = status
+                overrides = entry.get('overrides')
+                if isinstance(overrides, dict):
+                    # Filter on load: a queue file written by a newer version, or hand-edited, must not be
+                    # able to smuggle keys the per-file editor would never produce into an encode.
+                    file.set_overrides({k: v for k, v in overrides.items() if k in PER_FILE_KEYS})
         finally:
             self._restoring = False
 

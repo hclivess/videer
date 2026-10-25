@@ -11,7 +11,8 @@ import shutil
 from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple
 import subprocess
 from utils import childproc
-from config import (PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
+from config import (GRAIN_TUNE, PARAMS_OPTION, GRAIN_CRF_OFFSET,
+                    PRESET_MAPPING, NVENC_PRESET_MAPPING, SVTAV1_PRESET_MAPPING,
                     VP9_CPU_USED_MAPPING, LIBAOM_CPU_USED_MAPPING, VVENC_PRESET_MAPPING,
                     NVENC_ENCODERS, PAR_PRESETS, DAR_PRESETS,
                     RESOLUTION_PRESETS, DEFAULT_SCALE_ALGORITHM,
@@ -647,12 +648,14 @@ class FFmpegCommandBuilder:
         video = [video_codec]
         if video_codec in NVENC_ENCODERS or video_codec in ('libx264', 'libx265', 'libvvenc', 'libsvtav1',
                                                             'libaom-av1', 'libvpx-vp9'):
-            video.append(f"{quality_knob(video_codec)} {self.settings.get('crf', 23)}")
+            video.append(f"{quality_knob(video_codec)} {self.effective_crf(video_codec)}")
         elif video_codec == 'prores_ks':
             video.append("profile 3 (422 HQ)")
         preset = self._encoder_preset(video_codec)
         if preset:
             video.append(preset)
+        if self.grain_active(video_codec):
+            video.append("grain-aware")
         parts = [f"Video: {', '.join(video)}"]
 
         audio = [audio_codec]
@@ -692,6 +695,58 @@ class FFmpegCommandBuilder:
         elif FRAMESERVER_DEINTERLACERS.get(self.settings.get('deinterlacer')) == 'vapoursynth'                 and self.settings.get('deinterlace', False) and video_codec != 'copy':
             parts.append("VapourSynth")
         return "; ".join(parts)
+
+    # ------------------------------------------------------------------
+    # Film grain
+    # ------------------------------------------------------------------
+    def grain_requested(self) -> bool:
+        return bool(self.settings.get('grain_mode'))
+
+    def grain_supported(self, video_codec: Optional[str] = None) -> bool:
+        codec = video_codec or self.settings.get('video_codec', 'libx265')
+        return codec in GRAIN_TUNE
+
+    def grain_active(self, video_codec: Optional[str] = None) -> bool:
+        """Grain preservation was asked for AND this encoder can do something about it"""
+        return self.grain_requested() and self.grain_supported(video_codec)
+
+    def effective_crf(self, video_codec: Optional[str] = None) -> int:
+        """
+        The quality number this encode actually uses. Grain preservation spends bitrate on holding the
+        grain, so it also lowers CRF a little: left at the clean-source number the encoder keeps the
+        grain and takes the bits from everything else.
+        """
+        codec = video_codec or self.settings.get('video_codec', 'libx265')
+        crf = int(self.settings.get('crf', 23))
+        if self.grain_active(codec):
+            crf = max(0, crf - GRAIN_CRF_OFFSET)
+        return crf
+
+    def _add_grain_settings(self, cmd: List[str], video_codec: str):
+        """
+        Ask the encoder to preserve grain, in whatever way it understands. A -params option is merged
+        rather than set, so a value the user typed into the extras box is not thrown away.
+        """
+        if not self.grain_active(video_codec):
+            return
+        plan = GRAIN_TUNE[video_codec]
+        if 'tune' in plan:
+            cmd.extend(['-tune', plan['tune']])
+        if 'params' in plan:
+            option = PARAMS_OPTION.get(video_codec)
+            if option:
+                self._merge_params_option(cmd, option, plan['params'])
+
+    @staticmethod
+    def _merge_params_option(cmd: List[str], option: str, addition: str):
+        """Append to an existing -<codec>-params on the command, or add the option if it is not there"""
+        if option in cmd:
+            index = cmd.index(option) + 1
+            if index < len(cmd):
+                existing = cmd[index].strip(':')
+                cmd[index] = f"{existing}:{addition}" if existing else addition
+                return
+        cmd.extend([option, addition])
 
     def _add_speed_preset(self, cmd: List[str], video_codec: str):
         """Add the encoder-specific speed/quality trade-off option"""
@@ -754,7 +809,7 @@ class FFmpegCommandBuilder:
             return
 
         cmd.extend(['-c:v', video_codec])
-        crf = str(self.settings.get('crf', 23))
+        crf = str(self.effective_crf(video_codec))
 
         if video_codec in NVENC_ENCODERS:
             cmd.extend(['-cq', crf, '-b:v', '0'])
@@ -768,7 +823,9 @@ class FFmpegCommandBuilder:
             pass
         else:
             cmd.extend(['-crf', crf])
-    
+
+        self._add_grain_settings(cmd, video_codec)
+
     def _add_audio_codec_settings(self, cmd: List[str]):
         """Add audio codec settings to command"""
         audio_codec = self.settings.get('audio_codec', 'aac')

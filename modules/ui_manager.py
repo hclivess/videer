@@ -3,13 +3,13 @@ UI Manager for videer
 Handles all UI creation and management
 """
 
-from typing import Dict, Any, Optional
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                              QCheckBox, QPushButton, QLineEdit, QSlider, 
-                              QTextEdit, QFileDialog, QGroupBox, QListWidget, 
-                              QProgressBar, QSplitter, QStatusBar, QListWidgetItem, 
+from typing import Dict, Any, List, Optional
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                              QCheckBox, QPushButton, QLineEdit, QSlider,
+                              QTextEdit, QFileDialog, QGroupBox, QListWidget,
+                              QProgressBar, QSplitter, QStatusBar, QListWidgetItem,
                               QTabWidget, QSpinBox, QDoubleSpinBox, QComboBox, QGridLayout,
-                              QFrame, QSizePolicy, QMessageBox)
+                              QFrame, QSizePolicy, QMessageBox, QMenu, QDialog)
 from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QSize
 from PySide6.QtGui import (QAction, QDragEnterEvent, QDragMoveEvent, QDropEvent, QColor,
                            QBrush)
@@ -22,7 +22,10 @@ from config import (VIDEO_CODECS, AUDIO_CODECS, OUTPUT_FORMATS, VIDEO_EXTENSIONS
                    APP_NAME, APP_VERSION, QUALITY_POOLS, QUALITY_SAMPLE_COUNT,
                    QUALITY_SAMPLE_SECONDS, DEFAULT_QUALITY_METRIC, DEFAULT_QUALITY_POOL,
                    NVENC_ENCODERS, CRF_SCALE_MAX, DEFAULT_CRF_SCALE_MAX, QUALITY_SCALE,
-                   quality_knob, convert_quality)
+                   quality_knob, convert_quality,
+                   GRAIN_TUNE, GRAIN_CRF_OFFSET, GRAIN_UNSUPPORTED_NOTE,
+                   OUTPUT_ACTIONS, output_action_of,
+                   PER_FILE_KEYS, PER_FILE_LABELS)
 from modules.process_manager import format_duration, format_size
 from modules.quality_analyzer import (QualityMatchDialog, choose_metric, fill_metric_combo,
                                       metric_target, format_score, metric_spec)
@@ -206,6 +209,9 @@ class UIManager(QWidget):
         self.file_list = FileListWidget()
         self.file_list.files_dropped.connect(self.files_added)
         self.file_list.model().rowsMoved.connect(self._on_rows_moved)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(self._show_file_menu)
+        self.file_list.itemDoubleClicked.connect(lambda *_: self.edit_per_file_settings())
         files_layout.addWidget(self.file_list)
         
         # File controls
@@ -451,6 +457,8 @@ class UIManager(QWidget):
         # Connected here, not in the Video tab: the NVENC group lives on the Advanced tab, which is built
         # after the codec list
         self.controls['video_codec'].currentIndexChanged.connect(lambda *_: self._on_video_codec_changed())
+        # Grain preservation is encoder-specific, so the checkbox follows the chosen encoder
+        self.controls['video_codec'].currentIndexChanged.connect(lambda *_: self.sync_grain_availability())
         self._on_video_codec_changed()
         self.refresh_vapoursynth_status()
 
@@ -507,6 +515,20 @@ class UIManager(QWidget):
         crf_layout.addWidget(self.controls['crf'])
         quality_layout.addWidget(crf_widget, 1, 1)
 
+        self.controls['grain_mode'] = QCheckBox("Preserve film grain")
+        self.controls['grain_mode'].setToolTip(
+            "Stop the encoder smoothing away film grain.\n\n"
+            "Grain is random, so the psychovisual models that make modern encoders efficient read it as\n"
+            "noise and spend no bits on it — a grainy 35mm transfer comes out plastic and smeared. This\n"
+            "asks the encoder to hold it instead, in whatever way it supports:\n\n"
+            "  x264 / x265        -tune grain\n"
+            "  SVT-AV1 / libaom   grain synthesis (removed, then recreated on playback)\n\n"
+            f"It also lowers the quality number by {GRAIN_CRF_OFFSET} to pay for the grain, so expect\n"
+            "a noticeably larger file than the same CRF without it.\n\n"
+            "Use it for film-sourced material. It is wasted on clean digital sources and animation."
+        )
+        quality_layout.addWidget(self.controls['grain_mode'], 2, 0, 1, 2)
+
         self.controls['match_quality'] = QPushButton("Match Source Quality…")
         self.controls['match_quality'].setToolTip(
             "Measure what CRF this source actually needs.\n"
@@ -514,7 +536,7 @@ class UIManager(QWidget):
             "and reports the highest CRF — the smallest file — that still keeps the quality you ask for."
         )
         self.controls['match_quality'].clicked.connect(self.open_quality_match)
-        quality_layout.addWidget(self.controls['match_quality'], 2, 0, 1, 2)
+        quality_layout.addWidget(self.controls['match_quality'], 3, 0, 1, 2)
 
         quality_group.setLayout(quality_layout)
         layout.addWidget(quality_group)
@@ -679,7 +701,17 @@ class UIManager(QWidget):
         
         self.controls['deinterlace'] = QCheckBox("Enable Deinterlacing")
         self.controls['tff'] = QCheckBox("Top Field First")
-        self.controls['reduce_fps'] = QCheckBox("Reduce Frame Rate (Halve FPS)")
+        # "Reduce Frame Rate (Halve FPS)" read as a general frame-rate control, which it is not: it only
+        # exists to undo the frame-rate doubling that deinterlacing to field rate produces, and does
+        # nothing at all on progressive input.
+        self.controls['reduce_fps'] = QCheckBox("Output frame rate, not field rate (halves the doubling)")
+        self.controls['reduce_fps'].setToolTip(
+            "Only applies when deinterlacing.\n\n"
+            "Deinterlacing turns each field into its own frame, so 25i becomes 50p — smoother motion,\n"
+            "twice the frames to encode. Tick this to keep one frame per original frame (25i to 25p)\n"
+            "instead, which is what most sources are expected to look like.\n\n"
+            "On progressive input this does nothing."
+        )
 
         deint_row = QHBoxLayout()
         deint_row.addWidget(QLabel("Deinterlacer:"))
@@ -722,6 +754,11 @@ class UIManager(QWidget):
         deint_layout.addWidget(self.vapoursynth_panel)
         deint_layout.addWidget(self.controls['tff'])
         deint_layout.addWidget(self.controls['reduce_fps'])
+
+        # Both of these only mean anything while deinterlacing, so they follow its checkbox rather than
+        # sitting there enabled and silently doing nothing.
+        self.controls['deinterlace'].toggled.connect(self._sync_deinterlace_dependents)
+        self._sync_deinterlace_dependents(self.controls['deinterlace'].isChecked())
         
         deint_group.setLayout(deint_layout)
         layout.addWidget(deint_group)
@@ -1234,29 +1271,33 @@ class UIManager(QWidget):
         file_group = QGroupBox("File Handling")
         file_layout = QVBoxLayout()
         
-        self.controls['replace_files'] = QCheckBox("Replace Original Files")
-        self.controls['replace_files'].setStyleSheet("color: #d9534f; font-weight: bold;")
-        self.controls['replace_files'].setToolTip(
-            "Move the encoded output over the original filename.\n"
-            "The original is kept next to it as <name>.old<ext> unless\n"
-            "'Delete Source Files' is also enabled.\n\n"
-            "The encode always carries its own container's extension, never the source's\n"
-            "(tape.avi becomes tape.mkv, the original becomes tape.avi.old.avi):\n"
-            "a .avi file holding Matroska lies about what it is."
+        # Two independent checkboxes ("Replace Original Files" + "Delete Source Files") gave four
+        # combinations for three meanings, and the dangerous one was reachable by ticking either box
+        # first. One ordered choice says what will happen to the original in plain words.
+        file_layout.addWidget(QLabel("When an encode succeeds:"))
+        self.controls['output_action'] = QComboBox()
+        for value, label, _ in OUTPUT_ACTIONS:
+            self.controls['output_action'].addItem(label, value)
+        self.controls['output_action'].setToolTip(
+            "What happens to the original file once its encode finishes.\n\n"
+            "Keep both — the encode is written next to the original under its own name. Nothing is\n"
+            "    lost, and the drive holds both copies.\n\n"
+            "Replace, keep a backup — the encode takes the original's name and the original is kept\n"
+            "    as <name>.old<ext>. Reversible, still needs room for both.\n\n"
+            "Replace and delete — the encode takes the original's name and the original is deleted as\n"
+            "    soon as the encode succeeds. Frees space as the queue runs. There is no undo.\n\n"
+            "The encode always carries its own container's extension, never the source's: tape.avi\n"
+            "becomes tape.mkv, because a .avi file holding Matroska lies about what it is.\n\n"
+            "A file that fails or is stopped is never deleted."
         )
-        file_layout.addWidget(self.controls['replace_files'])
+        self.controls['output_action'].currentIndexChanged.connect(self._on_output_action_changed)
+        file_layout.addWidget(self.controls['output_action'])
 
-        self.controls['delete_source'] = QCheckBox("Delete Source Files After Processing")
-        self.controls['delete_source'].setStyleSheet("color: #d9534f; font-weight: bold;")
-        self.controls['delete_source'].setToolTip(
-            "Permanently delete each source file right after its encode succeeds,\n"
-            "one by one as the queue progresses, to free disk space.\n"
-            "Only happens when the output exists and is non-empty; failed or\n"
-            "stopped files are never deleted. Combined with 'Replace Original\n"
-            "Files', the .old backup is removed as well. There is no undo."
-        )
-        file_layout.addWidget(self.controls['delete_source'])
-        
+        self.controls['output_action_warning'] = WrapLabel("")
+        self.controls['output_action_warning'].setStyleSheet("color: #d9534f; font-weight: bold;")
+        file_layout.addWidget(self.controls['output_action_warning'])
+        self._on_output_action_changed()
+
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
 
@@ -1317,6 +1358,60 @@ class UIManager(QWidget):
 
     def _on_deinterlace_toggled(self, _checked):
         self._apply_frameserver_prereqs()
+
+    # ------------------------------------------------------------------
+    # Source handling
+    # ------------------------------------------------------------------
+    def output_action_settings(self) -> Dict[str, Any]:
+        """The chosen source-handling action as the two booleans the rest of the app stores"""
+        value = self.controls['output_action'].currentData()
+        for name, _label, flags in OUTPUT_ACTIONS:
+            if name == value:
+                return dict(flags)
+        return {'replace_files': False, 'delete_source': False}
+
+    def set_output_action(self, action: str):
+        """Point the combo at a named action. The legacy delete-without-rename combination has no entry,
+        so it maps to the choice that also deletes — same outcome for the source file."""
+        if action == 'replace_no_rename':
+            action = 'replace'
+        index = self.controls['output_action'].findData(action)
+        if index >= 0:
+            self.controls['output_action'].setCurrentIndex(index)
+
+    def _on_output_action_changed(self, _index=None):
+        """Spell out the consequence under the combo, loudly for the destructive choice"""
+        value = self.controls['output_action'].currentData()
+        label = self.controls.get('output_action_warning')
+        if label is None:
+            return
+        if value == 'replace':
+            label.setText("The original file is deleted after each successful encode. There is no undo.")
+        elif value == 'backup':
+            label.setText("")
+        else:
+            label.setText("")
+
+    def _sync_deinterlace_dependents(self, enabled: bool):
+        """Field order and the field-rate choice only mean anything while deinterlacing"""
+        for name in ('tff', 'reduce_fps'):
+            control = self.controls.get(name)
+            if control is not None:
+                control.setEnabled(bool(enabled))
+
+    def sync_grain_availability(self):
+        """
+        Grain preservation is encoder-specific and several encoders have no equivalent at all. Rather
+        than accept the tick and quietly ignore it, the box goes unavailable and says why.
+        """
+        control = self.controls.get('grain_mode')
+        if control is None:
+            return
+        codec = self._get_selected_codec('video')
+        supported = codec in GRAIN_TUNE
+        control.setEnabled(supported)
+        if not supported:
+            control.setToolTip(GRAIN_UNSUPPORTED_NOTE)
 
     def _on_deinterlacer_changed(self, _index):
         self._apply_frameserver_prereqs()
@@ -1482,6 +1577,8 @@ class UIManager(QWidget):
                 label += f" | {quality_knob(self._get_selected_codec('video'))} {file.matched_crf}"
             if file.vmaf_score is not None:
                 label += f" | {format_score(getattr(file, 'quality_metric', None) or 'vmaf', file.vmaf_score)}"
+            if getattr(file, 'has_overrides', False):
+                label += f" | ⚙ {file.override_summary(PER_FILE_LABELS)}"
             item = QListWidgetItem(label)
             # Identity, not position: the queue is re-ordered by matching these back to files, so a drag
             # that moves several rows at once cannot leave the list and the queue disagreeing.
@@ -1490,6 +1587,63 @@ class UIManager(QWidget):
             item.setSizeHint(QSize(0, 32))
             self._style_item(item, getattr(file, 'status', 'pending'))
             self.file_list.addItem(item)
+
+    # ------------------------------------------------------------------
+    # Per-file settings
+    # ------------------------------------------------------------------
+    def _selected_files(self) -> List[Any]:
+        """The queue entries behind the selected rows, matched by identity rather than position"""
+        chosen = {item.data(Qt.ItemDataRole.UserRole) for item in self.file_list.selectedItems()}
+        if not chosen:
+            return []
+        return [f for f in getattr(self, '_files', []) if f.canonical in chosen]
+
+    def _show_file_menu(self, position):
+        files = self._selected_files()
+        if not files:
+            return
+        menu = QMenu(self.file_list)
+        edit = menu.addAction(f"Settings for {'this file' if len(files) == 1 else f'these {len(files)} files'}…")
+        edit.triggered.connect(self.edit_per_file_settings)
+        if any(getattr(f, 'has_overrides', False) for f in files):
+            clear = menu.addAction("Follow the queue (drop overrides)")
+            clear.triggered.connect(self.clear_per_file_settings)
+        menu.addSeparator()
+        remove = menu.addAction("Remove from queue")
+        remove.triggered.connect(self._on_remove_files)
+        menu.exec(self.file_list.viewport().mapToGlobal(position))
+
+    def edit_per_file_settings(self):
+        """Open the per-file editor for the selection"""
+        files = self._selected_files()
+        if not files:
+            return
+        if self.main_window.process_manager.is_processing():
+            QMessageBox.information(
+                self.main_window, "Encoding in progress",
+                "Per-file settings cannot be changed while the queue is running.\n"
+                "Stop the run first, or wait for it to finish.")
+            return
+        from modules.per_file_settings import PerFileSettingsDialog
+        dialog = PerFileSettingsDialog(self.main_window, files, self.get_current_settings())
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            dialog.apply_to_files()
+            self.main_window.file_manager.refresh()
+            self.main_window.queue_manager.autosave()
+            changed = sum(1 for f in files if f.has_overrides)
+            self.update_status(
+                f"Per-file settings updated — {changed} of {len(files)} file(s) now differ from the queue"
+                if changed else "Per-file settings cleared — following the queue")
+
+    def clear_per_file_settings(self):
+        files = self._selected_files()
+        if not files:
+            return
+        for file in files:
+            file.clear_overrides()
+        self.main_window.file_manager.refresh()
+        self.main_window.queue_manager.autosave()
+        self.update_status(f"{len(files)} file(s) now follow the queue's settings")
 
     def update_file_count(self, count):
         """Update file count label"""
@@ -1685,13 +1839,13 @@ class UIManager(QWidget):
             'deinterlacer': self.controls['deinterlacer'].currentData(),
             'tff': self.controls['tff'].isChecked(),
             'reduce_fps': self.controls['reduce_fps'].isChecked(),
+            'grain_mode': self.controls['grain_mode'].isChecked(),
             'use_avisynth': self.controls['use_avisynth'].isChecked(),
             'use_ffms2': self.controls['use_ffms2'].isChecked(),
             'transcode_video': self.controls['transcode_video'].isChecked(),
             'transcode_audio': self.controls['transcode_audio'].isChecked(),
             'corrupt_fix': self.controls['corrupt_fix'].isChecked(),
-            'replace_files': self.controls['replace_files'].isChecked(),
-            'delete_source': self.controls['delete_source'].isChecked(),
+            **self.output_action_settings(),
             'threads': self.controls['threads'].value(),
             'ffmpeg_extras': self.controls['ffmpeg_extras'].text(),
             'avisynth_extras': self.controls['avisynth_extras'].toPlainText(),
