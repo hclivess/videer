@@ -14,7 +14,6 @@ Three layers:
   macOS has no parent-death signal; there the first layer applies (keep helpers stoppable).
 """
 import atexit
-import os
 import subprocess
 import sys
 import threading

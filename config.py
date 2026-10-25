@@ -5,11 +5,12 @@ Contains all constants and default settings
 
 import os
 import sys
+import tempfile
 import multiprocessing
 
 # Application info
 APP_NAME = "videer"
-APP_VERSION = "3.16.3"
+APP_VERSION = "3.17"
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 900
 
@@ -196,9 +197,17 @@ def convert_quality(value: int, from_codec, to_codec) -> int:
 # Deinterlacers: display name -> key
 DEINTERLACERS = [
     ("QTGMC (AviSynth+, best quality)", "qtgmc"),
+    ("QTempGaussMC (VapourSynth, QTGMC rewritten, faster)", "qtempgaussmc"),
     ("bwdif (FFmpeg, good)", "bwdif"),
     ("yadif (FFmpeg, fast)", "yadif")
 ]
+
+# Deinterlacers that run in a frameserver script rather than as an FFmpeg filter: key -> frameserver name.
+# Every other deinterlacer is an FFmpeg filter.
+FRAMESERVER_DEINTERLACERS = {
+    "qtgmc": "avisynth",
+    "qtempgaussmc": "vapoursynth",
+}
 
 # Codecs allowed per container (None = anything goes)
 CONTAINER_VIDEO_CODECS = {
@@ -500,18 +509,57 @@ DEFAULT_SETTINGS = {
     "nvenc_b_ref": True
 }
 
-# Directory the app keeps its user-writable state in. In a PyInstaller build __file__ points inside the
-# temporary extraction directory, which is wiped on exit — anything written there would not survive a
-# restart — so use the directory the executable itself lives in.
+# The directory the application lives in. In a PyInstaller build __file__ points inside the temporary
+# extraction directory, which is wiped on exit, so it is the directory of the executable itself.
 APP_DIR = (os.path.dirname(os.path.abspath(sys.executable))
            if getattr(sys, 'frozen', False)
            else os.path.dirname(os.path.abspath(__file__)))
 
-# Path to user defaults file (in the app directory)
-DEFAULTS_FILE = os.path.join(APP_DIR, "defaults.json")
+
+def _writable(directory: str) -> bool:
+    """Whether files can be created in `directory` — asked by trying, since os.access lies on Windows"""
+    try:
+        fd, probe = tempfile.mkstemp(dir=directory, prefix='.videer-write-test-')
+        os.close(fd)
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def _user_data_dir() -> str:
+    if sys.platform == 'win32':
+        base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~\\AppData\\Local')
+    elif sys.platform == 'darwin':
+        base = os.path.expanduser('~/Library/Application Support')
+    else:
+        base = os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')
+    return os.path.join(base, APP_NAME)
+
+
+# Where videer keeps what it writes: presets, defaults.json, the queue autosave, and the FFmpeg and VapourSynth
+# it downloads. Beside the application when that is writable — an unpacked archive stays portable, everything
+# in one folder — and otherwise the user's own data folder, because a system-wide install (/opt from the .deb,
+# a translocated macOS app) cannot be written to by the person running it.
+DATA_DIR = APP_DIR if _writable(APP_DIR) else _user_data_dir()
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+
+def stateless() -> bool:
+    """
+    Run without the user's state: their saved settings and queue are neither loaded nor written. For the
+    self-test, the screenshot tool and anyone scripting the app — an automated run that picked up someone's
+    preferences would be testing those, and one that saved over them would be vandalism.
+    """
+    return bool(os.environ.get('VIDEER_SELFTEST') or os.environ.get('VIDEER_NO_STATE'))
+
+
+# Path to user defaults file
+DEFAULTS_FILE = os.path.join(DATA_DIR, "defaults.json")
 
 # Queue autosave: rewritten whenever the queue changes, restored on the next start
-QUEUE_AUTOSAVE_FILE = os.path.join(APP_DIR, "queue.json")
+QUEUE_AUTOSAVE_FILE = os.path.join(DATA_DIR, "queue.json")
 QUEUE_FILE_FORMAT = 1
 
 # Preset configurations

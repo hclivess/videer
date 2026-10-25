@@ -46,6 +46,7 @@ from config import (DEFAULT_QUALITY_METRIC, DEFAULT_QUALITY_POOL, DEFAULT_QUALIT
                     QUALITY_METRICS, QUALITY_POOLS, QUALITY_SAMPLE_COUNT, QUALITY_SAMPLE_MARGIN,
                     QUALITY_SAMPLE_SECONDS, QUALITY_SEARCH_RANGE, VIDEO_EXTENSIONS, quality_knob)
 from modules.process_manager import format_duration, format_size
+from modules.frameservers import frameserver_for
 from utils import childproc
 from utils.ffmpeg_utils import (CRF_ENCODERS, FFmpegCommandBuilder, ffmpeg_has_filter,
                                 find_ffmpeg, probe_media_info)
@@ -654,9 +655,10 @@ class QualitySearch:
                 f"The filter chain ({', '.join(chain)}) is applied to both sides of the comparison, so the "
                 f"score is what the encoder lost and not what deinterlacing or scaling changed — those are "
                 f"choices no {self.knob} can undo.")
-        if self.settings.get('use_avisynth'):
-            notes.append("AviSynth+ processing is enabled but is not applied to the probes, so the real "
-                         "encode will differ from this estimate.")
+        frameserver = frameserver_for(self.settings)
+        if frameserver is not None:
+            notes.append(f"{frameserver.name} processing is enabled but is not applied to the probes, so the "
+                         f"real encode will differ from this estimate.")
         if self.settings.get('reduce_fps') and self.settings.get('deinterlace'):
             notes.append("Halving the frame rate while deinterlacing changes the frame count, which the "
                          "metric cannot compare frame-for-frame; treat the score as approximate.")

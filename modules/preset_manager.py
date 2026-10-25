@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 
-from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION, APP_DIR
+from config import QUALITY_PRESETS, DEFAULT_SETTINGS, DEFAULTS_FILE, APP_VERSION, DATA_DIR
 from utils.file_utils import write_json_atomic
 
 
@@ -24,14 +24,15 @@ class PresetManager(QObject):
     
     def _get_presets_dir(self) -> str:
         """
-        Where presets are kept: beside the application, next to defaults.json and queue.json.
+        Where presets are kept: in DATA_DIR, next to defaults.json and queue.json — beside the application
+        when it can be written to, the user's data folder when it cannot.
 
         Deriving it from __file__ instead put it wherever the code happens to live — in a PyInstaller build
         that is the bundle's internal directory, so a user's own presets ended up filed inside _internal/
         while the app's other user data sat next to the executable. In the source tree both answers are the
         same directory, so nothing moves for anyone running from source.
         """
-        return os.path.join(APP_DIR, "presets")
+        return os.path.join(DATA_DIR, "presets")
 
     def _legacy_presets_dir(self) -> str:
         """Where presets were written before they moved beside the application"""
@@ -143,19 +144,10 @@ class PresetManager(QObject):
         """Apply settings to UI controls"""
         ui = self.main_window.ui_manager
         
-        # Video codec
-        if 'video_codec' in settings:
-            for button in ui.codec_groups['video'].buttons():
-                if button.property("value") == settings['video_codec']:
-                    button.setChecked(True)
-                    break
-        
-        # Audio codec
-        if 'audio_codec' in settings:
-            for button in ui.codec_groups['audio'].buttons():
-                if button.property("value") == settings['audio_codec']:
-                    button.setChecked(True)
-                    break
+        # Codecs
+        for kind in ('video', 'audio'):
+            if f'{kind}_codec' in settings:
+                ui.select_codec(kind, settings[f'{kind}_codec'])
         
         # Numeric values
         if 'crf' in settings:

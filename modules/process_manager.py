@@ -20,7 +20,7 @@ from PySide6.QtCore import QThread, Signal, QObject, QMutex
 from models.file_models import VideoFile, FAILURE_CONTEXT_LINES
 from utils.ffmpeg_utils import (FFmpegCommandBuilder, find_ffmpeg, probe_duration, CRF_ENCODERS,
                                 ffmpeg_has_encoder)
-from modules.avisynth_handler import AviSynthHandler
+from modules.frameservers import FrameserverError, FrameserverInput, frameserver_for, frameserver_issues
 from utils.file_utils import FileOperations
 from utils import childproc
 from config import (CONTAINER_VIDEO_CODECS, CONTAINER_AUDIO_CODECS, VIDEO_CODEC_CONTAINERS,
@@ -98,6 +98,9 @@ class ProcessThread(QThread):
         self.current_process: Optional[subprocess.Popen] = None
         self.current_pid: Optional[int] = None
         self._current_psutil: Optional[psutil.Process] = None
+        # A frameserver process feeding the current FFmpeg through a pipe (vspipe), if there is one
+        self._producer: Optional[subprocess.Popen] = None
+        self._producer_psutil: Optional[psutil.Process] = None
         self.start_time: Optional[float] = None
         self._phase_start: Optional[float] = None
         self.success_count = 0
@@ -109,7 +112,7 @@ class ProcessThread(QThread):
         self._current_index = 0
 
         self.command_builder = FFmpegCommandBuilder(settings)
-        self.avisynth_handler = AviSynthHandler(settings) if settings.get('use_avisynth') else None
+        self.frameserver = frameserver_for(settings)
         self.file_ops = FileOperations()
 
     # ------------------------------------------------------------------
@@ -278,16 +281,18 @@ class ProcessThread(QThread):
             else:
                 input_file = file.filepath
 
-            if self.settings.get('use_avisynth') and self.avisynth_handler:
-                if self.avisynth_handler.create_script(file):
-                    input_file = file.avs_file
-                else:
-                    file.add_error("Failed to create AviSynth script")
+            served: Optional[FrameserverInput] = None
+            if self.frameserver is not None:
+                try:
+                    served = self.frameserver.prepare(file, input_file)
+                except FrameserverError as e:
+                    file.add_error(str(e))
                     return False
+                file.log_info(f"{self.frameserver.name} script: {served.script}")
 
             temp_output = file.get_temp_output_path()
             final_output = file.get_full_output_path()
-            return_code = self._encode_with_subtitle_fallback(file, input_file, temp_output)
+            return_code = self._encode_with_subtitle_fallback(file, input_file, temp_output, served)
             ok = return_code == 0 and not self.should_stop and self.file_ops.output_is_usable(temp_output)
             if ok:
                 # only now does the file appear under its real name; a stopped / failed encode never does
@@ -306,7 +311,8 @@ class ProcessThread(QThread):
             file.add_error(f"Processing error: {str(e)}")
             return False
 
-    def _encode_with_subtitle_fallback(self, file: VideoFile, input_file: str, temp_output: str) -> int:
+    def _encode_with_subtitle_fallback(self, file: VideoFile, input_file: str, temp_output: str,
+                                       served: Optional[FrameserverInput] = None) -> int:
         """
         Run the encode, and if the muxer rejects the subtitle streams, run it again in a way it will accept.
 
@@ -327,8 +333,7 @@ class ProcessThread(QThread):
         return_code = 1
         for override, description in attempts:
             self.command_builder.subtitle_override = override
-            command = self.command_builder.build_main_command(
-                input_file, temp_output, self.settings.get('use_avisynth', False))
+            command = self.command_builder.build_main_command(input_file, temp_output, served)
 
             if override is None:
                 for index, codec in self.command_builder.dropped_subtitles:
@@ -344,7 +349,8 @@ class ProcessThread(QThread):
                 file.reset_errors()
 
             self._subtitles_rejected = False
-            return_code = self._execute_command(command, file, phase="Encoding")
+            return_code = self._execute_command(command, file, phase="Encoding",
+                                                producer=served.producer if served else None)
             if return_code == 0 or self.should_stop or not self._subtitles_rejected:
                 break
 
@@ -377,26 +383,47 @@ class ProcessThread(QThread):
             return subprocess.list2cmdline(command)
         return ' '.join(shlex.quote(arg) for arg in command)
 
-    def _start_subprocess(self, command: List[str], cwd: Optional[str] = None) -> subprocess.Popen:
+    def _child_env(self) -> Optional[Dict[str, str]]:
+        """The environment the frameserver needs its processes to run in; None for the inherited one"""
+        if self.frameserver is None:
+            return None
+        return self.frameserver.child_env(dict(os.environ))
+
+    def _start_subprocess(self, command: List[str], cwd: Optional[str] = None, stdin=None) -> subprocess.Popen:
         """Start FFmpeg without a shell so paths with spaces/quotes are passed verbatim"""
-        kwargs = dict(
+        return childproc.popen(
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
+            stdin=stdin if stdin is not None else subprocess.DEVNULL,
             universal_newlines=True,
             encoding='utf-8',
             errors='replace',
             bufsize=1,
             cwd=cwd,
+            env=self._child_env(),
         )
-        if os.name == 'nt':
-            # Plugins that pull in runtime DLLs via LoadLibrary (fft3dfilter ->
-            # libfftw3f-3.dll) resolve them through PATH, so expose plugins/.
-            if self.avisynth_handler:
-                env = dict(os.environ)
-                env['PATH'] = self.avisynth_handler.plugins_path + os.pathsep + env.get('PATH', '')
-                kwargs['env'] = env
-        return childproc.popen(command, **kwargs)
+
+    def _start_producer(self, command: List[str], file: VideoFile, cwd: Optional[str]) -> subprocess.Popen:
+        """
+        Start the frameserver process whose stdout becomes FFmpeg's stdin. Its stdout is binary - it is the
+        video itself - and its stderr is read on a thread of its own, so a script error reaches the log.
+        """
+        file.log_info(f"Serving with: {self._format_command(command)}")
+        return childproc.popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               stdin=subprocess.DEVNULL, cwd=cwd, env=self._child_env())
+
+    @staticmethod
+    def _pump_producer_errors(producer: subprocess.Popen, file: VideoFile, tail: deque):
+        """Log what the frameserver says: nothing when all is well, its traceback when the script fails"""
+        try:
+            for raw in producer.stderr:
+                line = raw.decode('utf-8', errors='replace').rstrip()
+                if line:
+                    file.log_info(f"[frameserver] {line}")
+                    tail.append(f"[frameserver] {line}")
+        except Exception:
+            pass
 
     @staticmethod
     def _to_float(value: str) -> Optional[float]:
@@ -408,19 +435,47 @@ class ProcessThread(QThread):
     def _run_monitored(self, command: List[str], file: VideoFile, phase: str,
                        duration: Optional[float],
                        on_line: Optional[Callable[[str], None]] = None,
-                       cwd: Optional[str] = None) -> int:
+                       cwd: Optional[str] = None,
+                       producer_command: Optional[List[str]] = None) -> int:
         """
         Run an FFmpeg command started with `-progress pipe:1`, log its output and
         emit structured progress snapshots. Returns the return code (1 if stopped
         or failed to launch).
+
+        With `producer_command`, that process is started first and its stdout is FFmpeg's stdin - a
+        frameserver serving the video. The two are one step: Stop and Pause reach both, and the step succeeds
+        only if both do, because a producer that dies midway hands FFmpeg an early end of stream that FFmpeg
+        cannot tell from the real one, and it would finish a truncated file with exit code 0.
         """
+        tail: deque = deque(maxlen=FAILURE_CONTEXT_LINES)
+        producer: Optional[subprocess.Popen] = None
+        producer_reader: Optional[threading.Thread] = None
+        if producer_command:
+            try:
+                producer = self._start_producer(producer_command, file, cwd)
+            except Exception as e:
+                file.add_error(f"Could not start the frameserver: {e}")
+                return 1
+            self._producer = producer
+            self._producer_psutil = self._psutil_handle(producer.pid)
+            producer_reader = threading.Thread(target=self._pump_producer_errors, args=(producer, file, tail),
+                                               name="frameserver-reader", daemon=True)
+            producer_reader.start()
+
         file.log_info(f"Executing: {self._format_command(command)}")
 
         try:
-            process = self._start_subprocess(command, cwd=cwd)
+            process = self._start_subprocess(command, cwd=cwd,
+                                             stdin=producer.stdout if producer is not None else None)
         except Exception as e:
             file.add_error(f"Command execution error: {str(e)}")
+            if producer is not None:
+                self._release_producer(producer)
             return 1
+        if producer is not None:
+            # FFmpeg holds the read end now. Keeping ours open would keep the producer from ever noticing that
+            # FFmpeg has gone away.
+            producer.stdout.close()
 
         # Keep a local reference: stop() runs on the GUI thread and clears
         # self.current_process while this loop is still draining stdout.
@@ -438,8 +493,7 @@ class ProcessThread(QThread):
             # Reading FFmpeg's output happens on a helper thread, and this one becomes a watchdog. A blocking
             # read notices should_stop only when the next line arrives — which for a wedged encoder is never.
             # The interpreting work stays on the single reader thread so per-line cost is unchanged.
-            state = {'last_output': time.time(), 'eof': False,
-                     'tail': deque(maxlen=FAILURE_CONTEXT_LINES)}
+            state = {'last_output': time.time(), 'eof': False, 'tail': tail}
             pump = threading.Thread(target=self._pump,
                                     args=(process, file, phase, duration, on_line, state),
                                     name="ffmpeg-reader", daemon=True)
@@ -471,6 +525,8 @@ class ProcessThread(QThread):
             # A closed stdout does not mean the process exited: an AviSynth+ MT teardown can spin its worker
             # threads indefinitely after the last frame. Wait with a deadline, and never past a Stop.
             return_code = self._wait_with_deadline(process, file)
+            if producer is not None and not self.should_stop:
+                return_code = self._finish_producer(producer, producer_reader, file, return_code)
             if return_code != 0 and not self.should_stop:
                 # The line that says why is usually not the line that says it failed
                 file.note_failure_context(state['tail'])
@@ -478,6 +534,8 @@ class ProcessThread(QThread):
             # release(), never forget(): forgetting a still-running child hides it from both the Stop button
             # and kill_all(), leaving an encoder burning every core with nothing able to reach it.
             childproc.release(process)
+            if producer is not None:
+                self._release_producer(producer)
             self.current_process = None
             self.current_pid = None
             self._current_psutil = None
@@ -536,6 +594,40 @@ class ProcessThread(QThread):
                 pass
         finally:
             state['eof'] = True
+
+    def _finish_producer(self, producer: subprocess.Popen, reader: Optional[threading.Thread],
+                         file: VideoFile, ffmpeg_code: int) -> int:
+        """
+        The step's return code once FFmpeg has exited: FFmpeg's own if it failed, otherwise the producer's.
+        A producer FFmpeg read to the end gets time to exit; one left behind by a failed FFmpeg is not
+        waited for - the teardown kills it.
+        """
+        if ffmpeg_code != 0:
+            return ffmpeg_code
+        try:
+            code = producer.wait(timeout=EXIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            file.add_error(f"The frameserver did not exit within {int(EXIT_TIMEOUT)}s of FFmpeg finishing "
+                           f"- killing it")
+            return 1
+        if reader is not None:
+            reader.join(timeout=5)
+        if code != 0:
+            file.add_error(f"The frameserver failed (exit code {code}); the video it served is incomplete")
+            return code
+        return 0
+
+    def _release_producer(self, producer: subprocess.Popen):
+        """Dispose of the frameserver process the way FFmpeg is disposed of: killed if still alive, then forgotten"""
+        try:
+            if producer.stdout and not producer.stdout.closed:
+                producer.stdout.close()
+        except Exception:
+            pass
+        childproc.release(producer)
+        if self._producer is producer:
+            self._producer = None
+            self._producer_psutil = None
 
     def _wait_with_deadline(self, process: subprocess.Popen, file: VideoFile) -> int:
         """
@@ -620,7 +712,8 @@ class ProcessThread(QThread):
             'elapsed_total': time.time() - (self.start_time or phase_start),
         })
 
-    def _execute_command(self, command: List[str], file: VideoFile, phase: str) -> int:
+    def _execute_command(self, command: List[str], file: VideoFile, phase: str,
+                         producer: Optional[List[str]] = None) -> int:
         """Execute FFmpeg command, monitor progress and collect error lines"""
         def on_line(line):
             lower = line.lower()
@@ -629,7 +722,7 @@ class ProcessThread(QThread):
             if any(keyword in lower for keyword in self._ERROR_KEYWORDS):
                 file.add_error(line)
 
-        return self._run_monitored(command, file, phase, file.duration, on_line)
+        return self._run_monitored(command, file, phase, file.duration, on_line, producer_command=producer)
 
     # ------------------------------------------------------------------
     # Quality: per-file CRF matching and post-encode verification
@@ -838,26 +931,31 @@ class ProcessThread(QThread):
             return None
 
     def _signal_tree(self, suspend: bool):
-        """Suspend or resume the current FFmpeg process and its children"""
-        parent = self._current_psutil
-        if parent is None:
-            return
-        try:
-            if not parent.is_running():
-                return
-            for proc in [parent] + parent.children(recursive=True):
-                try:
-                    proc.suspend() if suspend else proc.resume()
-                except psutil.Error:
-                    pass
-        except psutil.Error:
-            pass
+        """Suspend or resume the current FFmpeg process, the frameserver feeding it, and their children"""
+        for parent in (self._current_psutil, self._producer_psutil):
+            if parent is None:
+                continue
+            try:
+                if not parent.is_running():
+                    continue
+                for proc in [parent] + parent.children(recursive=True):
+                    try:
+                        proc.suspend() if suspend else proc.resume()
+                    except psutil.Error:
+                        pass
+            except psutil.Error:
+                pass
 
     def _kill_process(self):
-        """Kill current FFmpeg process and children"""
+        """Kill current FFmpeg process, the frameserver feeding it, and their children"""
         process = self.current_process
         if process is not None:
             childproc.kill(process)
+        producer = self._producer
+        if producer is not None:
+            childproc.kill(producer)
+            self._producer = None
+            self._producer_psutil = None
         self.current_pid = None
         self.current_process = None
         self._current_psutil = None
@@ -1117,19 +1215,9 @@ class ProcessManager(QObject):
         if audio_codec == 'pcm_s32le' and output_format == 'mp4':
             issues.append("MP4 does not support PCM audio; use MOV/MKV or a lossy codec.")
 
-        if settings.get('use_avisynth'):
-            if not sys.platform.startswith('win'):
-                issues.append("AviSynth+ is only available on Windows; disable it or use bwdif/yadif.")
-            missing = AviSynthHandler(settings).get_missing_plugins()
-            if missing:
-                issues.append("Missing AviSynth plugins in plugins/: " + ", ".join(missing))
+        issues.extend(frameserver_issues(settings))
 
         if settings.get('deinterlace'):
-            if settings.get('deinterlacer', 'qtgmc') == 'qtgmc':
-                if not settings.get('use_avisynth'):
-                    issues.append("QTGMC deinterlacing requires AviSynth+ to be enabled.")
-                elif not settings.get('use_ffms2'):
-                    issues.append("QTGMC deinterlacing needs the FFMS2 source filter for non-AVI inputs.")
             if video_codec == 'copy':
                 issues.append("Deinterlacing has no effect when the video stream is copied.")
 
@@ -1155,8 +1243,9 @@ class ProcessManager(QObject):
             if video_codec not in CRF_ENCODERS:
                 issues.append(f"Automatic quality matching needs an encoder with a CRF, CQ or QP; '{video_codec}' has none, "
                               f"so every file will use the queue's setting instead.")
-            elif settings.get('use_avisynth'):
-                issues.append("Automatic CRF matching samples the source directly, without the AviSynth+ "
-                              "chain, so the CRF it picks is measured on different frames than the encode.")
+            elif frameserver_for(settings) is not None:
+                issues.append(f"Automatic CRF matching samples the source directly, without the "
+                              f"{frameserver_for(settings).name} script, so the CRF it picks is measured on "
+                              f"different frames than the encode.")
 
         return issues

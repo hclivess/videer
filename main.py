@@ -19,7 +19,7 @@ from modules.queue_manager import QueueManager
 from modules.quality_analyzer import sweep_stale_workdirs
 from utils.ffmpeg_utils import check_ffmpeg_status
 from modules.ffmpeg_installer import offer_if_incomplete
-from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
+from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, stateless
 from utils import childproc
 
 
@@ -49,11 +49,14 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.connect_signals()
         
-        # Load saved settings
-        self.load_settings()
+        # A self-test runs on the stock settings and leaves nothing behind: the user's saved settings and
+        # queue are theirs, and a test that picked them up would be testing someone's preferences, not the app.
+        if not stateless():
+            # Load saved settings
+            self.load_settings()
 
-        # Put back the queue from the previous session (skipping what already encoded)
-        self.queue_manager.restore_autosave()
+            # Put back the queue from the previous session (skipping what already encoded)
+            self.queue_manager.restore_autosave()
 
         # A crash or a hard kill during a quality search leaves its probe encodes in the temp directory;
         # nothing else will ever clean them up on Windows.
@@ -102,7 +105,7 @@ class MainWindow(QMainWindow):
         # Missing FFmpeg, or an FFmpeg without libvmaf, is something videer can fix rather than only report.
         # Not when nobody is at the keyboard, though: a modal question in an automated run is a hang, which
         # is precisely how it broke CI's own headless smoke test.
-        if not (os.environ.get("VIDEER_SELFTEST") or os.environ.get("VIDEER_NO_FFMPEG_PROMPT")):
+        if not (stateless() or os.environ.get("VIDEER_NO_FFMPEG_PROMPT")):
             offer_if_incomplete(self, self.settings)
         self.ui_manager.refresh_metric_choices()
     
@@ -239,13 +242,38 @@ class MainWindow(QMainWindow):
             
             self.process_manager.stop_processing()
         
-        self.save_settings()
-        self.queue_manager.autosave()
+        if not stateless():
+            self.save_settings()
+            self.queue_manager.autosave()
         event.accept()
+
+
+def _install_vapoursynth_headless() -> int:
+    """
+    `videer --install-vapoursynth`: what the Install VapourSynth button does, without a window — for CI, for
+    scripted setups, and for a machine without a display. Exit code 0 only when QTempGaussMC runs afterwards.
+    """
+    from modules.vapoursynth_installer import InstallError, install_vapoursynth
+
+    def say(message: str):
+        # A --windowed Windows build has no stdout at all; the exit code still answers
+        if sys.stdout is not None:
+            print(message, flush=True)
+
+    try:
+        vspipe = install_vapoursynth(say)
+    except (InstallError, InterruptedError) as exc:
+        say(f"VapourSynth was not installed: {exc}")
+        return 1
+    say(f"VapourSynth installed; QTempGaussMC runs with {vspipe}")
+    return 0
 
 
 def main():
     """Main entry point"""
+    if "--install-vapoursynth" in sys.argv[1:]:
+        sys.exit(_install_vapoursynth_headless())
+
     if sys.platform == "win32":
         # The taskbar button takes its icon from the process's Application User Model ID, not from the
         # window: with none of its own the process is grouped under whatever launched it and shows that
@@ -290,13 +318,18 @@ def main():
 def _run_selftest(window: "MainWindow", path: str):
     """
     Headless smoke test used by CI: encode one clip with libx264/aac and exit 0 only if the output exists under
-    its final name, is non-empty, and no .part file was left behind.
+    its final name, is non-empty, and no .part file was left behind. VIDEER_SELFTEST_SETTINGS (a JSON object)
+    is laid over the test's settings, so CI can put another path through the same check — QTempGaussMC, say.
     """
+    import json
     from PySide6.QtCore import QTimer
-    window.preset_manager.apply_settings({"video_codec": "libx264", "audio_codec": "aac", "crf": 30, "abr": 96,
-                                          "preset": "ultrafast", "output_format": "mkv", "replace_files": False,
-                                          "delete_source": False, "calculate_vmaf": False, "use_avisynth": False,
-                                          "transcode_video": False, "transcode_audio": False})
+    settings = {"video_codec": "libx264", "audio_codec": "aac", "crf": 30, "abr": 96,
+                "preset": "Ultra Fast", "output_format": "mkv", "replace_files": False,
+                "delete_source": False, "calculate_vmaf": False, "auto_match_quality": False,
+                "use_avisynth": False, "transcode_video": False, "transcode_audio": False}
+    settings.update(json.loads(os.environ.get("VIDEER_SELFTEST_SETTINGS") or "{}"))
+    print(f"selftest: settings {json.dumps(settings, sort_keys=True)}", flush=True)
+    window.preset_manager.apply_settings(settings)
     window.file_manager.add_files([path])
     window.process_manager.status_updated.connect(lambda m: print("selftest:", m, flush=True))
 
@@ -310,8 +343,15 @@ def _run_selftest(window: "MainWindow", path: str):
         QTimer.singleShot(0, lambda: sys.exit(0 if good else 1))
     window.process_manager.processing_finished.disconnect(window.on_processing_finished)
     window.process_manager.processing_finished.connect(finished)
-    QTimer.singleShot(300, lambda: window.process_manager.start_processing(
-        window.file_manager.get_queue(), window.ui_manager.get_current_settings()))
+    def start():
+        window.process_manager.start_processing(window.file_manager.get_queue(),
+                                                window.ui_manager.get_current_settings())
+        # A run that is refused (no FFmpeg, say) never reports finishing: fail now, not at the timeout
+        if not window.process_manager.is_processing():
+            print("selftest: processing did not start : FAILED", flush=True)
+            QTimer.singleShot(0, lambda: sys.exit(1))
+
+    QTimer.singleShot(300, start)
     QTimer.singleShot(600_000, lambda: (print("selftest: timeout", flush=True), sys.exit(1)))
 
 

@@ -83,7 +83,7 @@ class VideoFile:
         # Output names
         self.output_name: Optional[str] = None
         self.transcode_name: Optional[str] = None
-        self.avs_file: Optional[str] = None
+        self.script_file: Optional[str] = None       # the frameserver script (.avs / .vpy), once written
         self.error_file: Optional[str] = None
         self.ffindex_file: Optional[str] = None
         
@@ -169,10 +169,6 @@ class VideoFile:
         # (~100 GB per hour of 1080p) into the install directory and makes two same-named sources collide.
         if settings.get('transcode_video') or settings.get('transcode_audio'):
             self.transcode_name = os.path.join(self.directory, f"{self.basename}.trans.avi")
-
-        # Set AviSynth file if needed
-        if settings.get('use_avisynth'):
-            self.avs_file = os.path.join(self.directory, f"{self.basename}.avs")
         
         # Set index files
         self.ffindex_file = f"{self.filepath}.ffindex"
@@ -277,8 +273,10 @@ class VideoFile:
             temp_files.append(self.get_temp_output_path())
         temp_files.extend([
             self.transcode_name,
-            self.avs_file,
+            self.script_file,
             self.ffindex_file,
+            # FFMS2 indexes whatever it is pointed at, and with a raw pre-transcode that is the intermediate
+            f"{self.transcode_name}.ffindex" if self.transcode_name else None,
             self.error_file
         ])
 

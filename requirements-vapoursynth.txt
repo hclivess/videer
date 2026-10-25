@@ -1,0 +1,14 @@
+# The VapourSynth backend for the QTempGaussMC deinterlacer — VapourSynth itself (vspipe included), vs-jetpack,
+# and exactly the plugins QTempGaussMC's default chain calls, all as wheels. Not the vsjetpack[deinterlace]
+# extra: that pulls in a dozen plugins this never uses, several without wheels for every platform.
+#
+# videer installs this itself (Processing tab, "Install VapourSynth…") into a private Python beside the app.
+# From source it can also go into the Python running videer: pip install -r requirements-vapoursynth.txt
+vapoursynth>=78
+vsjetpack>=2.2.4,<2.3
+# mvutensils 10 dropped the `fields` argument vs-jetpack 2.2 still passes to AnalyseMany
+vapoursynth-mvutensils>=6,<10
+vapoursynth-znedi3>=2.1
+vapoursynth-zsmooth>=0.18.0
+vapoursynth-resize2>=0.4.2
+vapoursynth-bestsource>=17.0
