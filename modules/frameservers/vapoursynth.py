@@ -31,6 +31,10 @@ INSTALL_HINT = "install it from the Processing tab (Install VapourSynth…) or T
 MANAGED_VS_DIR = os.path.join(DATA_DIR, "vapoursynth")
 MANAGED_MARKER = os.path.join(MANAGED_VS_DIR, "installed.json")
 MANAGED_PYTHON_HOME = os.path.join(MANAGED_VS_DIR, "python")
+# On Linux and macOS, VSScript finds the Python it embeds through vapoursynth.toml under $XDG_CONFIG_HOME (Windows
+# infers it from the folder layout). videer's install keeps that file in its own folder and points the processes
+# it starts at it, rather than adding itself to the user's ~/.config.
+MANAGED_CONFIG_HOME = os.path.join(MANAGED_VS_DIR, "config")
 
 # A clip QTempGaussMC is run over to prove the whole chain resolves: every plugin namespace the default
 # settings call is touched while the graph is built, and rendering a frame proves they load.
@@ -56,6 +60,14 @@ def vspipe_in(python_home: str) -> str:
     """Where pip puts vspipe in a Python installation"""
     return (os.path.join(python_home, "Scripts", "vspipe.exe") if sys.platform == 'win32'
             else os.path.join(python_home, "bin", "vspipe"))
+
+
+def vspipe_env(vspipe: str, env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """The environment `vspipe` runs in: videer's own install gets its private configuration"""
+    env = dict(os.environ if env is None else env)
+    if sys.platform != 'win32' and os.path.abspath(vspipe).startswith(os.path.abspath(MANAGED_VS_DIR) + os.sep):
+        env['XDG_CONFIG_HOME'] = MANAGED_CONFIG_HOME
+    return env
 
 
 def managed_vspipe() -> Optional[str]:
@@ -110,7 +122,7 @@ def _run_check(vspipe: str) -> Optional[str]:
             handle.write(_CHECK_SCRIPT)
         try:
             result = childproc.run([vspipe, '--info', path], text=True, encoding='utf-8', errors='replace',
-                                   timeout=120)
+                                   timeout=120, env=vspipe_env(vspipe))
         except Exception as exc:                         # noqa: BLE001 - any failure to launch is the answer
             return f"vspipe could not be run: {exc}"
         if result.returncode == 0:
@@ -176,6 +188,9 @@ class VapourSynthFrameserver(Frameserver):
         except (TypeError, ValueError):
             threads = 0
         return max(1, threads or multiprocessing.cpu_count())
+
+    def child_env(self, env: Dict[str, str]) -> Dict[str, str]:
+        return vspipe_env(self.vspipe, env) if self.vspipe else env
 
     def problems(self) -> List[str]:
         issues = []

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog
                                QLabel, QMessageBox, QPushButton, QVBoxLayout)
 
 from utils.file_utils import write_json_atomic
-from config import APP_NAME, APP_VERSION, QUEUE_AUTOSAVE_FILE, QUEUE_FILE_FORMAT
+from config import APP_NAME, APP_VERSION, QUEUE_AUTOSAVE_FILE, QUEUE_FILE_FORMAT, stateless
 from models.file_models import canonical_path
 
 QUEUE_FILE_FILTER = "videer Queue (*.json);;All Files (*.*)"
@@ -212,7 +212,7 @@ class QueueManager(QObject):
         power cut loses at most the file that was in flight. Failures are silent: an unwritable install
         directory must not interrupt encoding or block the app from closing.
         """
-        if self._restoring or os.environ.get("VIDEER_SELFTEST"):
+        if self._restoring or stateless():
             return
         files = self.main_window.file_manager.get_queue()
         try:

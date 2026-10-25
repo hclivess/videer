@@ -122,7 +122,8 @@ jobs:
             Linux)   tar xzf dist/*.tar.gz -C "$RUNNER_TEMP/frozen"; APP=$(ls -d "$RUNNER_TEMP"/frozen/*/videer) ;;
             macOS)   tar xzf dist/*.tar.gz -C "$RUNNER_TEMP/frozen"; APP="$RUNNER_TEMP/frozen/videer.app/Contents/MacOS/videer" ;;
           esac
-          timeout 900 "$APP" --install-vapoursynth
+          # macOS runners have no coreutils `timeout`; the job's own time limit covers them
+          if command -v timeout >/dev/null; then timeout 900 "$APP" --install-vapoursynth; else "$APP" --install-vapoursynth; fi
           ls "$(dirname "$APP")/vapoursynth/installed.json"
 
       - name: Smoke-test the frozen build (Linux)

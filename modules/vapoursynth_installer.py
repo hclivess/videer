@@ -27,9 +27,9 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout, QPlainTextEdit
 
 from modules.widgets import WrapLabel
-from modules.frameservers.vapoursynth import (MANAGED_MARKER as MARKER, MANAGED_PYTHON_HOME, MANAGED_VS_DIR,
-                                              check_environment, find_vspipe, forget_checks, managed_vspipe,
-                                              vspipe_in)
+from modules.frameservers.vapoursynth import (MANAGED_CONFIG_HOME, MANAGED_MARKER as MARKER, MANAGED_PYTHON_HOME,
+                                              MANAGED_VS_DIR, check_environment, find_vspipe, forget_checks,
+                                              managed_vspipe, vspipe_env, vspipe_in)
 from utils import childproc
 from utils.download import download, sha256_of
 
@@ -142,6 +142,8 @@ def install_vapoursynth(on_status: Callable[[str], None],
     vspipe = vspipe_in(home)
     if not os.path.isfile(vspipe):
         raise InstallError("VapourSynth installed, but it brought no vspipe")
+    if sys.platform != 'win32':
+        _configure_vsscript(python, vspipe)
 
     on_status("Checking that QTempGaussMC runs…")
     problem = check_environment(vspipe)
@@ -180,6 +182,22 @@ def _pip_install(python: str, requirements: str, on_status: Callable[[str], None
         childproc.release(process)
     if code != 0:
         raise InstallError("pip could not install the VapourSynth packages:\n" + "\n".join(tail))
+
+
+def _configure_vsscript(python: str, vspipe: str) -> None:
+    """
+    Tell VSScript which Python to embed. `vapoursynth config` writes vapoursynth.toml under $XDG_CONFIG_HOME, which
+    for this install is a folder inside it (see MANAGED_CONFIG_HOME) — the user's own configuration is not touched.
+    """
+    os.makedirs(MANAGED_CONFIG_HOME, exist_ok=True)
+    try:
+        result = childproc.run([python, '-m', 'vapoursynth', 'config'], text=True, encoding='utf-8',
+                               errors='replace', timeout=120, env=vspipe_env(vspipe))
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(f"could not configure VapourSynth: {exc}") from exc
+    if result.returncode != 0 or 'successfully' not in (result.stdout or '').lower():
+        output = ((result.stdout or '') + (result.stderr or '')).strip()
+        raise InstallError(f"could not configure VapourSynth: {output or f'exit code {result.returncode}'}")
 
 
 def uninstall_vapoursynth() -> None:

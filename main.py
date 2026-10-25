@@ -19,7 +19,7 @@ from modules.queue_manager import QueueManager
 from modules.quality_analyzer import sweep_stale_workdirs
 from utils.ffmpeg_utils import check_ffmpeg_status
 from modules.ffmpeg_installer import offer_if_incomplete
-from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
+from config import APP_NAME, APP_VERSION, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, stateless
 from utils import childproc
 
 
@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
         
         # A self-test runs on the stock settings and leaves nothing behind: the user's saved settings and
         # queue are theirs, and a test that picked them up would be testing someone's preferences, not the app.
-        if not os.environ.get("VIDEER_SELFTEST"):
+        if not stateless():
             # Load saved settings
             self.load_settings()
 
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         # Missing FFmpeg, or an FFmpeg without libvmaf, is something videer can fix rather than only report.
         # Not when nobody is at the keyboard, though: a modal question in an automated run is a hang, which
         # is precisely how it broke CI's own headless smoke test.
-        if not (os.environ.get("VIDEER_SELFTEST") or os.environ.get("VIDEER_NO_FFMPEG_PROMPT")):
+        if not (stateless() or os.environ.get("VIDEER_NO_FFMPEG_PROMPT")):
             offer_if_incomplete(self, self.settings)
         self.ui_manager.refresh_metric_choices()
     
@@ -242,8 +242,9 @@ class MainWindow(QMainWindow):
             
             self.process_manager.stop_processing()
         
-        self.save_settings()
-        self.queue_manager.autosave()
+        if not stateless():
+            self.save_settings()
+            self.queue_manager.autosave()
         event.accept()
 
 

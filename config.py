@@ -544,6 +544,17 @@ def _user_data_dir() -> str:
 DATA_DIR = APP_DIR if _writable(APP_DIR) else _user_data_dir()
 os.makedirs(DATA_DIR, exist_ok=True)
 
+
+
+def stateless() -> bool:
+    """
+    Run without the user's state: their saved settings and queue are neither loaded nor written. For the
+    self-test, the screenshot tool and anyone scripting the app — an automated run that picked up someone's
+    preferences would be testing those, and one that saved over them would be vandalism.
+    """
+    return bool(os.environ.get('VIDEER_SELFTEST') or os.environ.get('VIDEER_NO_STATE'))
+
+
 # Path to user defaults file
 DEFAULTS_FILE = os.path.join(DATA_DIR, "defaults.json")
 
