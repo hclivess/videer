@@ -288,10 +288,22 @@ def probe_subtitle_codecs(filepath: str) -> List[str]:
     return _STREAM_SUBTITLE_RE.findall((result.stderr or '') + (result.stdout or ''))
 
 
+def _matroska_stream_duration(tags: Optional[Dict[str, str]]) -> Optional[float]:
+    """Matroska has no per-stream duration field; muxers leave one in a DURATION or DURATION-eng tag, HH:MM:SS.nnn"""
+    for key, value in (tags or {}).items():
+        if key.upper().startswith('DURATION'):
+            match = re.fullmatch(r'(\d+):(\d+):(\d+(?:\.\d+)?)', value.strip())
+            if match:
+                hours, minutes, seconds = match.groups()
+                return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    return None
+
+
 def probe_media_info(filepath: str) -> Dict[str, Any]:
     """Duration, size and first-video-stream properties, best effort — every field may be None."""
     info: Dict[str, Any] = {'duration': None, 'size': None, 'width': None, 'height': None,
-                            'video_bitrate': None, 'total_bitrate': None, 'codec': None, 'fps': None}
+                            'video_bitrate': None, 'total_bitrate': None, 'codec': None, 'fps': None,
+                            'frames': None, 'video_duration': None}
     try:
         info['size'] = os.path.getsize(filepath)
     except OSError:
@@ -305,7 +317,8 @@ def probe_media_info(filepath: str) -> Dict[str, Any]:
         result = childproc.run(
             [ffprobe, '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'format=duration,bit_rate:'
-                              'stream=width,height,bit_rate,codec_name,avg_frame_rate',
+                              'stream=width,height,bit_rate,codec_name,avg_frame_rate,nb_frames,duration:'
+                              'stream_tags',
              '-of', 'json', filepath],
             text=True, timeout=30)
         data = json.loads(result.stdout or '{}')
@@ -332,6 +345,8 @@ def probe_media_info(filepath: str) -> Dict[str, Any]:
         rate = (stream.get('avg_frame_rate') or '').split('/')
         if len(rate) == 2 and number(rate[0]) and number(rate[1]):
             info['fps'] = number(rate[0]) / number(rate[1])
+        info['frames'] = int(stream['nb_frames']) if str(stream.get('nb_frames', '')).isdigit() else None
+        info['video_duration'] = number(stream.get('duration')) or _matroska_stream_duration(stream.get('tags'))
 
     # A container that stores no per-stream bitrate (Matroska usually does not) still tells us the total
     if info['video_bitrate'] is None and info['total_bitrate'] is None and info['size'] and info['duration']:

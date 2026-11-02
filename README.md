@@ -80,6 +80,11 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
   kept as `<name>.old<ext>`. A repair that lands in a different container than the source keeps its own
   extension rather than becoming Matroska wearing an `.mp4`
 - For a file that was cut off, it reports what survived: *7s, where the damaged file claimed 12s*
+- **A clean result is not taken as a recovered one.** A re-encode decodes clean by construction, however little
+  it could read, and a video that stops at 50 seconds still runs nine minutes if its audio does. So the frames
+  that really came through are compared with what the source's index promises — repeats that filled a hole do
+  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. A
+  partial recovery never replaces the original, and failures and partials are spelled out under the table
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly
@@ -267,6 +272,27 @@ The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); t
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
 installed and run.
+
+## Changes in 3.17.2
+
+**Check & Repair told the truth about neither failure nor loss** ([#20](https://github.com/hclivess/videer/issues/20))
+
+- **The repaired MP4 vanished.** With the chosen container the same as the source's, the container rebuild and the
+  re-encode both wrote `<name>.repaired.mp4`. Automatic then deleted the losing attempt by name, which was the
+  winner's name too, and went on to report *repaired* for a file no longer there. MKV escaped only because the two
+  names differed. Each attempt now writes under its own name and only the winner takes the final one, so a re-encode
+  that fails also no longer costs you the rebuild that worked, or an earlier repaired file.
+- **"Repaired" on a video that freezes.** The verdict rested on the error count, and a re-encode writes a new stream
+  that measures 0 errors however little it read. Now the frames that came through are compared with those the
+  source's index promises. The container's duration cannot answer this — it stays complete when audio outlasts the
+  picture — and neither can the file's frame count, because MP4 fills a hole with repeated frames, so repeats are
+  taken off using FFmpeg's own count. A shortfall reads *partial — picture lost*, with how much is gone, and does not
+  replace the original even when replacing was asked for.
+- **Failures say why.** FFmpeg's own words reach the report instead of being discarded. Files that failed or came out
+  partial are spelled out under the table rather than waiting in a tooltip, and *repaired* after a re-encode now
+  carries a reminder that concealed damage can only be judged by eye.
+
+`scripts/test_repair.py` runs all of this against files damaged on purpose.
 
 ## Changes in 3.17.1
 
@@ -721,6 +747,11 @@ are running into issues, you should try with ffms2 enabled.
   kept as `<name>.old<ext>`. A repair that lands in a different container than the source keeps its own
   extension rather than becoming Matroska wearing an `.mp4`
 - For a file that was cut off, it reports what survived: *7s, where the damaged file claimed 12s*
+- **A clean result is not taken as a recovered one.** A re-encode decodes clean by construction, however little
+  it could read, and a video that stops at 50 seconds still runs nine minutes if its audio does. So the frames
+  that really came through are compared with what the source's index promises — repeats that filled a hole do
+  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. A
+  partial recovery never replaces the original, and failures and partials are spelled out under the table
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly

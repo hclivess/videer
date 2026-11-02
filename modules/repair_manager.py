@@ -18,6 +18,11 @@ before anything is done, treated with the cheapest strategy that could work, and
 the fix can be *shown* to have worked rather than asserted. A repair that did not reduce the error count is
 reported as such, and the original is never touched unless replacing it was asked for.
 
+The error count alone cannot call a repair a success. A re-encode writes a brand new stream, so it decodes
+cleanly by construction, however little of the picture it managed to read: 50 good seconds of a nine-minute
+file measure "0 errors". What it says nothing about is what went missing, so the frames that really came through
+are also compared with the frames the source's index promises, and a shortfall is reported as a partial recovery.
+
 What this cannot do: an MP4 whose index (the `moov` atom) never got written cannot be opened by FFmpeg at all,
 and no option changes that — the file needs a tool like untrunc and a healthy reference recorded by the same
 device. That case is detected and named rather than silently failed.
@@ -26,7 +31,8 @@ device. That case is detected and named rather than silently failed.
 import os
 import re
 import subprocess
-from typing import Any, Callable, Dict, List, Optional
+from collections import deque
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
@@ -54,6 +60,60 @@ REPAIRED_SUFFIX = ".repaired"
 
 # FFmpeg says this, and only this, when an MP4's index never made it to disk.
 _MOOV_MISSING = re.compile(r"moov atom not found", re.IGNORECASE)
+
+# How many frames may go missing before it counts as lost picture: a second's worth and this share of the whole.
+# Edit lists, pre-roll and rounding all move the count a little on a healthy file. A duration worked out from the
+# container's total is looser, because that total is the longest stream's and not necessarily the video's.
+_MISSING_SHARE_STATED = 0.005
+_MISSING_SHARE_ESTIMATED = 0.05
+
+# Statuses the user should read rather than skim, spelled out under the table instead of left in a tooltip
+_NEEDS_READING = ('partial', 'unchanged', 'failed', 'unrepairable')
+_MAX_SPELLED_OUT = 5
+
+
+def expected_frames(info: Dict[str, Any]) -> Tuple[Optional[int], bool]:
+    """
+    How many frames the source says it has, and whether the video stream itself says so.
+
+    The lower of the sample count and duration x rate, because each is high in its own way: a stream-copied cut
+    keeps pre-roll samples its edit list hides from the decoder. Without either, the container's duration is a
+    weaker estimate (it may be the audio's), and the second value tells the caller to allow for that.
+    """
+    fps = info.get('fps')
+    if not fps:
+        return None, False
+    declared = info.get('frames')
+    video_duration = info.get('video_duration')
+    if video_duration:
+        by_time = round(video_duration * fps)
+        return (min(declared, by_time) if declared else by_time), True
+    if declared:
+        return declared, True
+    if info.get('duration'):
+        return round(info['duration'] * fps), False
+    return None, False
+
+
+def missing_frames(expected: Optional[int], actual: Optional[int], fps: Optional[float],
+                   stated: bool = True) -> int:
+    """Frames lost beyond ordinary jitter. 0 when they are all there, or when there is no evidence either way."""
+    if not expected or actual is None:
+        return 0
+    share = _MISSING_SHARE_STATED if stated else _MISSING_SHARE_ESTIMATED
+    missing = expected - actual
+    return missing if missing > max(fps or 1, expected * share) else 0
+
+
+def attempt_path(filepath: str, strategy: str, extension: Optional[str] = None) -> str:
+    """
+    Where one strategy writes while it is being measured. Each has its own name, because a remux and a
+    re-encode land on the same <name>.repaired.<ext> whenever the chosen container is the source's, and the
+    loser being deleted must not take the winner with it.
+    """
+    final = repaired_path(filepath, extension)
+    base, ext = os.path.splitext(final)
+    return f"{base}.{strategy}{ext}"
 
 
 def is_progress_line(line: str) -> bool:
@@ -185,6 +245,8 @@ class RepairWorker(QThread):
         self.file_progress.emit(row, "checking…")
         before = self.check(ffmpeg, filepath)
         info = probe_media_info(filepath)
+        expected, stated = expected_frames(info)
+        fps = info.get('fps')
 
         if not before['opened']:
             # Nothing can be repaired that cannot be read. Say which wall we hit.
@@ -198,6 +260,7 @@ class RepairWorker(QThread):
 
         if self.check_only:
             # Nothing is written, nothing is touched — this run only answers "is anything wrong".
+            lost = missing_frames(expected, before['frames'], fps, stated)
             return self._report(
                 filepath,
                 status='clean' if before['errors'] == 0 else 'damaged',
@@ -205,7 +268,8 @@ class RepairWorker(QThread):
                 duration_before=info.get('duration'),
                 note=("No errors found." if before['errors'] == 0 else
                       f"{before['errors']} error(s) while decoding. "
-                      + (before['first_error'] or '')[:160]))
+                      + (before['first_error'] or '')[:160]
+                      + (" " + self._loss_note(before['frames'], expected, lost, fps, stated) if lost else "")))
 
         if before['errors'] == 0:
             return self._report(filepath, status='clean', errors_before=0, errors_after=0,
@@ -215,14 +279,15 @@ class RepairWorker(QThread):
 
         attempts = {'auto': ['remux', 'reencode'], 'remux': ['remux'], 'reencode': ['reencode']}
         best: Optional[Dict[str, Any]] = None
+        problems: List[str] = []
 
         for strategy in attempts.get(self.strategy, ['remux']):
             if self.should_stop:
                 break
-            attempt = self._attempt(row, ffmpeg, filepath, strategy, before['errors'])
+            attempt = self._attempt(row, ffmpeg, filepath, strategy, problems)
             if attempt is None:
                 continue
-            if best is None or attempt['errors_after'] < best['errors_after']:
+            if best is None or self._beats(attempt, best, fps):
                 if best is not None:
                     self._discard(best['output'])
                 best = attempt
@@ -234,11 +299,17 @@ class RepairWorker(QThread):
         if best is None:
             return self._report(filepath, status='failed', errors_before=before['errors'],
                                 duration_before=info.get('duration'), frames_before=before['frames'],
-                                note="Every repair attempt failed to produce a usable file.")
+                                note=" ".join(["No repaired file could be produced."] + problems))
 
-        output = best['output']
+        output, publish_note = self._publish(best['output'], filepath, best['extension'])
+        if not os.path.isfile(output):
+            return self._report(filepath, status='failed', errors_before=before['errors'],
+                                duration_before=info.get('duration'), frames_before=before['frames'],
+                                note="The repaired file is not on disk any more, so nothing was produced.")
+
         note = ""
-        recovered = self._recovery_note(before, best, info)
+        lost = missing_frames(expected, best['frames_after'], fps, stated)
+        recovered = self._recovery_note(best, info, expected, lost, fps, stated)
         if best['errors_after'] == 0:
             status = 'repaired'
         elif best['errors_after'] < before['errors']:
@@ -250,8 +321,17 @@ class RepairWorker(QThread):
             note = ("The repair did not reduce the error count — the damage is in the compressed picture "
                     "data itself. The file was kept anyway so it can be compared.")
 
-        if recovered:
-            note = (note + " " if note else "") + recovered
+        if lost and status != 'unchanged':
+            status = 'partial'
+        if status == 'repaired' and best['strategy'] == 'reencode':
+            # 0 is what any re-encode measures, so it must not be read as "the picture is back"
+            recovered = (recovered + " " if recovered else "") + (
+                "A re-encode always measures clean. The decoder concealed what it could not read, so look at "
+                "the damaged parts before trusting them.")
+
+        note = " ".join(part for part in [note, recovered, publish_note, *problems] if part)
+        if status == 'partial' and self.replace_originals:
+            note += " The original was not replaced: it still holds data this file does not."
         if self.replace_originals and status in ('repaired', 'improved'):
             self.file_progress.emit(row, "replacing the original…")
             replaced, replace_note = self._replace_original(output, filepath)
@@ -268,37 +348,86 @@ class RepairWorker(QThread):
             size=os.path.getsize(output) if os.path.exists(output) else None)
 
     def _attempt(self, row: int, ffmpeg: str, filepath: str, strategy: str,
-                 errors_before: int) -> Optional[Dict[str, Any]]:
-        """Run one strategy and measure what it achieved. None if it produced nothing usable."""
+                 problems: List[str]) -> Optional[Dict[str, Any]]:
+        """Run one strategy and measure what it achieved. None if it produced nothing usable, with why in problems."""
         if strategy == 'remux':
-            output = repaired_path(filepath)
+            extension = os.path.splitext(filepath)[1]
+            output = attempt_path(filepath, strategy, extension)
             command = build_remux_command(ffmpeg, filepath, output)
             self.file_progress.emit(row, "rebuilding the container…")
+            title = "Rebuilding the container"
         else:
             extension = '.' + (self.settings.get('output_format') or 'mkv').lower()
-            output = repaired_path(filepath, extension)
-            if os.path.normcase(os.path.abspath(output)) == os.path.normcase(os.path.abspath(filepath)):
-                output = repaired_path(filepath, '.mkv')
+            output = attempt_path(filepath, strategy, extension)
             command = build_reencode_command(self.settings, filepath, output)
             self.file_progress.emit(row, "re-encoding past the damage…")
+            title = "Re-encoding"
+
+        progress: Dict[str, int] = {}
+        log: deque = deque(maxlen=8)
+
+        def on_line(line: str):
+            if is_progress_line(line):
+                key, _, value = line.partition('=')
+                if key in ('dup_frames', 'drop_frames') and value.strip().isdigit():
+                    progress[key] = int(value)
+            else:
+                log.append(line)
 
         self._discard(output)
-        self._run(command)
+        exit_code = self._run(command, on_line)
         if self.should_stop:
             self._discard(output)
             return None
+
+        reason = self._failure_reason(log) if exit_code else None
         if not os.path.isfile(output) or os.path.getsize(output) == 0:
             self._discard(output)
+            problems.append(f"{title} failed: {reason or 'FFmpeg wrote no file.'}")
             return None
 
         self.file_progress.emit(row, "checking the result…")
         after = self.check(ffmpeg, output)
         if not after['opened']:
             self._discard(output)
+            problems.append(f"{title} failed: {reason or after['first_error'] or 'the result cannot be opened.'}")
             return None
-        return {'strategy': strategy, 'output': output, 'errors_after': after['errors'],
-                'frames_after': after['frames'],
+        if reason:
+            problems.append(f"{title} stopped early: {reason}")
+
+        # A container with a constant frame rate has FFmpeg fill a hole by repeating the last good frame, so the
+        # file decodes to the full count while showing a still. What came from the source is what was written,
+        # less those repeats, plus any FFmpeg dropped to hold the rate.
+        frames = after['frames']
+        if frames is not None:
+            frames = max(0, frames - progress.get('dup_frames', 0) + progress.get('drop_frames', 0))
+
+        return {'strategy': strategy, 'output': output, 'extension': extension,
+                'errors_after': after['errors'], 'frames_after': frames,
                 'duration_after': (probe_media_info(output) or {}).get('duration')}
+
+    @staticmethod
+    def _beats(attempt: Dict[str, Any], best: Dict[str, Any], fps: Optional[float]) -> bool:
+        """Fewer errors, but not by having less video: a clean file that stops early is not the better one."""
+        return (attempt['errors_after'] < best['errors_after']
+                and not missing_frames(best['frames_after'], attempt['frames_after'], fps))
+
+    @staticmethod
+    def _failure_reason(log) -> Optional[str]:
+        """What went wrong: FFmpeg's last two lines, as the cause tends to sit above a more general complaint"""
+        lines = [line for line in log if 'Conversion failed' not in line][-2:]
+        return " ".join(lines)[:300] or None
+
+    def _publish(self, attempt_output: str, filepath: str, extension: str) -> Tuple[str, str]:
+        """Give the winning attempt the name the user was promised. Returns the path it ended up at, and any note."""
+        final = repaired_path(filepath, extension)
+        try:
+            os.replace(attempt_output, final)
+        except OSError as exc:
+            return attempt_output, (f"Could not write {os.path.basename(final)} ({exc.strerror}), which may be "
+                                    f"open in another program; the repair is at "
+                                    f"{os.path.basename(attempt_output)}.")
+        return final, ""
 
     def _replace_original(self, repaired: str, original: str) -> tuple:
         """
@@ -317,16 +446,24 @@ class RepairWorker(QThread):
                         f"{os.path.splitext(target)[1]}, so it kept its own extension.")
 
     @staticmethod
-    def _recovery_note(before: Dict[str, Any], best: Dict[str, Any],
-                       info: Dict[str, Any]) -> str:
+    def _loss_note(frames: Optional[int], expected: Optional[int], lost: int, fps: Optional[float],
+                   stated: bool) -> str:
+        """The shortfall in frames and in time, which is how it will be noticed when watching"""
+        about = "" if stated else "about "
+        return (f"{frames} of {about}{expected} video frames came through — roughly "
+                f"{format_duration(lost / fps)} of picture is lost, and playback will hold on the last good "
+                f"frame where it is missing.")
+
+    @classmethod
+    def _recovery_note(cls, best: Dict[str, Any], info: Dict[str, Any], expected: Optional[int], lost: int,
+                       fps: Optional[float], stated: bool) -> str:
         """
         What survived. For a file that was cut off this is the number that matters: the container said one
         duration and the frames say another, and after the rebuild both agree on what is really there.
         """
-        frames_before, frames_after = before.get('frames'), best.get('frames_after')
+        if lost:
+            return cls._loss_note(best.get('frames_after'), expected, lost, fps, stated)
         duration_before, duration_after = info.get('duration'), best.get('duration_after')
-        if frames_before and frames_after and abs(frames_after - frames_before) > max(2, frames_before * 0.01):
-            return f"{frames_after} of {frames_before} frames came through."
         if duration_before and duration_after and abs(duration_after - duration_before) > 1.0:
             return (f"Runs {format_duration(duration_after)}, where the damaged file claimed "
                     f"{format_duration(duration_before)}.")
@@ -410,6 +547,7 @@ STATUS_STYLE = {
     'damaged':      ("damaged", Qt.GlobalColor.darkRed),
     'repaired':     ("repaired", Qt.GlobalColor.darkGreen),
     'improved':     ("partly repaired", Qt.GlobalColor.darkYellow),
+    'partial':      ("partial — picture lost", Qt.GlobalColor.darkYellow),
     'unchanged':    ("no improvement", Qt.GlobalColor.darkRed),
     'unrepairable': ("cannot be opened", Qt.GlobalColor.darkRed),
     'failed':       ("failed", Qt.GlobalColor.darkRed),
@@ -480,7 +618,7 @@ class RepairDialog(QDialog):
         self.replace_check.setToolTip(
             "Off by default: the repaired file is written as <name>.repaired.<ext> next to the original, so\n"
             "the two can be compared before anything is given up. Only files that actually improved are\n"
-            "ever replaced.")
+            "ever replaced, and never by a file that came out with picture missing.")
         options_layout.addWidget(self.replace_check)
 
         layout.addWidget(options)
@@ -654,8 +792,13 @@ class RepairDialog(QDialog):
         parts = [f"{count} {STATUS_STYLE.get(status, (status, None))[0]}"
                  for status, count in sorted(counts.items())]
         stopped = " (stopped early)" if self.worker and self.worker.should_stop else ""
+        problems = [r for r in reports if r['status'] in _NEEDS_READING and r['note']]
+        details = [f"{r['name']}: {r['note']}" for r in problems[:_MAX_SPELLED_OUT]]
+        if len(problems) > _MAX_SPELLED_OUT:
+            details.append(f"…and {len(problems) - _MAX_SPELLED_OUT} more.")
         self.summary_label.setText(
             f"{len(reports)} of {len(self.files)} file(s) processed{stopped}: " + ", ".join(parts)
+            + "".join("\n" + line for line in details)
             + ("\nHover a row for the details of what was found."
                if any(r['note'] for r in reports) else ""))
         self.summary_label.setStyleSheet("font-weight: bold;")
