@@ -83,8 +83,9 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
 - **A clean result is not taken as a recovered one.** A re-encode decodes clean by construction, however little
   it could read, and a video that stops at 50 seconds still runs nine minutes if its audio does. So the frames
   that really came through are compared with what the source's index promises — repeats that filled a hole do
-  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. A
-  partial recovery never replaces the original, and failures and partials are spelled out under the table
+  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. The
+  same goes for a file whose picture ends long before the file does, even if the source's index never promised
+  more. A partial recovery never replaces the original, and failures and partials are spelled out under the table
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly
@@ -272,6 +273,16 @@ The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); t
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
 installed and run.
+
+## Changes in 3.17.3
+
+**"Repaired" could still be green on a video that goes black** ([#20](https://github.com/hclivess/videer/issues/20))
+
+- 3.17.2 compared the frames that came through with those the source's index promises, which only helps if the index
+  promises them. A source whose video track itself ends early, with audio running on, delivers everything it promised
+  and passed. The result is now also asked where its picture stops: on a damaged file, picture that ends well before
+  the file does reads *partial — picture lost*, whatever the source claimed. An undamaged file of the same shape is
+  left alone, because audio outlasting video is not damage on its own.
 
 ## Changes in 3.17.2
 
@@ -750,8 +761,9 @@ are running into issues, you should try with ffms2 enabled.
 - **A clean result is not taken as a recovered one.** A re-encode decodes clean by construction, however little
   it could read, and a video that stops at 50 seconds still runs nine minutes if its audio does. So the frames
   that really came through are compared with what the source's index promises — repeats that filled a hole do
-  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. A
-  partial recovery never replaces the original, and failures and partials are spelled out under the table
+  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. The
+  same goes for a file whose picture ends long before the file does, even if the source's index never promised
+  more. A partial recovery never replaces the original, and failures and partials are spelled out under the table
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly

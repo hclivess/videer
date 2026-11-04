@@ -22,6 +22,8 @@ The error count alone cannot call a repair a success. A re-encode writes a brand
 cleanly by construction, however little of the picture it managed to read: 50 good seconds of a nine-minute
 file measure "0 errors". What it says nothing about is what went missing, so the frames that really came through
 are also compared with the frames the source's index promises, and a shortfall is reported as a partial recovery.
+The index can be short too, promising only the video that survived, so the result is also asked where its picture
+stops. A file whose picture ends long before its audio does is reported the same way, however complete it looks.
 
 What this cannot do: an MP4 whose index (the `moov` atom) never got written cannot be opened by FFmpeg at all,
 and no option changes that — the file needs a tool like untrunc and a healthy reference recorded by the same
@@ -67,6 +69,11 @@ _MOOV_MISSING = re.compile(r"moov atom not found", re.IGNORECASE)
 _MISSING_SHARE_STATED = 0.005
 _MISSING_SHARE_ESTIMATED = 0.05
 
+# How long the rest of the file may outlast the picture on a damaged file. Audio often runs on a little past the
+# last frame on a healthy one, so this has to be more than that; minutes of nothing are well beyond it.
+_PICTURE_TAIL_SECONDS = 2.0
+_PICTURE_TAIL_SHARE = 0.02
+
 # Statuses the user should read rather than skim, spelled out under the table instead of left in a tooltip
 _NEEDS_READING = ('partial', 'unchanged', 'failed', 'unrepairable')
 _MAX_SPELLED_OUT = 5
@@ -103,6 +110,21 @@ def missing_frames(expected: Optional[int], actual: Optional[int], fps: Optional
     share = _MISSING_SHARE_STATED if stated else _MISSING_SHARE_ESTIMATED
     missing = expected - actual
     return missing if missing > max(fps or 1, expected * share) else 0
+
+
+def picture_shortfall(video_duration: Optional[float], duration: Optional[float]) -> float:
+    """Seconds the file runs on after its picture has stopped, beyond ordinary jitter. 0 if unknown."""
+    if not video_duration or not duration:
+        return 0.0
+    tail = duration - video_duration
+    return tail if tail > max(_PICTURE_TAIL_SECONDS, duration * _PICTURE_TAIL_SHARE) else 0.0
+
+
+def picture_stops_note(video_duration: float, duration: float) -> str:
+    """A measurement of the file itself, so it holds whatever the source claimed"""
+    return (f"The picture stops at {format_duration(video_duration)}, but the file runs to "
+            f"{format_duration(duration)}. Players will show black or the last frame for the rest: no more "
+            f"video could be read from the source.")
 
 
 def attempt_path(filepath: str, strategy: str, extension: Optional[str] = None) -> str:
@@ -261,6 +283,8 @@ class RepairWorker(QThread):
         if self.check_only:
             # Nothing is written, nothing is touched — this run only answers "is anything wrong".
             lost = missing_frames(expected, before['frames'], fps, stated)
+            stops = (picture_shortfall(info.get('video_duration'), info.get('duration'))
+                     if before['errors'] and not lost else 0)
             return self._report(
                 filepath,
                 status='clean' if before['errors'] == 0 else 'damaged',
@@ -269,7 +293,8 @@ class RepairWorker(QThread):
                 note=("No errors found." if before['errors'] == 0 else
                       f"{before['errors']} error(s) while decoding. "
                       + (before['first_error'] or '')[:160]
-                      + (" " + self._loss_note(before['frames'], expected, lost, fps, stated) if lost else "")))
+                      + (" " + self._loss_note(before['frames'], expected, lost, fps, stated) if lost else "")
+                      + (" " + picture_stops_note(info['video_duration'], info['duration']) if stops else "")))
 
         if before['errors'] == 0:
             return self._report(filepath, status='clean', errors_before=0, errors_after=0,
@@ -309,7 +334,10 @@ class RepairWorker(QThread):
 
         note = ""
         lost = missing_frames(expected, best['frames_after'], fps, stated)
+        stops = picture_shortfall(best['video_duration_after'], best['duration_after'])
         recovered = self._recovery_note(best, info, expected, lost, fps, stated)
+        if stops and not lost:
+            recovered = picture_stops_note(best['video_duration_after'], best['duration_after'])
         if best['errors_after'] == 0:
             status = 'repaired'
         elif best['errors_after'] < before['errors']:
@@ -321,7 +349,7 @@ class RepairWorker(QThread):
             note = ("The repair did not reduce the error count — the damage is in the compressed picture "
                     "data itself. The file was kept anyway so it can be compared.")
 
-        if lost and status != 'unchanged':
+        if (lost or stops) and status != 'unchanged':
             status = 'partial'
         if status == 'repaired' and best['strategy'] == 'reencode':
             # 0 is what any re-encode measures, so it must not be read as "the picture is back"
@@ -402,9 +430,11 @@ class RepairWorker(QThread):
         if frames is not None:
             frames = max(0, frames - progress.get('dup_frames', 0) + progress.get('drop_frames', 0))
 
+        measured = probe_media_info(output) or {}
         return {'strategy': strategy, 'output': output, 'extension': extension,
                 'errors_after': after['errors'], 'frames_after': frames,
-                'duration_after': (probe_media_info(output) or {}).get('duration')}
+                'duration_after': measured.get('duration'),
+                'video_duration_after': measured.get('video_duration')}
 
     @staticmethod
     def _beats(attempt: Dict[str, Any], best: Dict[str, Any], fps: Optional[float]) -> bool:

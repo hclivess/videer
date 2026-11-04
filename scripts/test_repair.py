@@ -12,7 +12,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.repair_manager import RepairWorker, expected_frames, missing_frames
+from modules.repair_manager import RepairWorker, expected_frames, missing_frames, picture_shortfall
 from utils.ffmpeg_utils import probe_media_info
 from utils.file_utils import backup_path
 
@@ -94,6 +94,21 @@ with tempfile.TemporaryDirectory() as folder:
     report, _ = repair(folder, hole, 'hole_mkv', output_format='mkv')
     check("mkv leaves a real gap: partial", report['status'] == 'partial', report)
 
+    print("an index that only promises what survived is not believed")
+    short = os.path.join(folder, 'short.mp4')
+    short_damaged = os.path.join(folder, 'short_damaged.mp4')
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-t', '17', '-i', good, '-i', good,
+                    '-map', '0:v', '-map', '1:a', '-c', 'copy', short], check=True)
+    damage_video(short, short_damaged, 16, 16.1)
+    for container in ('mp4', 'mkv'):
+        report, _ = repair(folder, short_damaged, f'short_{container}', output_format=container)
+        check(f"{container}: nothing missing by the index, yet partial", report['status'] == 'partial', report)
+        check(f"{container}: says where the picture stops", "picture stops at" in report['note'], report['note'])
+    report, listing = repair(folder, short_damaged, 'short_replace', replace=True)
+    check("and does not replace the original", "not replaced" in report['note'] and len(listing) == 2, listing)
+    report, _ = repair(folder, short, 'short_clean')
+    check("the same shape undamaged is left alone", report['status'] == 'clean', report)
+
     print("failure is reported, and does not cost the attempt that worked")
     report, listing = repair(folder, tail, 'failed_reencode', ffmpeg_extras='-no-such-option')
     check("the remux is kept", report['strategy'] == 'remux' and 'test.repaired.mp4' in listing, (report, listing))
@@ -141,6 +156,9 @@ check("a few frames short", missing_frames(5400, 5380, 30) == 0)
 check("minutes short", missing_frames(5400, 1500, 30) == 3900)
 check("an estimate gets more room", missing_frames(5400, 5200, 30, stated=False) == 0)
 check("no expectation, no verdict", missing_frames(None, 10, 30) == 0)
+check("audio a moment past the picture", picture_shortfall(178.5, 180) == 0)
+check("minutes of no picture", picture_shortfall(50, 527) == 477)
+check("no stream duration, no verdict", picture_shortfall(None, 527) == 0)
 
 if failures:
     print(f"\n{len(failures)} failed: {', '.join(failures)}")
