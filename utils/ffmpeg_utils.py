@@ -303,7 +303,7 @@ def probe_media_info(filepath: str) -> Dict[str, Any]:
     """Duration, size and first-video-stream properties, best effort — every field may be None."""
     info: Dict[str, Any] = {'duration': None, 'size': None, 'width': None, 'height': None,
                             'video_bitrate': None, 'total_bitrate': None, 'codec': None, 'fps': None,
-                            'frames': None, 'video_duration': None}
+                            'frames': None, 'video_duration': None, 'format_name': None}
     try:
         info['size'] = os.path.getsize(filepath)
     except OSError:
@@ -316,7 +316,7 @@ def probe_media_info(filepath: str) -> Dict[str, Any]:
     try:
         result = childproc.run(
             [ffprobe, '-v', 'error', '-select_streams', 'v:0',
-             '-show_entries', 'format=duration,bit_rate:'
+             '-show_entries', 'format=duration,bit_rate,format_name:'
                               'stream=width,height,bit_rate,codec_name,avg_frame_rate,nb_frames,duration:'
                               'stream_tags',
              '-of', 'json', filepath],
@@ -334,6 +334,7 @@ def probe_media_info(filepath: str) -> Dict[str, Any]:
     fmt = data.get('format') or {}
     info['duration'] = number(fmt.get('duration'))
     info['total_bitrate'] = number(fmt.get('bit_rate'))
+    info['format_name'] = fmt.get('format_name')
 
     streams = data.get('streams') or []
     if streams:

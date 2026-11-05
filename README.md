@@ -86,6 +86,10 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
   not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. The
   same goes for a file whose picture ends long before the file does, even if the source's index never promised
   more. A partial recovery never replaces the original, and failures and partials are spelled out under the table
+- **It tells a wrong edit list from damage.** An MP4's edit list says which part of its video to play, and a broken
+  one can say 50 seconds of a file that holds nine minutes: FFmpeg obeys it, many players ignore it, and the file
+  looks whole in one and black in the other. Nothing is damaged, so repair sets the list aside and rebuilds the
+  container, bringing back every frame without re-encoding
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly
@@ -273,6 +277,17 @@ The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); t
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
 installed and run.
+
+## Changes in 3.17.4
+
+**The "lost" video was there all along** ([#20](https://github.com/hclivess/videer/issues/20))
+
+- An MP4's edit list can say to play 50 seconds of a file holding nine minutes. FFmpeg obeys it and many players do
+  not, so a file could look fine in one and black in another. 3.17.3 reported this as lost picture when every frame was
+  still in the file. Repair now recognises it and rebuilds without the list, losslessly, restoring the whole video.
+- *Check only* and repair used to call such a file clean when nothing else was wrong with it. It now reads as damaged.
+- The earlier frame check took the lower of two numbers to allow for stream-copied cuts, which is what hid the full
+  frame count here. That count is now used whenever the evidence says the list is wrong.
 
 ## Changes in 3.17.3
 
@@ -764,6 +779,10 @@ are running into issues, you should try with ffms2 enabled.
   not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. The
   same goes for a file whose picture ends long before the file does, even if the source's index never promised
   more. A partial recovery never replaces the original, and failures and partials are spelled out under the table
+- **It tells a wrong edit list from damage.** An MP4's edit list says which part of its video to play, and a broken
+  one can say 50 seconds of a file that holds nine minutes: FFmpeg obeys it, many players ignore it, and the file
+  looks whole in one and black in the other. Nothing is damaged, so repair sets the list aside and rebuilds the
+  container, bringing back every frame without re-encoding
 - It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
   FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
   from the same device instead of failing quietly

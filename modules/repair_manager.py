@@ -25,6 +25,11 @@ are also compared with the frames the source's index promises, and a shortfall i
 The index can be short too, promising only the video that survived, so the result is also asked where its picture
 stops. A file whose picture ends long before its audio does is reported the same way, however complete it looks.
 
+There is a third kind that is not damage at all. An MP4's edit list says which part of its video to play, and a
+broken one can say 50 seconds of a file that holds nine minutes. FFmpeg obeys it and many players do not, so the
+same file looks whole in one and black in the other, while every frame is still there. Rebuilding with the edit
+list set aside brings the video back losslessly.
+
 What this cannot do: an MP4 whose index (the `moov` atom) never got written cannot be opened by FFmpeg at all,
 and no option changes that — the file needs a tool like untrunc and a healthy reference recorded by the same
 device. That case is detected and named rather than silently failed.
@@ -55,6 +60,10 @@ REPAIR_STRATEGIES = [
     ("Re-encode — decode past the damage and write a clean stream (lossy)", "reencode"),
 ]
 DEFAULT_REPAIR_STRATEGY = "auto"
+
+# Sets a wrong edit list aside but keeps its starting offset, unlike -ignore_editlist, which moves every frame
+# by that offset against the audio. Only the MP4/MOV demuxer has this option.
+_IGNORE_EDIT_LIST_CUTS = ['-advanced_editlist', '0']
 
 # Suffix for the repaired copy. The original is never overwritten in place; replacing it is a separate,
 # explicit choice that still leaves a .old backup behind.
@@ -123,8 +132,30 @@ def picture_shortfall(video_duration: Optional[float], duration: Optional[float]
 def picture_stops_note(video_duration: float, duration: float) -> str:
     """A measurement of the file itself, so it holds whatever the source claimed"""
     return (f"The picture stops at {format_duration(video_duration)}, but the file runs to "
-            f"{format_duration(duration)}. Players will show black or the last frame for the rest: no more "
-            f"video could be read from the source.")
+            f"{format_duration(duration)}. Players will show black or the last frame for the rest: FFmpeg could "
+            f"read no more video from the source.")
+
+
+def edit_list_hides_video(info: Dict[str, Any]) -> bool:
+    """
+    The video track holds enough frames to fill the file, yet FFmpeg will only play a part of them.
+
+    Each half has an innocent explanation on its own: a stream-copied cut keeps a few pre-roll samples, a phone's
+    trim keeps the whole recording and cuts the audio with it, and audio can simply outlast a shorter video. It
+    is only the two together, with the frames accounting for the time the picture is missing, that say the list
+    is wrong. The option that overrules it is fatal on any other demuxer, so the file must really be MP4/MOV.
+    """
+    frames, fps, duration = info.get('frames'), info.get('fps'), info.get('duration')
+    if 'mov' not in (info.get('format_name') or '').split(',') or not (frames and fps and duration):
+        return False
+    return (abs(frames / fps - duration) <= duration * _MISSING_SHARE_ESTIMATED
+            and picture_shortfall(info.get('video_duration'), duration) > 0)
+
+
+def hidden_video_note(info: Dict[str, Any]) -> str:
+    return (f"The file holds {info['frames']} video frames, about {format_duration(info['duration'])}, but its "
+            f"edit list plays only {format_duration(info['video_duration'])} of them. FFmpeg obeys the list and "
+            f"some players ignore it, which is why they disagree.")
 
 
 def attempt_path(filepath: str, strategy: str, extension: Optional[str] = None) -> str:
@@ -154,7 +185,8 @@ def build_check_command(ffmpeg: str, filepath: str) -> List[str]:
             '-i', filepath, '-f', 'null', '-']
 
 
-def build_remux_command(ffmpeg: str, source: str, output: str) -> List[str]:
+def build_remux_command(ffmpeg: str, source: str, output: str,
+                        demux_args: Optional[List[str]] = None) -> List[str]:
     """
     Rewrite the container, copying every stream untouched: a new index, regenerated timestamps, a clean end
     of file. Nothing here re-compresses anything, so a file whose only problem was its container comes out
@@ -163,7 +195,7 @@ def build_remux_command(ffmpeg: str, source: str, output: str) -> List[str]:
     extension = os.path.splitext(output)[1].lower()
     cmd = [ffmpeg, '-hide_banner', '-progress', 'pipe:1', '-nostats',
            '-err_detect', 'ignore_err', '-fflags', '+genpts+discardcorrupt',
-           '-i', source, '-y',
+           *(demux_args or []), '-i', source, '-y',
            '-map', '0', '-c', 'copy',
            '-avoid_negative_ts', 'make_zero']
     if extension in ('.mp4', '.m4v', '.mov'):
@@ -172,13 +204,18 @@ def build_remux_command(ffmpeg: str, source: str, output: str) -> List[str]:
     return cmd
 
 
-def build_reencode_command(settings: Dict[str, Any], source: str, output: str) -> List[str]:
+def build_reencode_command(settings: Dict[str, Any], source: str, output: str,
+                           demux_args: Optional[List[str]] = None) -> List[str]:
     """
     A full re-encode with the settings on the Video and Audio tabs, with error tolerance forced on so the
     decoder works past the damage instead of stopping at it.
     """
     builder = FFmpegCommandBuilder({**settings, 'repair_mode': True, 'corrupt_fix': True})
-    return builder.build_main_command(source, output)
+    command = builder.build_main_command(source, output)
+    if demux_args:
+        at = command.index('-i')
+        command[at:at] = demux_args
+    return command
 
 
 def repaired_path(filepath: str, extension: Optional[str] = None) -> str:
@@ -269,6 +306,10 @@ class RepairWorker(QThread):
         info = probe_media_info(filepath)
         expected, stated = expected_frames(info)
         fps = info.get('fps')
+        hidden = edit_list_hides_video(info)
+        if hidden:
+            expected, stated = info['frames'], True
+        demux_args = _IGNORE_EDIT_LIST_CUTS if hidden else None
 
         if not before['opened']:
             # Nothing can be repaired that cannot be read. Say which wall we hit.
@@ -285,18 +326,23 @@ class RepairWorker(QThread):
             lost = missing_frames(expected, before['frames'], fps, stated)
             stops = (picture_shortfall(info.get('video_duration'), info.get('duration'))
                      if before['errors'] and not lost else 0)
+            findings = []
+            if before['errors']:
+                findings.append(f"{before['errors']} error(s) while decoding. {(before['first_error'] or '')[:160]}")
+            if hidden:
+                findings.append(hidden_video_note(info) + " Repair can bring it back without re-encoding.")
+            elif lost:
+                findings.append(self._loss_note(before['frames'], expected, lost, fps, stated))
+            elif stops:
+                findings.append(picture_stops_note(info['video_duration'], info['duration']))
             return self._report(
                 filepath,
-                status='clean' if before['errors'] == 0 else 'damaged',
+                status='damaged' if findings else 'clean',
                 errors_before=before['errors'], frames_before=before['frames'],
                 duration_before=info.get('duration'),
-                note=("No errors found." if before['errors'] == 0 else
-                      f"{before['errors']} error(s) while decoding. "
-                      + (before['first_error'] or '')[:160]
-                      + (" " + self._loss_note(before['frames'], expected, lost, fps, stated) if lost else "")
-                      + (" " + picture_stops_note(info['video_duration'], info['duration']) if stops else "")))
+                note=" ".join(findings) or "No errors found.")
 
-        if before['errors'] == 0:
+        if before['errors'] == 0 and not hidden:
             return self._report(filepath, status='clean', errors_before=0, errors_after=0,
                                 duration_before=info.get('duration'), frames_before=before['frames'],
                                 frames_after=before['frames'],
@@ -309,7 +355,7 @@ class RepairWorker(QThread):
         for strategy in attempts.get(self.strategy, ['remux']):
             if self.should_stop:
                 break
-            attempt = self._attempt(row, ffmpeg, filepath, strategy, problems)
+            attempt = self._attempt(row, ffmpeg, filepath, strategy, problems, demux_args)
             if attempt is None:
                 continue
             if best is None or self._beats(attempt, best, fps):
@@ -357,6 +403,10 @@ class RepairWorker(QThread):
                 "A re-encode always measures clean. The decoder concealed what it could not read, so look at "
                 "the damaged parts before trusting them.")
 
+        if hidden:
+            recovered = (hidden_video_note(info) + " This file was rebuilt with that list set aside: "
+                         f"{best['frames_after']} frames came through. "
+                         + (recovered if lost or stops else ""))
         note = " ".join(part for part in [note, recovered, publish_note, *problems] if part)
         if status == 'partial' and self.replace_originals:
             note += " The original was not replaced: it still holds data this file does not."
@@ -376,18 +426,18 @@ class RepairWorker(QThread):
             size=os.path.getsize(output) if os.path.exists(output) else None)
 
     def _attempt(self, row: int, ffmpeg: str, filepath: str, strategy: str,
-                 problems: List[str]) -> Optional[Dict[str, Any]]:
+                 problems: List[str], demux_args: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """Run one strategy and measure what it achieved. None if it produced nothing usable, with why in problems."""
         if strategy == 'remux':
             extension = os.path.splitext(filepath)[1]
             output = attempt_path(filepath, strategy, extension)
-            command = build_remux_command(ffmpeg, filepath, output)
+            command = build_remux_command(ffmpeg, filepath, output, demux_args)
             self.file_progress.emit(row, "rebuilding the container…")
             title = "Rebuilding the container"
         else:
             extension = '.' + (self.settings.get('output_format') or 'mkv').lower()
             output = attempt_path(filepath, strategy, extension)
-            command = build_reencode_command(self.settings, filepath, output)
+            command = build_reencode_command(self.settings, filepath, output, demux_args)
             self.file_progress.emit(row, "re-encoding past the damage…")
             title = "Re-encoding"
 

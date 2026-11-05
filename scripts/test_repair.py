@@ -6,13 +6,15 @@ Run from the repository root:  python scripts/test_repair.py
 import os
 import random
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.repair_manager import RepairWorker, expected_frames, missing_frames, picture_shortfall
+from modules.repair_manager import (RepairWorker, build_reencode_command, build_remux_command, edit_list_hides_video,
+                                    expected_frames, missing_frames, picture_shortfall)
 from utils.ffmpeg_utils import probe_media_info
 from utils.file_utils import backup_path
 
@@ -51,6 +53,25 @@ def damage_video(source, target, start, end, junk=False, every=1):
                 data[offset] = rng.randrange(256) if junk else 0
     with open(target, 'wb') as handle:
         handle.write(data)
+
+
+def shorten_edit_list(source, target, seconds):
+    """Make the first edit list play only `seconds`, as a broken muxer does. Samples and tables are untouched."""
+    data = bytearray(open(source, 'rb').read())
+    at = data.find(b'mvhd')
+    version = data[at + 4]
+    timescale = struct.unpack('>I', data[at + 8 + (8 if version == 0 else 16):][:4])[0]
+    entry = data.find(b'elst') + 12
+    if data[entry - 8] != 0:
+        raise ValueError("expected a version 0 edit list")
+    data[entry:entry + 4] = struct.pack('>I', int(seconds * timescale))
+    with open(target, 'wb') as handle:
+        handle.write(data)
+
+
+def video_md5(path):
+    return subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-map', '0:v', '-f', 'md5', '-'],
+                          capture_output=True, text=True, check=True).stdout.strip()
 
 
 def repair(folder, source, name, strategy='auto', replace=False, **overrides):
@@ -108,6 +129,39 @@ with tempfile.TemporaryDirectory() as folder:
     check("and does not replace the original", "not replaced" in report['note'] and len(listing) == 2, listing)
     report, _ = repair(folder, short, 'short_clean')
     check("the same shape undamaged is left alone", report['status'] == 'clean', report)
+
+    print("a wrong edit list hides video that is all there")
+    cut_list = os.path.join(folder, 'cut_list.mp4')
+    shorten_edit_list(good, cut_list, 17)
+    info = probe_media_info(cut_list)
+    check("the probe shows the signature", info['frames'] == 1800 and abs(info['video_duration'] - 17) < 0.1, info)
+    check("it is recognised", edit_list_hides_video(info))
+    worker = RepairWorker([cut_list], SETTINGS, 'auto', check_only=True)
+    worker.run()
+    check("check only: damaged, though nothing errors", worker.reports[0]['status'] == 'damaged', worker.reports[0])
+    check("check only: says what it is", "edit list" in worker.reports[0]['note'], worker.reports[0]['note'])
+    report, listing = repair(folder, cut_list, 'cut_list')
+    check("repaired", report['status'] == 'repaired', report)
+    check("every frame back", report['frames_after'] == 1800, report['frames_after'])
+    check("without re-encoding", report['strategy'] == 'remux', report['strategy'])
+    check("the note explains it", "edit list" in report['note'], report['note'])
+    check("the video is bit-identical to before the damage", video_md5(report['output']) == video_md5(good))
+    report, _ = repair(folder, cut_list, 'cut_list_reencode', strategy='reencode')
+    check("a re-encode gets every frame too", report['frames_after'] == 1800 and report['status'] == 'repaired', report)
+
+    print("an edit list is only overruled on that evidence")
+    check("a short video with long audio", not edit_list_hides_video(probe_media_info(short)))
+    check("the undamaged source", not edit_list_hides_video(probe_media_info(good)))
+    trim = os.path.join(folder, 'trim.mp4')
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', '3.3', '-i', good, '-t', '10', '-c', 'copy', trim], check=True)
+    check("a stream-copied cut", not edit_list_hides_video(probe_media_info(trim)))
+    check("not given to a demuxer without the option",
+          not edit_list_hides_video({'format_name': 'matroska,webm', 'frames': 1800, 'fps': 30,
+                                     'duration': 60, 'video_duration': 17}))
+    for name, command in (('remux', build_remux_command('ffmpeg', 'in.mp4', 'out.mp4', ['-x', '0'])),
+                          ('re-encode', build_reencode_command(SETTINGS, 'in.mp4', 'out.mp4', ['-x', '0']))):
+        check(f"{name}: the option goes on the input", command[command.index('-i') - 2:command.index('-i')] == ['-x', '0'],
+              command)
 
     print("failure is reported, and does not cost the attempt that worked")
     report, listing = repair(folder, tail, 'failed_reencode', ffmpeg_extras='-no-such-option')
