@@ -278,6 +278,17 @@ The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); t
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
 installed and run.
 
+## Changes in 3.17.5
+
+**A lossless recovery no longer reads "no improvement"** ([#20](https://github.com/hclivess/videer/issues/20))
+
+- With a wrong edit list, the check before repair decoded only the part the list allowed and the check after decoded
+  the whole file, so the two counts were not comparable. Both now read the same video.
+- Two frames sharing a timestamp were counted as errors. Nothing fails to decode there and players step over it, so it
+  is now mentioned and no longer makes a file count as damaged.
+- The container rebuild no longer shifts timestamps to start at zero. That moved the audio and video by different
+  amounts, about 20 ms apart, and left MediaInfo without the audio's bitrate in an MP4.
+
 ## Changes in 3.17.4
 
 **The "lost" video was there all along** ([#20](https://github.com/hclivess/videer/issues/20))

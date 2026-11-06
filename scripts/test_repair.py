@@ -31,11 +31,12 @@ def check(name, condition, detail=""):
         failures.append(name)
 
 
-def make_source(path, duration=60):
+def make_source(path, duration=60, bframes=0):
     subprocess.run(['ffmpeg', '-v', 'error', '-y',
                     '-f', 'lavfi', '-i', f'testsrc2=s=320x240:r=30:d={duration}',
                     '-f', 'lavfi', '-i', f'sine=d={duration}',
-                    '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '60', '-c:a', 'aac', '-b:a', '64k', path],
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '60', '-bf', str(bframes),
+                    '-c:a', 'aac', '-b:a', '64k', path],
                    check=True)
 
 
@@ -65,6 +66,54 @@ def shorten_edit_list(source, target, seconds):
     if data[entry - 8] != 0:
         raise ValueError("expected a version 0 edit list")
     data[entry:entry + 4] = struct.pack('>I', int(seconds * timescale))
+    with open(target, 'wb') as handle:
+        handle.write(data)
+
+
+def duplicate_dts(source, target, sample):
+    """
+    Give one video sample the decode timestamp of the one before it, as some muxers do, and the next one the gap,
+    so every later timestamp stays put. The table grows, so its parents grow with it; the moov must follow the
+    mdat so that no chunk offset moves.
+    """
+    data = bytearray(open(source, 'rb').read())
+    assert data.find(b'mdat') < data.find(b'moov')
+
+    def find(start, end, path, chain):
+        at = start
+        while at < end:
+            size, kind = struct.unpack('>I4s', data[at:at + 8])
+            if kind == path[0] and (kind != b'trak' or b'vide' in data[at:at + size]):
+                if len(path) == 1:
+                    return chain + [at]
+                found = find(at + 8, at + size, path[1:], chain + [at])
+                if found:
+                    return found
+            at += size
+        return None
+
+    chain = find(0, len(data), [b'moov', b'trak', b'mdia', b'minf', b'stbl', b'stts'], [])
+    stts = chain[-1]
+    count = struct.unpack('>I', data[stts + 12:stts + 16])[0]
+    deltas = []
+    for index in range(count):
+        run, delta = struct.unpack('>II', data[stts + 16 + 8 * index:stts + 24 + 8 * index])
+        deltas += [delta] * run
+    deltas[sample + 1] += deltas[sample - 1]
+    deltas[sample - 1] = 0
+    runs = []
+    for delta in deltas:
+        if runs and runs[-1][1] == delta:
+            runs[-1][0] += 1
+        else:
+            runs.append([1, delta])
+    body = struct.pack('>I', len(runs)) + b''.join(struct.pack('>II', *run) for run in runs)
+    old_size = struct.unpack('>I', data[stts:stts + 4])[0]
+    box = struct.pack('>I4s', 12 + len(body), b'stts') + data[stts + 8:stts + 12] + body
+    data[stts:stts + old_size] = box
+    for parent in chain[:-1]:
+        size = struct.unpack('>I', data[parent:parent + 4])[0]
+        data[parent:parent + 4] = struct.pack('>I', size + len(box) - old_size)
     with open(target, 'wb') as handle:
         handle.write(data)
 
@@ -148,6 +197,29 @@ with tempfile.TemporaryDirectory() as folder:
     check("the video is bit-identical to before the damage", video_md5(report['output']) == video_md5(good))
     report, _ = repair(folder, cut_list, 'cut_list_reencode', strategy='reencode')
     check("a re-encode gets every frame too", report['frames_after'] == 1800 and report['status'] == 'repaired', report)
+
+    print("the case from #20: a wrong edit list and timestamps that repeat on both sides of it")
+    twitter = os.path.join(folder, 'twitter.mp4')
+    reordered = os.path.join(folder, 'bframes.mp4')
+    make_source(reordered, bframes=2)
+    duplicate_dts(reordered, os.path.join(folder, 'dts.mp4'), 300)
+    duplicate_dts(os.path.join(folder, 'dts.mp4'), os.path.join(folder, 'dts2.mp4'), 1200)
+    shorten_edit_list(os.path.join(folder, 'dts2.mp4'), twitter, 17)
+    report, _ = repair(folder, twitter, 'twitter_copy', video_codec='copy', audio_codec='copy')
+    check("with the reporter's Copy settings: repaired, not 'no improvement'", report['status'] == 'repaired',
+          report)
+    rebuilt = report['output']
+    report, listing = repair(folder, twitter, 'twitter')
+    check("repaired", report['status'] == 'repaired', report)
+    check("losslessly", report['strategy'] == 'remux', report['strategy'])
+    check("every frame back", report['frames_after'] == 1800, report['frames_after'])
+    check("the repeated timestamps are mentioned, not counted",
+          report['errors_before'] == 0 and "share a timestamp" in report['note'], report)
+    starts = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=start_time', '-of', 'csv=p=0',
+                             rebuilt], capture_output=True, text=True).stdout.split()
+    source_starts = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=start_time', '-of', 'csv=p=0',
+                                    twitter], capture_output=True, text=True).stdout.split()
+    check("the rebuild leaves audio and video starting where they did", starts == source_starts, (starts, source_starts))
 
     print("an edit list is only overruled on that evidence")
     check("a short video with long audio", not edit_list_hides_video(probe_media_info(short)))

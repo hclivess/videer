@@ -72,6 +72,11 @@ REPAIRED_SUFFIX = ".repaired"
 # FFmpeg says this, and only this, when an MP4's index never made it to disk.
 _MOOV_MISSING = re.compile(r"moov atom not found", re.IGNORECASE)
 
+# The check's own null output complaining that two frames share a decode timestamp. Nothing failed to decode, and
+# players step over it, so it is a remark about the file rather than damage in it. Counted as damage, it turned a
+# lossless repair into "no improvement" as soon as the rest of a file became readable and brought more of them.
+_TIMESTAMP_REMARK = re.compile(r"non monotonically increasing dts", re.IGNORECASE)
+
 # How many frames may go missing before it counts as lost picture: a second's worth and this share of the whole.
 # Edit lists, pre-roll and rounding all move the count a little on a healthy file. A duration worked out from the
 # container's total is looser, because that total is the longest stream's and not necessarily the video's.
@@ -158,6 +163,13 @@ def hidden_video_note(info: Dict[str, Any]) -> str:
             f"some players ignore it, which is why they disagree.")
 
 
+def timestamp_note(count: int) -> str:
+    if not count:
+        return ""
+    return (f"{count} pair(s) of frames share a timestamp. Players step over that, so it is not counted as an "
+            f"error.")
+
+
 def attempt_path(filepath: str, strategy: str, extension: Optional[str] = None) -> str:
     """
     Where one strategy writes while it is being measured. Each has its own name, because a remux and a
@@ -174,30 +186,31 @@ def is_progress_line(line: str) -> bool:
     return '=' in line and ' ' not in line.split('=', 1)[0]
 
 
-def build_check_command(ffmpeg: str, filepath: str) -> List[str]:
+def build_check_command(ffmpeg: str, filepath: str, demux_args: Optional[List[str]] = None) -> List[str]:
     """
     Decode the whole file and let FFmpeg complain. -v error keeps everything but real problems out, so the
-    number of message lines *is* the error count.
+    number of message lines *is* the error count. `demux_args` must be whatever the repair will read the source
+    with, so that the count before is taken over the same video as the count after.
     """
     return [ffmpeg, '-hide_banner', '-v', 'error',
             '-err_detect', 'crccheck+bitstream+buffer',
             '-progress', 'pipe:1', '-nostats',
-            '-i', filepath, '-f', 'null', '-']
+            *(demux_args or []), '-i', filepath, '-f', 'null', '-']
 
 
 def build_remux_command(ffmpeg: str, source: str, output: str,
                         demux_args: Optional[List[str]] = None) -> List[str]:
     """
-    Rewrite the container, copying every stream untouched: a new index, regenerated timestamps, a clean end
-    of file. Nothing here re-compresses anything, so a file whose only problem was its container comes out
+    Rewrite the container, copying every stream untouched: a new index, missing timestamps filled in, a clean
+    end of file. Timestamps that exist are left where they are: shifting them to start at zero moved the audio and
+    video by different amounts and cost the audio its bitrate in an MP4. Nothing here re-compresses anything, so a file whose only problem was its container comes out
     identical in content and fixed in form.
     """
     extension = os.path.splitext(output)[1].lower()
     cmd = [ffmpeg, '-hide_banner', '-progress', 'pipe:1', '-nostats',
            '-err_detect', 'ignore_err', '-fflags', '+genpts+discardcorrupt',
            *(demux_args or []), '-i', source, '-y',
-           '-map', '0', '-c', 'copy',
-           '-avoid_negative_ts', 'make_zero']
+           '-map', '0', '-c', 'copy']
     if extension in ('.mp4', '.m4v', '.mov'):
         cmd.extend(['-movflags', '+faststart'])
     cmd.append(output)
@@ -302,7 +315,6 @@ class RepairWorker(QThread):
 
     def _handle(self, row: int, ffmpeg: str, filepath: str) -> Dict[str, Any]:
         self.file_progress.emit(row, "checking…")
-        before = self.check(ffmpeg, filepath)
         info = probe_media_info(filepath)
         expected, stated = expected_frames(info)
         fps = info.get('fps')
@@ -310,6 +322,8 @@ class RepairWorker(QThread):
         if hidden:
             expected, stated = info['frames'], True
         demux_args = _IGNORE_EDIT_LIST_CUTS if hidden else None
+        before = self.check(ffmpeg, filepath, demux_args)
+        remark = timestamp_note(before['timestamp_remarks'])
 
         if not before['opened']:
             # Nothing can be repaired that cannot be read. Say which wall we hit.
@@ -340,13 +354,13 @@ class RepairWorker(QThread):
                 status='damaged' if findings else 'clean',
                 errors_before=before['errors'], frames_before=before['frames'],
                 duration_before=info.get('duration'),
-                note=" ".join(findings) or "No errors found.")
+                note=" ".join(findings + [remark]).strip() or "No errors found.")
 
         if before['errors'] == 0 and not hidden:
             return self._report(filepath, status='clean', errors_before=0, errors_after=0,
                                 duration_before=info.get('duration'), frames_before=before['frames'],
                                 frames_after=before['frames'],
-                                note="No errors found — nothing to repair.")
+                                note=" ".join(["No errors found — nothing to repair.", remark]).strip())
 
         attempts = {'auto': ['remux', 'reencode'], 'remux': ['remux'], 'reencode': ['reencode']}
         best: Optional[Dict[str, Any]] = None
@@ -407,7 +421,7 @@ class RepairWorker(QThread):
             recovered = (hidden_video_note(info) + " This file was rebuilt with that list set aside: "
                          f"{best['frames_after']} frames came through. "
                          + (recovered if lost or stops else ""))
-        note = " ".join(part for part in [note, recovered, publish_note, *problems] if part)
+        note = " ".join(part for part in [note, recovered, remark, publish_note, *problems] if part)
         if status == 'partial' and self.replace_originals:
             note += " The original was not replaced: it still holds data this file does not."
         if self.replace_originals and status in ('repaired', 'improved'):
@@ -558,7 +572,7 @@ class RepairWorker(QThread):
                 pass
 
     # ------------------------------------------------------------------
-    def check(self, ffmpeg: str, filepath: str) -> Dict[str, Any]:
+    def check(self, ffmpeg: str, filepath: str, demux_args: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Decode the file and count what FFmpeg complains about.
 
@@ -569,7 +583,7 @@ class RepairWorker(QThread):
         that opened emits at least one progress block; one that did not emits none, and that is unambiguous.
         """
         messages: List[str] = []
-        state = {'progress': 0, 'frames': None}
+        state = {'progress': 0, 'frames': None, 'remarks': 0}
 
         def on_line(line: str):
             if is_progress_line(line):
@@ -579,9 +593,12 @@ class RepairWorker(QThread):
                 elif key == 'frame':
                     state['frames'] = value.strip()
                 return
+            if _TIMESTAMP_REMARK.search(line):
+                state['remarks'] += 1
+                return
             messages.append(line)
 
-        self._run(build_check_command(ffmpeg, filepath), on_line)
+        self._run(build_check_command(ffmpeg, filepath, demux_args), on_line)
 
         frames = None
         try:
@@ -591,6 +608,7 @@ class RepairWorker(QThread):
 
         return {
             'errors': len(messages),
+            'timestamp_remarks': state['remarks'],
             'opened': state['progress'] > 0,
             'frames': frames,
             'moov_missing': any(_MOOV_MISSING.search(line) for line in messages),
