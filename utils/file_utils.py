@@ -83,6 +83,21 @@ def backup_path(original_file: str) -> str:
     return f"{original_file}.old{os.path.splitext(original_file)[1]}"
 
 
+def free_backup_path(original_file: str) -> str:
+    """
+    backup_path(), or the first <name>.old2<ext>, .old3<ext>… that nothing occupies. A backup that is already
+    there is the original from an earlier run — the one file that cannot be made again — so it is never
+    overwritten to make room for a newer one.
+    """
+    candidate = backup_path(original_file)
+    extension = os.path.splitext(original_file)[1]
+    number = 2
+    while os.path.lexists(candidate):
+        candidate = f"{original_file}.old{number}{extension}"
+        number += 1
+    return candidate
+
+
 def _same_path(a: str, b: str) -> bool:
     """Whether two paths name one file: the same spelling, or one inode on a case-insensitive filesystem"""
     if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
@@ -151,13 +166,15 @@ class FileOperations:
                 logger.error(f"Not replacing: {target} already exists")
             return None
 
+        backup = None
+        moved_aside = False
         try:
             st = os.stat(original_file)
-            backup = backup_path(original_file)
-            if os.path.exists(backup):
-                os.remove(backup)
+            backup = free_backup_path(original_file)
             os.rename(original_file, backup)
+            moved_aside = True
             shutil.move(new_file, target)
+            moved_aside = False
 
             os.utime(target, (st.st_atime, st.st_mtime))
             if platform.system() == 'Windows':
@@ -174,6 +191,16 @@ class FileOperations:
         except Exception as e:
             if logger:
                 logger.error(f"Error replacing file: {e}")
+            if moved_aside:
+                # The encode never arrived (disk full, target locked). Put the original back under its own
+                # name rather than leave it as a .old the caller is told nothing about.
+                try:
+                    if os.path.lexists(target) and not _same_path(target, original_file):
+                        os.remove(target)       # whatever part of the move did land
+                    os.rename(backup, original_file)
+                except OSError as undo:
+                    if logger:
+                        logger.error(f"The original is now at {backup} and could not be moved back: {undo}")
             return None
 
     def replace_file(self, new_file: str, original_file: str,

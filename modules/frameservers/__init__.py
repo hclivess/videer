@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from config import FRAMESERVER_DEINTERLACERS
 from modules.frameservers.base import Frameserver, FrameserverError, FrameserverInput
-from modules.frameservers.avisynth import AviSynthFrameserver
+from modules.frameservers.avisynth import WINDOWS, AviSynthFrameserver
 from modules.frameservers.vapoursynth import VapourSynthFrameserver
 
 __all__ = ['Frameserver', 'FrameserverError', 'FrameserverInput', 'AviSynthFrameserver',
@@ -41,7 +41,8 @@ def frameserver_issues(settings: Dict[str, Any]) -> List[str]:
     if frameserver_deinterlacer(settings) == 'avisynth':
         if not settings.get('use_avisynth'):
             issues.append("QTGMC deinterlacing requires AviSynth+ to be enabled.")
-        elif not settings.get('use_ffms2'):
+        elif not settings.get('use_ffms2') and WINDOWS:
+            # Elsewhere there is no AVISource to fall back to: the script always uses an indexing source filter
             issues.append("QTGMC deinterlacing needs the FFMS2 source filter for non-AVI inputs.")
     frameserver = frameserver_for(settings)
     if frameserver is not None:

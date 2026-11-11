@@ -42,7 +42,8 @@ from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox,
+                               QHBoxLayout,
                                QHeaderView, QLabel, QMessageBox, QProgressBar, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout)
 from modules.widgets import WrapLabel
@@ -325,6 +326,14 @@ class RepairWorker(QThread):
         before = self.check(ffmpeg, filepath, demux_args)
         remark = timestamp_note(before['timestamp_remarks'])
 
+        if before['cancelled']:
+            return self._report(filepath, status='cancelled', errors_before=None,
+                                note="Cancelled before the check finished; nothing is known about this file.")
+        if before['incomplete']:
+            return self._report(filepath, status='failed', errors_before=before['errors'],
+                                note=f"The check did not finish: FFmpeg stopped with exit code "
+                                     f"{before['exit_code']} partway through, so the file was not fully read.")
+
         if not before['opened']:
             # Nothing can be repaired that cannot be read. Say which wall we hit.
             note = ("The MP4 index (moov atom) is missing — the file was cut off before it was written. "
@@ -598,7 +607,11 @@ class RepairWorker(QThread):
                 return
             messages.append(line)
 
-        self._run(build_check_command(ffmpeg, filepath, demux_args), on_line)
+        exit_code = self._run(build_check_command(ffmpeg, filepath, demux_args), on_line)
+        cancelled = self.should_stop
+        # A decode that ran to the end exits 0, or non-zero with the errors it met. Killed by a signal, or
+        # gone without a word, it did neither — and no complaints from half a file is not a clean file.
+        incomplete = not cancelled and (exit_code < 0 or (exit_code != 0 and not messages))
 
         frames = None
         try:
@@ -607,6 +620,9 @@ class RepairWorker(QThread):
             pass
 
         return {
+            'cancelled': cancelled,
+            'incomplete': incomplete,
+            'exit_code': exit_code,
             'errors': len(messages),
             'timestamp_remarks': state['remarks'],
             'opened': state['progress'] > 0,
@@ -649,6 +665,7 @@ STATUS_STYLE = {
     'unchanged':    ("no improvement", Qt.GlobalColor.darkRed),
     'unrepairable': ("cannot be opened", Qt.GlobalColor.darkRed),
     'failed':       ("failed", Qt.GlobalColor.darkRed),
+    'cancelled':    ("cancelled", Qt.GlobalColor.gray),
     'pending':      ("", Qt.GlobalColor.gray),
 }
 
@@ -919,4 +936,8 @@ class RepairDialog(QDialog):
         """A repair pass must never outlive the window that started it"""
         if self.worker and self.worker.isRunning():
             self.worker.stop()
-            self.worker.wait(10000)
+            if not self.worker.wait(10000):
+                # Still inside a slow file operation. Destroyed with this dialog while running it would
+                # take the application down, so hand it to the application until it ends.
+                self.worker.setParent(QApplication.instance())
+                self.worker.finished.connect(self.worker.deleteLater)

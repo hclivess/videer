@@ -89,10 +89,16 @@ class ProcessThread(QThread):
     vmaf_calculated = Signal(int, float, str)   # file index, score, metric
     crf_matched = Signal(int, int)          # file index, CRF the per-file search chose
 
-    def __init__(self, process_manager, settings: Dict[str, Any]):
+    def __init__(self, process_manager, settings: Dict[str, Any], skip_completed: bool = False):
         super().__init__()
         self._pm = process_manager
+        # queue_settings is what the user set for the whole queue. settings is what the file in hand is
+        # encoded with — the queue's, plus that file's own overrides and searched CRF — and every per-file
+        # decision reads it, so an override reaches the frameserver and the raw pre-transcode too.
+        self.queue_settings = settings
         self.settings = settings
+        self.skip_completed = skip_completed
+        self._claimed_outputs: set = set()
         self.should_stop = False
         self.paused = False
         self._pause_started: Optional[float] = None
@@ -159,6 +165,13 @@ class ProcessThread(QThread):
             if file is None:
                 break
 
+            if self.skip_completed and file.status == 'success':
+                # Already encoded in an earlier run. Doing it again would encode the encode, and with
+                # "replace original" it would turn that into the backup of the original.
+                self.info_signal.emit(f"Skipping {file.filename}: already processed")
+                index += 1
+                continue
+
             self._current_index = index
             self._pm.set_worker_index(index)
             self._file_start_time = time.time()
@@ -169,7 +182,7 @@ class ProcessThread(QThread):
 
             # Preparing a file can fail on its own (read-only directory, locked log, over-long Windows path,
             # a preset with a non-numeric size). That must fail this file, not kill the whole queue.
-            file_settings = self.settings
+            file_settings = self.settings = self.queue_settings
             try:
                 file.create_logger()
                 file.duration = probe_duration(file.filepath)
@@ -177,7 +190,10 @@ class ProcessThread(QThread):
                 # filename, and naming the file after the queue's CRF would label every encode wrongly.
                 file_settings = self._settings_for(file, index)
                 file.set_output_name(file_settings)
+                self._claim_output(file)
+                self.settings = file_settings
                 self.command_builder = FFmpegCommandBuilder(file_settings)
+                self.frameserver = frameserver_for(file_settings)
                 prepared = True
             except Exception as exc:
                 file.add_error(f"Could not prepare {file.filename}: {exc}")
@@ -229,6 +245,27 @@ class ProcessThread(QThread):
             index += 1
 
         self._log_batch_sizes()
+
+    def _claim_output(self, file: VideoFile):
+        """
+        Give the file an output name no other file in this run has. clip.avi and clip.mp4 in one folder both
+        come out as clip_<codecs>.mkv, and the second encode used to delete the first one's finished output
+        to take its place. The later one carries its source's extension in the name instead.
+        """
+        def key() -> str:
+            return os.path.normcase(os.path.abspath(file.get_full_output_path()))
+
+        if key() in self._claimed_outputs:
+            stem, extension = os.path.splitext(file.output_name)
+            source = os.path.splitext(file.filename)[1].lstrip('.') or 'file'
+            file.output_name = f"{stem}.{source}{extension}"
+            number = 2
+            while key() in self._claimed_outputs:
+                file.output_name = f"{stem}.{source}{number}{extension}"
+                number += 1
+            self.info_signal.emit(f"{file.filename}: another file in the queue already produced that output "
+                                  f"name; writing {file.output_name}")
+        self._claimed_outputs.add(key())
 
     def _log_sizes(self, file: VideoFile):
         """
@@ -751,8 +788,8 @@ class ProcessThread(QThread):
         A file's override of 'crf' is deliberately overruled by a quality search, which measures rather
         than guesses — but a file that overrode its *codec* still searches against that codec.
         """
-        settings = file.settings_with_overrides(self.settings)
-        if settings is not self.settings:
+        settings = file.settings_with_overrides(self.queue_settings)
+        if settings is not self.queue_settings:
             file.log_info(f"Per-file settings: {file.override_summary(PER_FILE_LABELS)}")
 
         if not settings.get('auto_match_quality'):
@@ -1052,8 +1089,9 @@ class ProcessManager(QObject):
             self._queue_mutex.unlock()
 
     # ---- lifecycle -----------------------------------------------------
-    def start_processing(self, files: List[VideoFile], settings: Dict[str, Any]):
-        """Start processing files with given settings"""
+    def start_processing(self, files: List[VideoFile], settings: Dict[str, Any],
+                         skip_completed: bool = False):
+        """Start processing files with given settings; skip_completed leaves already-encoded files alone"""
         if self._is_processing:
             return
 
@@ -1077,7 +1115,7 @@ class ProcessManager(QObject):
         finally:
             self._queue_mutex.unlock()
 
-        self.process_thread = ProcessThread(self, settings)
+        self.process_thread = ProcessThread(self, settings, skip_completed)
         self.process_thread.progress_signal.connect(self._on_progress)
         self.process_thread.info_signal.connect(self._on_info)
         self.process_thread.file_started.connect(self._on_file_started)

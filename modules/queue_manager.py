@@ -73,9 +73,13 @@ def read_queue_file(path: str) -> Dict[str, Any]:
         if isinstance(entry, str):
             entries.append({"path": entry, "status": "pending"})
         elif isinstance(entry, dict) and isinstance(entry.get('path'), str):
-            entries.append({"path": entry['path'],
-                            "status": entry.get('status') if entry.get('status') in
-                            ('pending', 'running', 'success', 'failed') else 'pending'})
+            kept = {"path": entry['path'],
+                    "status": entry.get('status') if entry.get('status') in
+                    ('pending', 'running', 'success', 'failed') else 'pending'}
+            # Without this a file's own settings were gone after every restart and every Load Queue
+            if isinstance(entry.get('overrides'), dict):
+                kept["overrides"] = entry['overrides']
+            entries.append(kept)
     data['files'] = entries
     if not isinstance(data.get('settings'), dict):
         data['settings'] = None

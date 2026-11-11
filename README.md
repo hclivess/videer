@@ -124,8 +124,8 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
   FFmpeg ships them off — and each can be turned back off when throughput matters more than quality
 - Audio: AAC, MP3, Opus, AC3, FLAC, PCM, or stream copy; bitrate control and optional stereo downmix
 - Containers: MKV (the only one that carries `pgssub`), MP4, AVI, MOV, WebM
-- Deinterlacer choice: `QTempGaussMC` (VapourSynth, any OS — installed from inside the app), `QTGMC` (AviSynth+,
-  Windows) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order and optional frame-rate halving. Picking
+- Deinterlacer choice: `QTempGaussMC` (VapourSynth, any OS — installed from inside the app), `QTGMC` (AviSynth+ —
+  plugins bundled on Windows, your own install on Linux and macOS) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order and optional frame-rate halving. Picking
   QTGMC switches AviSynth+ and the ffms2 source filter on automatically; picking QTempGaussMC switches AviSynth+ off,
   since one encode goes through one frameserver
 - Optional resolution scaling (2160p → 360p presets or custom W×H, "never upscale" guard, lanczos / bicubic / spline /
@@ -163,8 +163,8 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
   VapourSynth not ready for QTempGaussMC, destructive options)
 - Opt-in quality score for every finished encode, in any of seven metrics, and a metric-driven CRF search
   before it — per file, across the whole queue; see *Quality matching* above
-- Cross-platform: runs on Windows, Linux and macOS (AviSynth+/QTGMC are Windows-only; QTempGaussMC runs on all
-  three); no shell or PowerShell calls
+- Cross-platform: runs on Windows, Linux and macOS (QTempGaussMC and bwdif need nothing installed on any of
+  them; AviSynth+/QTGMC use bundled plugins on Windows and the system's AviSynth+ elsewhere); no shell or PowerShell calls
 
 ## Output
 
@@ -208,10 +208,16 @@ Every file has a `.sha256` beside it.
   into it from PyPI, about 250 MB in all, inside videer's own folder. Nothing else on the machine changes; *Remove*
   in the same dialog undoes it. Available on Windows x64, Linux x64 / ARM64 (glibc 2.35+, i.e. Ubuntu 22.04 or
   newer) and macOS 15+; VapourSynth publishes nothing for Windows on ARM.
-- **AviSynth+**, for QTGMC (Windows only) — [AviSynth+](https://github.com/AviSynth/AviSynthPlus/releases); the MT
-  build videer was tested with is attached to the
-  [3.7 release](https://github.com/hclivess/videer/releases/tag/3.7) as `AviSynthPlus-MT-r2772.exe`. Every
-  AviSynth plugin QTGMC needs is bundled.
+- **AviSynth+**, for QTGMC and your own script lines — [AviSynth+](https://github.com/AviSynth/AviSynthPlus/releases).
+  - *Windows:* the MT build videer was tested with is attached to the
+    [3.7 release](https://github.com/hclivess/videer/releases/tag/3.7) as `AviSynthPlus-MT-r2772.exe`. Every
+    AviSynth plugin QTGMC needs is bundled.
+  - *Linux, macOS:* install AviSynth+ from your distribution (`avisynthplus` on Arch / Manjaro) and use an FFmpeg
+    built with `--enable-avisynth`. The bundled plugins are Windows DLLs and are not used; AviSynth+ autoloads the
+    ones installed on the system. Any script needs one source filter — FFMS2, L-SMASH-Works or BestSource, built as
+    an AviSynth+ plugin. QTGMC also needs mvtools2, masktools2, RgTools and nnedi3 (yadifmod2 for *Ultra Fast*,
+    FFT3DFilter for *Very Slow* / *Placebo*); its `.avsi` scripts come with videer. Pressing Start names whatever
+    is missing. If those plugins will not build for you, QTempGaussMC is the same deinterlacer with nothing to compile.
 
 ## Windows says the app is not safe
 
@@ -277,6 +283,57 @@ The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); t
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
 installed and run.
+
+## Changes in 3.17.6
+
+**AviSynth+ on Linux and macOS** ([#21](https://github.com/hclivess/videer/issues/21))
+
+- videer refused AviSynth+ anywhere but Windows with "AviSynth+ is only available on Windows", and the encode
+  failed if you continued. AviSynth+ has run on Linux and macOS for years; the claim was wrong and is gone.
+- Off Windows the script no longer loads the bundled plugins, which are Windows DLLs. It uses the plugins installed
+  with the system's AviSynth+, and reads the source with whichever of FFMS2, L-SMASH-Works or BestSource is there —
+  AVISource exists only on Windows, so *Use FFMS2 Source Filter* makes no difference here.
+- Pressing Start now asks the installed AviSynth+ what it has, by having FFmpeg open a small script, and names what
+  is missing: an FFmpeg built without AviSynth support, a library FFmpeg cannot load, no source filter, or the
+  plugins QTGMC needs at the selected preset.
+- A file name with a double quote in it no longer breaks the script.
+- `scripts/test_avisynth_system.py` checks this against a stand-in FFmpeg. It has not yet been run against a real
+  AviSynth+ on Linux — if it misbehaves for you, the log and the `.avs` beside the source say where.
+
+**Nothing of yours is overwritten**
+
+- Pressing Start a second time encoded every file again, finished ones included. With *replace original* that
+  encoded the encode and deleted the backup of the real original to make room. Start now asks whether to skip files
+  that are already done, and a backup that exists is never overwritten: the next one is `.old2`, `.old3`.
+- A replace that failed halfway (disk full, file locked) left the original under its `.old` name. It is moved back.
+- `clip.avi` and `clip.mp4` in one folder produced the same output name, and the second deleted the first's finished
+  encode. The later file now carries its source's extension in the name.
+- A script or FFMS2 index you keep beside a source (`movie.vpy`, `movie.avs`, `movie.mkv.ffindex`) was overwritten
+  and then deleted as a temporary file. videer now writes `movie.videer.vpy` and leaves an existing index alone.
+
+**Per-file settings**
+
+- A file's own settings were lost on every restart and every *Load Queue*; they are read back now.
+- A file's own deinterlace, field order and frame-rate settings were ignored by QTGMC / QTempGaussMC and the raw
+  pre-transcode, which used the queue's. A file set to deinterlace in a queue that does not was encoded interlaced.
+
+**The command line**
+
+- *Extra FFmpeg parameters* on Windows kept the quote characters and split inside them: `-metadata title="My Movie"`
+  reached FFmpeg as `title="My` and `Movie"`. Quotes now group and are removed, as everywhere else.
+- Your extra parameters now come after videer's own, so they win: a typed `-pix_fmt yuv420p10le` was put back to
+  8 bit, and a typed `-svtav1-params` / `-x265-params` replaced the grain settings where it is now added to them.
+- Embedded cover art was encoded as a second, one-frame video track. It is now left out of the encode.
+- bwdif / yadif did nothing while *Use AviSynth+* was on; the file came out interlaced.
+
+**Scores and checks that said more than they knew**
+
+- The quality score after QTGMC or QTempGaussMC compared deinterlaced frames against the interlaced source and
+  meant nothing. The reference is now deinterlaced with bwdif at the same rate and field order.
+- *Check & Repair* called a file clean when its check was cancelled or FFmpeg died partway. It now says so.
+- FFmpeg's and ffprobe's output is read as UTF-8 on every system; on Windows a tag in another script could make a
+  probe come back empty.
+- Closing the repair or quality window while its worker was stuck in a slow file operation could abort the app.
 
 ## Changes in 3.17.5
 

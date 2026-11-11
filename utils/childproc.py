@@ -118,6 +118,11 @@ def run(*args, timeout: Optional[float] = None, **kwargs) -> subprocess.Complete
     """subprocess.run equivalent for short helpers (ffprobe -show_format, exiftool -ver) that is still tracked."""
     kwargs.setdefault("stdout", subprocess.PIPE)
     kwargs.setdefault("stderr", subprocess.PIPE)
+    if kwargs.get("text") or kwargs.get("universal_newlines"):
+        # FFmpeg and ffprobe write UTF-8 whatever the locale is. Decoded with the Windows ANSI code page a
+        # Cyrillic tag is a UnicodeDecodeError, and the probe that hit it came back empty.
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
     stdin = kwargs.pop("input", None)
     proc = popen(*args, stdin=subprocess.PIPE if stdin is not None else kwargs.pop("stdin", None), **kwargs)
     try:

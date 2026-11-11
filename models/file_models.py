@@ -86,6 +86,7 @@ class VideoFile:
         self.script_file: Optional[str] = None       # the frameserver script (.avs / .vpy), once written
         self.error_file: Optional[str] = None
         self.ffindex_file: Optional[str] = None
+        self.index_files: List[str] = []             # further source-filter indexes the frameserver wrote
         
         # Processing state: 'pending' | 'running' | 'success' | 'failed'
         self.status = 'pending'
@@ -176,7 +177,9 @@ class VideoFile:
             self.transcode_name = os.path.join(self.directory, f"{self.basename}.trans.avi")
         
         # Set index files
-        self.ffindex_file = f"{self.filepath}.ffindex"
+        # An index that is already there was not made by this run and is not this run's to delete
+        ffindex = f"{self.filepath}.ffindex"
+        self.ffindex_file = None if os.path.exists(ffindex) and self.ffindex_file != ffindex else ffindex
         self.error_file = f"{self.filepath}.error"
     
     @staticmethod
@@ -316,6 +319,8 @@ class VideoFile:
             self.ffindex_file,
             # FFMS2 indexes whatever it is pointed at, and with a raw pre-transcode that is the intermediate
             f"{self.transcode_name}.ffindex" if self.transcode_name else None,
+            # whatever index the frameserver's source filter is known to leave beside what it read
+            *self.index_files,
             self.error_file
         ])
 

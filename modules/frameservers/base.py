@@ -54,7 +54,12 @@ class Frameserver:
 
     def script_path(self, video_file: VideoFile) -> str:
         # Next to the source, never in the process CWD: same-named sources in different folders must not collide
-        return os.path.join(video_file.directory, f"{video_file.basename}{self.script_extension}")
+        path = os.path.join(video_file.directory, f"{video_file.basename}{self.script_extension}")
+        if os.path.lexists(path) and getattr(video_file, 'script_file', None) != path:
+            # A script of that name beside the source is the user's own; writing here would overwrite it
+            # and the cleanup would then delete it.
+            path = os.path.join(video_file.directory, f"{video_file.basename}.videer{self.script_extension}")
+        return path
 
     def prepare(self, video_file: VideoFile, source: str) -> FrameserverInput:
         """Write the script for `source` (the file itself, or its raw intermediate) and say how to read it"""

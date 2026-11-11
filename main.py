@@ -132,7 +132,28 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        self.process_manager.start_processing(files, settings)
+        # Files that already went through in an earlier run are still in the queue with their tick. Encoding
+        # them again is rarely what Start was pressed for, and with "replace original" it encodes the encode.
+        done = sum(1 for f in files if getattr(f, 'status', None) == 'success')
+        skip_completed = False
+        if done:
+            box = QMessageBox(QMessageBox.Icon.Question, "Already processed",
+                              f"{done} of {len(files)} file(s) in the queue were already processed.",
+                              parent=self)
+            box.setInformativeText("Skip them, or process them again with the current settings?")
+            skip = box.addButton("Skip them", QMessageBox.ButtonRole.AcceptRole)
+            again = box.addButton("Process again", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(skip)
+            box.exec()
+            if box.clickedButton() not in (skip, again):
+                return
+            skip_completed = box.clickedButton() is skip
+            if skip_completed and done == len(files):
+                self.ui_manager.update_status("Nothing to do: every file in the queue is already processed")
+                return
+
+        self.process_manager.start_processing(files, settings, skip_completed)
         self.ui_manager.set_processing_state(True)
     
     def stop_processing(self):

@@ -209,6 +209,25 @@ def ffmpeg_has_encoder(name: str) -> bool:
     return name in encoders if encoders else True
 
 
+def split_extras(text: str, windows: Optional[bool] = None) -> List[str]:
+    """
+    Split the Extra FFmpeg Parameters box into arguments, with quotes grouping and then removed on every OS.
+
+    shlex's non-POSIX mode, used on Windows until now, keeps the quote characters and still splits inside a
+    value: -metadata title="My Movie" became title="My and Movie". POSIX mode gets the quoting right but
+    eats backslashes, which on Windows are path separators — so there they are doubled first.
+    """
+    text = (text or '').strip()
+    if not text:
+        return []
+    if os.name == 'nt' if windows is None else windows:
+        text = text.replace('\\', '\\\\')
+    try:
+        return shlex.split(text, posix=True)
+    except ValueError:
+        return text.split()         # an unclosed quote: pass it on as typed and let FFmpeg say so
+
+
 def ffmpeg_has_filter(name: str) -> bool:
     """
     Whether the FFmpeg in use provides a filter. An FFmpeg that could not be asked at all (missing, or
@@ -475,7 +494,7 @@ class FFmpegCommandBuilder:
         cmd = self._base_command()
         cmd.extend(['-i', input_file])
         # AVI intermediate: video + audio only (AVI cannot carry text subtitles)
-        cmd.extend(['-map', '0:v', '-map', '0:a?', '-sn'])
+        cmd.extend(['-map', '0:V', '-map', '0:a?', '-sn'])
 
         if transcode_video and transcode_audio:
             cmd.extend(['-c:a', 'pcm_s32le', '-c:v', 'rawvideo'])
@@ -541,7 +560,9 @@ class FFmpegCommandBuilder:
         self._add_speed_preset(cmd, video_codec)
 
         # Mapping (subtitles only where the container can carry them, and only in a form it accepts)
-        cmd.extend(['-map', '0:v', '-map', f'{streams}:a?'])
+        # 0:V, not 0:v: lower case also selects embedded cover art, which was then encoded as a second,
+        # one-frame video track with every filter and bitrate setting applied to it.
+        cmd.extend(['-map', '0:V', '-map', f'{streams}:a?'])
         subtitle_map, subtitle_codec_args = self._subtitle_plan(streams_file, output_format, streams)
         cmd.extend(subtitle_map)
 
@@ -575,11 +596,6 @@ class FFmpegCommandBuilder:
         if audio_codec != 'copy':
             self._clear_stat_tags(cmd, 'a')
 
-        # Extra FFmpeg parameters
-        extra = self.settings.get('ffmpeg_extras', '').strip()
-        if extra:
-            cmd.extend(shlex.split(extra, posix=(os.name != 'nt')))
-
         # Tag the file with what made it and how. The settings a file was encoded with are otherwise gone the
         # moment the batch ends — the log is deleted, the preset changes — and "what CRF was this?" is the
         # first question asked of any encode years later. The tags land after -map_metadata so they overwrite
@@ -600,6 +616,11 @@ class FFmpegCommandBuilder:
             cmd.extend(['-flags', '+cgop'])
         if video_codec not in ('copy', 'rawvideo', 'prores_ks'):
             cmd.extend(['-pix_fmt', output_pixel_format(video_codec)])
+
+        # Extra FFmpeg parameters, after every option videer sets itself: FFmpeg takes the last of a repeated
+        # option, and what the user typed is meant to win. Placed before the defaults above, a typed
+        # -pix_fmt yuv420p10le was silently put back to 8 bit.
+        self._add_extras(cmd)
 
         # Container-specific options
         if output_format == 'mp4':
@@ -752,6 +773,20 @@ class FFmpegCommandBuilder:
             option = PARAMS_OPTION.get(video_codec)
             if option:
                 self._merge_params_option(cmd, option, plan['params'])
+
+    def _add_extras(self, cmd: List[str]):
+        """The user's own FFmpeg options. An encoder's -<codec>-params is merged into the one already on the
+        command: a second copy would replace it, and the grain settings in it with it."""
+        extras = split_extras(self.settings.get('ffmpeg_extras', ''))
+        position = 0
+        while position < len(extras):
+            option = extras[position]
+            if re.fullmatch(r'-\w+-params', option) and option in cmd and position + 1 < len(extras):
+                self._merge_params_option(cmd, option, extras[position + 1])
+                position += 2
+            else:
+                cmd.append(option)
+                position += 1
 
     @staticmethod
     def _merge_params_option(cmd: List[str], option: str, addition: str):
@@ -922,7 +957,7 @@ class FFmpegCommandBuilder:
         if not self.settings.get('deinterlace', False):
             return None
         deinterlacer = self.settings.get('deinterlacer', 'qtgmc')
-        if deinterlacer in FRAMESERVER_DEINTERLACERS or self.settings.get('use_avisynth', False):
+        if deinterlacer in FRAMESERVER_DEINTERLACERS:
             return None
         mode = 'send_frame' if self.settings.get('reduce_fps', False) else 'send_field'
         parity = 'tff' if self.settings.get('tff', False) else 'bff'
@@ -1053,7 +1088,16 @@ class FFmpegCommandBuilder:
         # a frame away in time, and reads 65 where the encode is worth 99. No CRF can fix that, so a search
         # walks to the bottom of its range on every file. Whatever the filters change, they change on both
         # sides, and what is left to measure is what the encoder lost.
-        reference_chain = ','.join(self.build_video_filters())
+        reference_filters = self.build_video_filters()
+        if (self.settings.get('deinterlace') and
+                self.settings.get('deinterlacer', 'qtgmc') in FRAMESERVER_DEINTERLACERS):
+            # QTGMC / QTempGaussMC ran in the frameserver, which the reference does not go through. Give the
+            # reference bwdif at the same rate and field order, so both sides have the same frames at the
+            # same instants; the score then also carries the small difference between the two deinterlacers.
+            mode = 'send_frame' if self.settings.get('reduce_fps', False) else 'send_field'
+            parity = 'tff' if self.settings.get('tff', False) else 'bff'
+            reference_filters.insert(0, f'bwdif=mode={mode}:parity={parity}')
+        reference_chain = ','.join(reference_filters)
         if reference_chain:
             reference_chain += ','
 

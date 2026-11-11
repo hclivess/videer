@@ -36,7 +36,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QProgressBar, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
@@ -1195,7 +1195,10 @@ class QualityMatchDialog(QDialog):
     def _shutdown(self):
         if self.analyzer and self.analyzer.isRunning():
             self.analyzer.stop()
-            self.analyzer.wait(5000)
+            if not self.analyzer.wait(5000):
+                # Destroyed with this dialog while still running it would take the application down
+                self.analyzer.setParent(QApplication.instance())
+                self.analyzer.finished.connect(self.analyzer.deleteLater)
 
 
 def fill_metric_combo(combo: QComboBox):

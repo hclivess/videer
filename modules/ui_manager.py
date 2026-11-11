@@ -3,6 +3,7 @@ UI Manager for videer
 Handles all UI creation and management
 """
 
+import sys
 from typing import Dict, Any, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QCheckBox, QPushButton, QLineEdit, QSlider,
@@ -719,7 +720,8 @@ class UIManager(QWidget):
         for text, value in DEINTERLACERS:
             self.controls['deinterlacer'].addItem(text, value)
         self.controls['deinterlacer'].setToolTip(
-            "QTGMC: highest quality, needs AviSynth+ (Windows).\n"
+            "QTGMC: highest quality, needs AviSynth+ (bundled plugins on Windows; on Linux and macOS your own\n"
+            "    AviSynth+ install with a source filter, mvtools2, masktools2, RgTools and nnedi3).\n"
             "QTempGaussMC: the vs-jetpack rewrite of QTGMC — faster, high-bit-depth correct; needs VapourSynth\n"
             "    (any OS: pip install -r requirements-vapoursynth.txt).\n"
             "bwdif / yadif: built into FFmpeg, work on every OS and with any input."
@@ -770,6 +772,13 @@ class UIManager(QWidget):
         self.controls['use_avisynth'] = QCheckBox("Use AviSynth+")
         self.controls['use_ffms2'] = QCheckBox("Use FFMS2 Source Filter")
         
+        if sys.platform != 'win32':
+            self.controls['use_avisynth'].setToolTip(
+                "Runs the encode through the AviSynth+ installed on this system; FFmpeg must be built with\n"
+                "AviSynth support. Its plugins are the system's own — the bundled ones are Windows binaries.")
+            self.controls['use_ffms2'].setToolTip(
+                "Always on here: AVISource exists only on Windows, so the script reads the source with\n"
+                "whichever of FFMS2, L-SMASH-Works or BestSource is installed as an AviSynth+ plugin.")
         avs_layout.addWidget(self.controls['use_avisynth'])
         avs_layout.addWidget(self.controls['use_ffms2'])
         
