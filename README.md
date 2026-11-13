@@ -122,36 +122,47 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
 - NVENC quality options (Advanced tab): rate-control lookahead, spatial + temporal adaptive quantisation with
   strength, quarter- or full-resolution multi-pass, B-frame count and B-frames-as-reference. All on by default —
   FFmpeg ships them off — and each can be turned back off when throughput matters more than quality
+- **Preserve film grain**: per-encoder grain handling (`-tune grain` on x264/x265, grain synthesis on the AV1
+  encoders), with the quality number lowered to pay for it; greys out on encoders that have no equivalent
+- **Settings per file**: right-click any queue entry (or several) to override the codec, quality, preset, audio,
+  container, resolution, deinterlacing or extra arguments; everything else keeps following the queue
 - Audio: AAC, MP3, Opus, AC3, FLAC, PCM, or stream copy; bitrate control and optional stereo downmix
 - Containers: MKV (the only one that carries `pgssub`), MP4, AVI, MOV, WebM
 - Deinterlacer choice: `QTempGaussMC` (VapourSynth, any OS — installed from inside the app), `QTGMC` (AviSynth+ —
-  plugins bundled on Windows, your own install on Linux and macOS) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order and optional frame-rate halving. Picking
+  plugins bundled on Windows, your own install on Linux) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order and optional frame-rate halving. Picking
   QTGMC switches AviSynth+ and the ffms2 source filter on automatically; picking QTempGaussMC switches AviSynth+ off,
   since one encode goes through one frameserver
 - Optional resolution scaling (2160p → 360p presets or custom W×H, "never upscale" guard, lanczos / bicubic / spline /
   bilinear / neighbor scaler)
 - PAR / DAR presets and custom values, with metadata-only or resampling handling
 - AviSynth+ pipeline with `SetFilterMTMode` multithreading, ffms2 source filter, optional raw pre-transcode for
-  problematic inputs, and a free-form script box; every plugin QTGMC needs across *all* its presets is bundled in
-  `plugins/` (masktools2, mvtools2, nnedi3, RgTools, ffms2, yadifmod2 for *Ultra Fast*, FFT3DFilter + FFTW for *Very Slow*)
+  problematic inputs, and a free-form script box; on Windows every plugin QTGMC needs across *all* its presets is
+  bundled in `plugins/` (masktools2, mvtools2, nnedi3, RgTools, ffms2, yadifmod2 for *Ultra Fast*, FFT3DFilter +
+  FFTW for *Very Slow*)
 - CUDA GPU acceleration support; 64-bit implementation
 - Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1 /
-  VVC presets; `defaults.json` support for your own startup defaults
+  VVC presets, plus Film Grain (x265 and AV1), Shrink Bloated Source, Shrink Hard, Interlaced TV / DVD (frame rate
+  or field rate), Animation and Phone / Tablet; `defaults.json` support for your own startup defaults
 
 ### File handling
 
 - Output is written next to the source as `<name>_<vcodec>_<acodec>[_crf<N>][_abr<N>][_<res>].<ext>`; timestamps
   are copied from the original. Only the settings that actually applied are named — a stream copy has no CRF and
   FLAC has no bitrate
-- **Replace Original Files**: the encode takes over the original filename; the original is kept as `<name>.old<ext>`.
-  The encode always carries its own container's extension, never the source's — `tape.avi` becomes `tape.mkv`
+- **When an encode succeeds** (Output tab) — one ordered choice:
+  - *Keep both* — the encode is written next to the original under its own name. Nothing is lost; the drive holds
+    both copies
+  - *Replace, keep a backup* — the encode takes the original's filename and the original is kept as `<name>.old<ext>`.
+    Reversible, still needs room for both
+  - *Replace and delete the original* — the encode takes the filename and the source is deleted as soon as *its* own
+    encode succeeds, one by one as the queue progresses, so space is freed while long batches are still running.
+    The source is only removed when the output exists and is non-empty; files that fail or are stopped keep theirs.
+    There is no recycle bin and no undo — the consequence is printed under the choice and the start dialog warns you
+    when it is on
+
+  A replaced encode always carries its own container's extension, never the source's — `tape.avi` becomes `tape.mkv`
   with the original at `tape.avi.old.avi`, `TAPE.MKV` comes back as `TAPE.mkv` — because a `.avi` file holding
   Matroska lies about what it is
-- **Delete Source Files After Processing**: permanently deletes each source right after *its* encode succeeds — one by
-  one as the queue progresses, so disk space is freed while long batches are still running. The source is only removed
-  when the output exists and is non-empty; files that fail or are stopped keep their source. Combined with *Replace
-  Original Files* the `.old` backup is removed too. There is no recycle bin and no undo — the start dialog warns you
-  when this is on.
 - Per-file `<name>.log` with the full FFmpeg command line and output; temporary `.avs` / `.vpy` / `.ffindex` /
   `.trans.avi` files are cleaned up
 
@@ -164,7 +175,7 @@ or *Install VapourSynth…* on the Processing tab) each say what they fetch, fro
 - Opt-in quality score for every finished encode, in any of seven metrics, and a metric-driven CRF search
   before it — per file, across the whole queue; see *Quality matching* above
 - Cross-platform: runs on Windows, Linux and macOS (QTempGaussMC and bwdif need nothing installed on any of
-  them; AviSynth+/QTGMC use bundled plugins on Windows and the system's AviSynth+ elsewhere); no shell or PowerShell calls
+  them; AviSynth+/QTGMC use bundled plugins on Windows and the system's AviSynth+ on Linux); no shell or PowerShell calls
 
 ## Output
 
@@ -258,14 +269,15 @@ certificate, not about the file:
 
 | Tab | What is there |
 |---|---|
-| **Video** | Encoder (dropdown), speed preset, CRF / CQ / QP on the encoder's own scale, *Match Source Quality…*, resolution scaling, PAR |
+| **Video** | Encoder (dropdown), speed preset, CRF / CQ / QP on the encoder's own scale, *Preserve film grain*, *Match Source Quality…*, resolution scaling, PAR |
 | **Audio** | Codec (dropdown), bitrate, stereo downmix |
 | **Processing** | Deinterlacing — on/off, deinterlacer, field order, halve the frame rate; the VapourSynth status with *Install VapourSynth…* / *Re-check* while QTempGaussMC is selected · AviSynth+ — on/off, FFMS2 source, your own script lines · raw pre-transcode for problem inputs |
 | **Quality** | Metric, target, pooling, sampling, CRF search window, per-file CRF matching, verification |
 | **Advanced** | NVENC lookahead, adaptive quantisation, multi-pass, B-frames; DAR; threads; extra FFmpeg arguments |
-| **Output** | Container, replace originals, delete sources, damaged-stream tolerance |
+| **Output** | Container, and what happens to the original when an encode succeeds |
 
-Every setting is part of a preset (*Presets* menu: built-ins, your own, *Save Current as Defaults*).
+Every setting is part of a preset (*Presets* menu: built-ins, your own, *Save Current as Defaults*). Right-click a
+queue entry for *Settings for this file…* to give it its own codec, quality, container and the like.
 
 ## CLI
 
@@ -854,175 +866,3 @@ A run that finished could leave FFmpeg processes behind that videer could no lon
 - **Never a partial file**: FFmpeg now writes to `<name>.part.<ext>` and the file is renamed to its final name only
   when the encode completed and is non-empty. Stop or a failed encode removes the `.part` file.
 - Packaging switched to PyInstaller; CI runs a real encode on the frozen Linux build (`VIDEER_SELFTEST`).
-<<<<<<< HEAD
-=======
-
-## Why
-
-FFmpeg is a superior command line video encoding tool. Videer serves as a GUI for it.
-
-## Notice
-
-If you are not using a frameserver and are just trying to transcode video with any feature that requires AviSynth+, and
-are running into issues, you should try with ffms2 enabled.
-
-## Features
-
-### Quality matching — a CRF per file, measured
-
-- **Every file gets its own CRF.** Tick *Find each file's own CRF before encoding it* on the Quality tab and
-  the queue searches each entry separately: it samples that file, finds the CRF that keeps *its* quality, and
-  encodes it at that number. A clean cartoon and a grainy film print do not want the same setting, and a batch
-  encoded at one CRF gets one of them wrong — which is the whole problem with batching by a number
-- The chosen CRF appears next to the file in the queue, goes into its output filename, and is written to its
-  log with the score and target that produced it. A file the search cannot answer for falls back to the CRF
-  slider rather than failing
-- **Match Source Quality…** (`Ctrl+M`, or the button under the CRF slider) runs the same search on one file
-  with every probe shown — CRF, score, estimated size of the finished video stream, and what that is as a
-  share of the source — so you can see the trade-off before committing a whole queue to it. Applying a result
-  copies the criteria to the Quality tab, so the batch is judged the way that file just was
-- **Seven metrics, because no metric is the truth.** VMAF is the default and the one trained on human scores,
-  but it was trained for 1080p viewed from three screen-heights away, so it reads high on UHD and can be
-  flattered by anything that adds apparent sharpness. **VMAF NEG** removes that gain, **VMAF 4K** re-anchors
-  the scale for UHD, **MS-SSIM** and **SSIM** measure structure instead of predicting opinion, and **PSNR**
-  and **XPSNR** measure signal error alone. Each carries its own named targets and its own scale — 0-100,
-  0-1 or decibels — and the tab explains what each one is biased towards
-- **Pooling, which is usually what "the score looked fine but the encode doesn't" means.** A mean is what
-  everyone quotes and is exactly what hides a bad scene: twenty smeared seconds inside ten good minutes barely
-  move it. Pool on the harmonic mean, the 5th or 1st percentile, or the single worst frame, and the search
-  steers by how bad it gets instead of how good it usually is
-- Targets are named rather than numeric — *visually lossless*, *transparent*, *high*, *good* — or any value you
-  type. Sample count and length are yours to set, as is the CRF window to search, which defaults to the range
-  that suits the selected encoder because AV1's CRF scale is not x265's
-- It says when re-encoding is not worth it: a target no CRF in the range could reach means a grainy or already
-  heavily compressed source, and an estimate no smaller than the original means stream copy is the better choice
-- **Verification** scores every finished encode against its original with the same metric and pooling, and
-  shows the result next to the file
-- Uses the encoder, speed preset and filters currently selected, so the answer is for the encode you are about
-  to run. VMAF, its variants and MS-SSIM need an FFmpeg built with `libvmaf`; SSIM, PSNR and XPSNR are in every
-  build, and metrics this build cannot compute are greyed out rather than hidden
-
-### Repair
-
-- **Check & Repair** (`Ctrl+R`, or the button under the queue) decodes every file in the queue from end to
-  end, counts what FFmpeg complains about, and shows the batch as a table — which recordings are damaged,
-  how badly, and what can be done about each. *Check only* writes nothing at all
-- Damage comes in two kinds and they want opposite treatments. **Rebuilding the container** fixes a broken
-  index, wrong timestamps or a file that was cut off mid-write, and costs nothing: every compressed frame is
-  copied through untouched, so the result is the same video, only playable and seekable again.
-  **Re-encoding** is the only thing that helps when the picture data itself is damaged — the decoder conceals
-  what it cannot decode and a clean stream is written, at the price of a re-encode
-- **Automatic** does the honest thing: rebuild the container, measure again, and spend the re-encode only if
-  the error count says it must. Every file is decoded again after treatment, so the table reports the fix as
-  measured — *113 errors → 0* — rather than asserting it worked. A repair that changed nothing says so
-- Repaired files are written as `<name>.repaired.<ext>` beside the original, which is never touched unless
-  *Replace the original* is ticked — and even then only for files that actually improved, with the original
-  kept as `<name>.old<ext>`. A repair that lands in a different container than the source keeps its own
-  extension rather than becoming Matroska wearing an `.mp4`
-- For a file that was cut off, it reports what survived: *7s, where the damaged file claimed 12s*
-- **A clean result is not taken as a recovered one.** A re-encode decodes clean by construction, however little
-  it could read, and a video that stops at 50 seconds still runs nine minutes if its audio does. So the frames
-  that really came through are compared with what the source's index promises — repeats that filled a hole do
-  not count — and a shortfall reads *partial — picture lost*: *1500 of 15810 video frames came through*. The
-  same goes for a file whose picture ends long before the file does, even if the source's index never promised
-  more. A partial recovery never replaces the original, and failures and partials are spelled out under the table
-- **It tells a wrong edit list from damage.** An MP4's edit list says which part of its video to play, and a broken
-  one can say 50 seconds of a file that holds nine minutes: FFmpeg obeys it, many players ignore it, and the file
-  looks whole in one and black in the other. Nothing is damaged, so repair sets the list aside and rebuilds the
-  container, bringing back every frame without re-encoding
-- It also names what it cannot do: an MP4 whose index (`moov` atom) was never written cannot be opened by
-  FFmpeg at all, and no option changes that — the report says so, and points at untrunc and a reference file
-  from the same device instead of failing quietly
-
-### Queue
-
-- Add files, add folders (recursive), or drag & drop files/folders onto the list; batches are sorted naturally
-  (`Tape 1, Tape 2, Tape 10` — not `1, 10, 2`)
-- **Duplicate detection**: a file already in the queue is skipped, even if it is added again under a different spelling
-  (relative/absolute path, different letter case, symlink) or appears twice in the same drop. Skipped files are
-  reported in the status line.
-- **Live queue**: add or remove files while encoding is running — pending entries are appended/removed without
-  restarting; files already processed or in progress cannot be removed
-- Drag entries to reorder; each entry is coloured by state (▶ running, ✔ done, ✖ failed) and shows its VMAF score
-  when enabled
-- **Save Queue / Load Queue** (`Ctrl+S` / `Ctrl+L`): write the queue — file order, per-file state and a snapshot of
-  the current encoding settings — to a `.json` file, and load it back later to replace or extend the queue. On load
-  you choose whether to skip the files already marked done and whether to apply the settings stored with the queue;
-  files that have moved or been deleted are reported and skipped.
-- **The queue survives a restart**: it is autosaved to `queue.json` next to the application on every change and after
-  every file, and restored on the next start with the already-encoded files left out — a crash or a power cut costs
-  at most the file that was in flight
-- **Pause / Resume** the whole run (suspends FFmpeg and its children, ETAs are corrected for the pause) and **Stop**
-
-### Encoding
-
-- Video: H.264 (x264), H.265/HEVC (x265), H.266/VVC (VVenC), AV1 (SVT-AV1 or the libaom reference encoder), VP9,
-  NVIDIA NVENC H.264/HEVC/AV1 (`p1`–`p7` presets), ProRes, raw, or stream copy; CRF quality on each encoder's own
-  scale and per-encoder speed presets
-- NVENC quality options (Advanced tab): rate-control lookahead, spatial + temporal adaptive quantisation with
-  strength, quarter- or full-resolution multi-pass, B-frame count and B-frames-as-reference. All on by default —
-  FFmpeg ships them off — and each can be turned back off when throughput matters more than quality
-- **Preserve film grain**: per-encoder grain handling (`-tune grain` on x264/x265, grain synthesis on the AV1
-  encoders), with the quality number lowered to pay for it; greys out on encoders that have no equivalent
-- **Settings per file**: any queue entry can override the codec, quality, preset, audio, container, resolution,
-  deinterlacing or extra arguments; everything else keeps following the queue
-- Audio: AAC, MP3, Opus, AC3, FLAC, PCM, or stream copy; bitrate control and optional stereo downmix
-- Containers: MKV (the only one that carries `pgssub`), MP4, AVI, MOV, WebM
-- Deinterlacer choice: `QTGMC` (AviSynth+, Windows) or FFmpeg's `bwdif` / `yadif` (any OS, any input); field order
-  and an optional *output frame rate, not field rate* choice. Picking QTGMC switches AviSynth+ and the ffms2 source filter on automatically
-- Optional resolution scaling (2160p → 360p presets or custom W×H, "never upscale" guard, lanczos / bicubic / spline /
-  bilinear / neighbor scaler)
-- PAR / DAR presets and custom values, with metadata-only or resampling handling
-- AviSynth+ pipeline with `SetFilterMTMode` multithreading, ffms2 source filter, optional raw pre-transcode for
-  problematic inputs, and a free-form script box; every plugin QTGMC needs across *all* its presets is bundled in
-  `plugins/` (masktools2, mvtools2, nnedi3, RgTools, ffms2, yadifmod2 for *Ultra Fast*, FFT3DFilter + FFTW for *Very Slow*)
-- CUDA GPU acceleration support; 64-bit implementation
-- Extra FFmpeg arguments pass-through; save / load your own presets, plus bundled Web / High Quality / Archive / AV1 /
-  VVC presets, plus Film Grain (x265 and AV1), Shrink Bloated Source, Shrink Hard, Interlaced TV/DVD
-  (frame rate or field rate), Animation and Phone/Tablet; `defaults.json` support for your own startup defaults
-
-### File handling
-
-- Output is written next to the source as `<name>_<vcodec>_<acodec>[_crf<N>][_abr<N>][_<res>].<ext>`; timestamps
-  are copied from the original. Only the settings that actually applied are named — a stream copy has no CRF and
-  FLAC has no bitrate
-- **When an encode succeeds** — one ordered choice, not a pair of overlapping checkboxes:
-  - *Keep both* — the encode is written next to the original under its own name. Nothing is lost; the drive holds
-    both copies
-  - *Replace, keep a backup* — the encode takes the original's filename and the original is kept as `<name>.old<ext>`.
-    Reversible, still needs room for both
-  - *Replace and delete the original* — the encode takes the filename and the source is deleted as soon as *its* own
-    encode succeeds, one by one as the queue progresses, so space is freed while long batches are still running.
-    The source is only removed when the output exists and is non-empty; files that fail or are stopped keep theirs.
-    There is no recycle bin and no undo — the consequence is printed under the choice and the start dialog warns you
-    when it is on
-  
-  A replaced encode always carries its own container's extension, never the source's — `tape.avi` becomes `tape.mkv`
-  with the original at `tape.avi.old.avi`, `TAPE.MKV` comes back as `TAPE.mkv` — because a `.avi` file holding
-  Matroska lies about what it is
-- Per-file `<name>.log` with the full FFmpeg command line and output; temporary `.avs` / `.ffindex` / `.trans.avi`
-  files are cleaned up
-
-### Feedback
-
-- Live progress panel: per-file and total ETA, fps, speed, bitrate, output size, position — parsed from FFmpeg's
-  machine-readable `-progress` output
-- Settings sanity check before starting (container/codec mismatches, ignored options, missing AviSynth plugins,
-  destructive options)
-- Opt-in quality score for every finished encode, in any of seven metrics, and a metric-driven CRF search
-  before it — per file, across the whole queue; see *Quality matching* above
-- Cross-platform: runs on Windows, Linux and macOS (AviSynth+/QTGMC features are Windows-only); no shell or
-  PowerShell calls
-
-## Requirements
-
-- [FFmpeg](https://ffmpeg.org/) in the system PATH or next to videer (a Windows build is attached to the
-  [latest release](https://github.com/hclivess/videer/releases/latest) as `ffmpeg.7z`)
-- For QTGMC deinterlacing / AviSynth+ processing (Windows): [AviSynth+](https://avs-plus.net/) — the tested MT
-  installer is attached to the [latest release](https://github.com/hclivess/videer/releases/latest) as
-  `AviSynthPlus-MT-r2772.exe`
-- No need to install AviSynth plugins, all are bundled in `plugins/`
-- Python 3.9+ — on Windows run `run.cmd` (installs `requirements.txt` via pip and starts the app), or manually
-  `pip install -r requirements.txt && python main.py`. Prebuilt binaries for Windows / Linux / macOS are attached to
-  each release.
->>>>>>> c54ea5c (3.17: settings per file, grain-aware encoding, and two options that read wrongly)
