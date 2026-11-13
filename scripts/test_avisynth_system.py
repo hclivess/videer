@@ -49,6 +49,8 @@ if mode == "nolib":
     sys.exit(1)
 asked = re.findall(r'FunctionExists\("(\w+)"\)', open(script).read())
 have = os.environ.get("FAKE_AVS_HAVE", "").split()
+if ".NNEDI3CL(" in open(script).read():      # not asked by name: the probe builds a clip with it
+    asked.append("NNEDI3CL")
 sys.stderr.write("[avisynth @ 0x1] Assert: videer-probe:[%s]\n(%s, line 99)\n" % ("".join(n + " " for n in asked if n in have), script))
 sys.stderr.write("Error opening input file %s.\n" % script)
 sys.exit(1)
@@ -72,13 +74,16 @@ def issues(settings, mode="ok", have=""):
     return frameservers.frameserver_issues(settings)
 
 
-def script(settings, have):
+def script(settings, have, notes=None):
     os.environ["FAKE_AVS"], os.environ["FAKE_AVS_HAVE"] = "ok", have
     avisynth._install = None        # as pressing Start does: ask the install again
     source = os.path.join(work, 'clip "one".mkv')
     open(source, "w").close()
     video = VideoFile(source)
-    served = frameservers.frameserver_for(settings).prepare(video, source)
+    server = frameservers.frameserver_for(settings)
+    served = server.prepare(video, source)
+    if notes is not None:
+        notes[:] = server.notes()
     with open(served.script) as fh:
         return fh.read(), video
 
@@ -103,12 +108,15 @@ check("AviSynth+ not loadable, with FFmpeg's own words", len(got) == 1 and "liba
 got = issues(BASE, have="")
 check("no source filter", len(got) == 1 and "source filter" in got[0] and "BestSource" in got[0], got)
 got = issues(QTGMC, have="FFVideoSource FFAudioSource MSuper mt_lutxy")
-check("QTGMC's missing plugins by name", len(got) == 1 and "RgTools, nnedi3" in got[0]
+check("QTGMC's missing plugins by name", len(got) == 1 and "RgTools" in got[0]
       and "mvtools2" not in got[0] and "fft3dfilter" not in got[0], got)
+check("nnedi3 is not one of them: it has no build here, and QTGMC runs without it", "nnedi3" not in got[0], got)
+got = issues(QTGMC, have="FFVideoSource FFAudioSource MSuper mt_lutxy RemoveGrain")
+check("QTGMC with no interpolator plugin at all is not refused", got == [], got)
 got = issues(dict(QTGMC, preset="Very Slow"), have="FFVideoSource FFAudioSource MSuper mt_lutxy RemoveGrain nnedi3")
 check("Very Slow also needs fft3dfilter", len(got) == 1 and got[0].count("fft3dfilter") == 1, got)
 got = issues(dict(QTGMC, preset="Ultra Fast"), have="FFVideoSource FFAudioSource MSuper mt_lutxy RemoveGrain yadifmod2")
-check("Ultra Fast needs yadifmod2, not nnedi3", got == [], got)
+check("Ultra Fast asks for neither nnedi3 nor fft3dfilter", got == [], got)
 got = issues(dict(QTGMC, use_ffms2=False), have="FFVideoSource FFAudioSource " + QTGMC_ALL)
 check("the FFMS2 checkbox is not demanded where AVISource does not exist", got == [], got)
 
@@ -120,6 +128,33 @@ check("L-SMASH-Works when that is what is installed", "v = LWLibavVideoSource(" 
       and "a = LWLibavAudioSource(" in text and "track=-1" not in text, text)
 check("QTGMC is called", 'QTGMC(Preset="Medium"' in text, text)
 check("its index is cleaned up afterwards", video.index_files == [video.filepath + ".lwi"], video.index_files)
+notes = []
+text, _ = script(QTGMC, "FFVideoSource FFAudioSource " + QTGMC_ALL, notes)
+check("with nnedi3 installed the preset is left to pick its interpolator", "EdiMode" not in text
+      and "function nnedi3" not in text and notes == [], (text, notes))
+
+print("QTGMC where nnedi3 does not exist")
+CORE = "FFVideoSource FFAudioSource MSuper mt_lutxy RemoveGrain "
+text, _ = script(QTGMC, CORE + "yadifmod2 NNEDI3CL", notes)
+check("NNEDI3CL answers QTGMC's nnedi3 calls", "function nnedi3(clip c" in text and "c.NNEDI3CL(" in text
+      and "EdiMode" not in text, text)
+check("nnedi3 is defined before QTGMC is imported", text.index("function nnedi3") < text.index("QTGMC.avsi"), text)
+check("the log says so", len(notes) == 1 and "NNEDI3CL" in notes[0], notes)
+text, _ = script(QTGMC, CORE + "yadifmod2", notes)
+check("without NNEDI3CL, yadifmod2", 'QTGMC(Preset="Medium", EdiMode="RepYadif", EdiThreads=' in text
+      and "function nnedi3" not in text, text)
+check("the log says so", len(notes) == 1 and "yadifmod2" in notes[0] and "QTempGaussMC" in notes[0], notes)
+text, _ = script(dict(QTGMC, reduce_fps=True), CORE, notes)
+check("without either, a bob", 'QTGMC(Preset="Medium", EdiMode="Bob", FPSDivisor=2, EdiThreads=' in text, text)
+check("the log says so", len(notes) == 1 and "bob" in notes[0], notes)
+text, _ = script(dict(QTGMC, preset="Ultra Fast"), CORE + "NNEDI3CL", notes)
+check("Ultra Fast without yadifmod2 bobs too", 'EdiMode="Bob"' in text and "function nnedi3" not in text
+      and len(notes) == 1 and "yadifmod2 is not installed" in notes[0], (text, notes))
+text, _ = script(dict(QTGMC, preset="Draft"), CORE, notes)
+check("Draft never needed an interpolator", "EdiMode" not in text and notes == [], (text, notes))
+text, _ = script(BASE, "FFVideoSource FFAudioSource NNEDI3CL", notes)
+check("nothing of this in a script without QTGMC", "function nnedi3" not in text and notes == [], (text, notes))
+
 open(video.filepath + ".lwi", "w").close()
 _, video = script(QTGMC, "LWLibavVideoSource LWLibavAudioSource " + QTGMC_ALL)
 check("an index that was already there is left alone", video.index_files == [], video.index_files)

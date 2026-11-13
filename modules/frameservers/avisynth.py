@@ -7,6 +7,10 @@ On Windows every plugin is bundled in plugins/ and loaded by path. Those are Win
 AviSynth+ autoloads, and only the two portable .avsi scripts come from plugins/. What is installed differs
 from machine to machine, so there the install is asked — through FFmpeg, the same way the encode will reach
 it — rather than assumed (issue #21).
+
+nnedi3, the interpolator QTGMC uses at most presets, has no Linux or macOS build as an AviSynth+ plugin. Without
+it QTGMC still runs: its interpolation step is given to NNEDI3CL (the same network on OpenCL, which does build
+there), failing that to yadifmod2, failing that to a plain bob. Checked against AviSynth+ 3.7.6 on Arch Linux.
 """
 
 import os
@@ -41,6 +45,22 @@ QTGMC_PLUGIN_FUNCTIONS = {
     "yadifmod2": "yadifmod2",
     "FFT3DFilter": "fft3dfilter",
 }
+
+# Asked about as well, though QTGMC does not call it: what can stand in for nnedi3 where that does not exist
+NNEDI3CL = "NNEDI3CL"
+
+# nnedi3() as QTGMC calls it, served by NNEDI3CL. The parameters are nnedi3's; `threads`, `opt` and `fapprox`
+# mean nothing to an OpenCL filter and are accepted and dropped. U/V=false is nnedi3 for "luma only".
+NNEDI3CL_SHIM = """\
+function nnedi3(clip c, int "field", bool "dh", bool "Y", bool "U", bool "V", int "nsize", int "nns", int "qual", \\
+                int "etype", int "pscrn", int "threads", int "opt", int "fapprox")
+{
+    chroma = default(U, true) || default(V, true)
+    planes = (c.IsY() || !chroma) ? [0] : [0, 1, 2]
+    return c.NNEDI3CL(field=default(field, -1), dh=default(dh, false), planes=planes, nsize=default(nsize, 6), \\
+                      nns=default(nns, 1), qual=default(qual, 1), etype=default(etype, 0), pscrn=default(pscrn, 2))
+}
+"""
 
 _PROBE_MARK = re.compile(r'videer-probe:\[(.*?)\]')
 
@@ -104,6 +124,15 @@ def probe_avisynth(ffmpeg: Optional[str] = None) -> AviSynthInstall:
     asked = [name for entry in SOURCE_FILTERS for name in entry[:2]] + list(QTGMC_PLUGIN_FUNCTIONS)
     lines = ['found = ""']
     lines += [f'found = FunctionExists("{name}") ? found + "{name} " : found' for name in asked]
+    # NNEDI3CL being loaded is not NNEDI3CL working: it needs an OpenCL device and its weights file, and says
+    # so only when a clip is built with it. So build one.
+    lines += ['usable = false',
+              'try {',
+              f'    BlankClip(length=1, width=64, height=64, pixel_type="YV12").{NNEDI3CL}(field=1)',
+              '    usable = true',
+              '} catch (problem) {',
+              '}',
+              f'found = usable ? found + "{NNEDI3CL} " : found']
     lines.append('Assert(false, "videer-probe:[" + found + "]")')
 
     output = ''
@@ -216,13 +245,54 @@ class AviSynthFrameserver(Frameserver):
                        if not os.path.exists(os.path.join(self.plugins_path, name))]
             if scripts:
                 issues.append("Missing AviSynth scripts in plugins/: " + ", ".join(scripts))
+            # The interpolators are not on this list: QTGMC runs without them, see _interpolation()
             plugins = [plugin for function, plugin in QTGMC_PLUGIN_FUNCTIONS.items()
-                       if plugin in self._qtgmc_plugins() and function not in install.functions]
+                       if plugin in self._qtgmc_plugins() and plugin not in ("nnedi3", "yadifmod2")
+                       and function not in install.functions]
             if plugins:
                 issues.append(f"QTGMC ({self.settings.get('preset', 'Medium')}) needs AviSynth+ plugins that are "
                               f"not installed on this system: {', '.join(plugins)}. Install them, or use "
                               f"QTempGaussMC or bwdif instead.")
         return issues
+
+    def _interpolation(self) -> Tuple[Optional[str], bool, Optional[str]]:
+        """
+        How QTGMC interpolates here: (EdiMode to pass or None for the preset's own, whether nnedi3() has to be
+        defined on top of NNEDI3CL, what to tell the user or None).
+
+        On Windows the preset's own interpolator is bundled. Elsewhere it is whatever is installed, and nnedi3
+        cannot be: it has no build outside Windows. The rest of QTGMC — the motion-compensated temporal
+        smoothing that makes it QTGMC — is the same either way; what changes is the first guess at the missing
+        lines that it refines.
+        """
+        if WINDOWS or not self._uses_qtgmc():
+            return None, False, None
+        wanted = self._qtgmc_plugins()
+        have = self._system_install().functions
+        if "nnedi3" in wanted:
+            if "nnedi3" in have:
+                return None, False, None
+            if NNEDI3CL in have:
+                return None, True, ("nnedi3 is not installed (it has no build for this system); QTGMC "
+                                    "interpolates with NNEDI3CL, the same network on OpenCL")
+            missing = "nnedi3 is not installed (it has no build for this system) and NNEDI3CL is not usable"
+        elif "yadifmod2" in wanted:
+            if "yadifmod2" in have:
+                return None, False, None
+            missing = "yadifmod2 is not installed"
+        else:
+            return None, False, None
+        if "yadifmod2" in have:
+            return "RepYadif", False, (f"{missing}; QTGMC interpolates with yadifmod2 instead, as its Ultra Fast "
+                                       f"preset does. Fine detail and diagonals are a little softer; "
+                                       f"QTempGaussMC gives the full result")
+        return "Bob", False, (f"{missing}, nor is yadifmod2; QTGMC interpolates with a plain bob instead, as its "
+                              f"Draft preset does. Fine detail and diagonals are softer; QTempGaussMC gives the "
+                              f"full result")
+
+    def notes(self) -> List[str]:
+        note = self._interpolation()[2]
+        return [note] if note else []
 
     def _qtgmc_plugins(self) -> List[str]:
         """The plugins QTGMC calls at the selected preset"""
@@ -256,6 +326,10 @@ class AviSynthFrameserver(Frameserver):
             if not self._uses_qtgmc():
                 avs_file.write('\n')
                 return
+
+        if not WINDOWS and self._interpolation()[1]:
+            avs_file.write('# nnedi3 does not exist on this system: QTGMC\'s calls to it go to NNEDI3CL\n')
+            avs_file.write(NNEDI3CL_SHIM)
 
         # Import scripts
         for script in self.PLUGIN_SCRIPTS:
@@ -379,14 +453,14 @@ class AviSynthFrameserver(Frameserver):
         
         # QTGMC deinterlacing — all presets are usable, plugins are bundled
         preset = self.settings.get('preset', 'Medium')
-        threads = self._edi_threads()
-        
+        arguments = [f'Preset="{preset}"']
+        edi_mode = self._interpolation()[0]
+        if edi_mode:
+            arguments.append(f'EdiMode="{edi_mode}"')       # the preset's interpolator is not installed here
         if self.settings.get('reduce_fps', False):
-            # Reduce frame rate (halve FPS)
-            avs_file.write(f'QTGMC(Preset="{preset}", FPSDivisor=2, EdiThreads={threads})\n')
-        else:
-            # Keep original frame rate
-            avs_file.write(f'QTGMC(Preset="{preset}", EdiThreads={threads})\n')
+            arguments.append('FPSDivisor=2')                # halve the frame rate
+        arguments.append(f'EdiThreads={self._edi_threads()}')
+        avs_file.write(f'QTGMC({", ".join(arguments)})\n')
         
         avs_file.write('\n')
     

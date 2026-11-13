@@ -13,6 +13,7 @@ its folder); the installer puts it where the OS expects programs and gives it a 
 Usage:  python build.py                       (run from the repository root)
         python build.py --no-installer        (archive only, for a quick local build)
         python build.py --checksum FILE...    (rewrite the .sha256 of files that came back signed)
+        python build.py --desktop-entry       (print the Linux menu entry; packaging/arch/PKGBUILD installs it)
 Needs:  pip install -r requirements.txt pyinstaller
         Windows installer: Inno Setup 6 (ISCC.exe on PATH or in its default folder)
 """
@@ -393,6 +394,9 @@ def report(path: str) -> None:
 
 def main():
     os.chdir(ROOT)
+    if "--desktop-entry" in sys.argv:
+        sys.stdout.write(DESKTOP_ENTRY % {"description": APP_DESCRIPTION})
+        return
     if "--checksum" in sys.argv:
         # CI re-runs this on files that came back signed from a signing service: the bytes changed, so the
         # .sha256 written at packaging time no longer matches what people download.

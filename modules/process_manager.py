@@ -327,6 +327,9 @@ class ProcessThread(QThread):
                     file.add_error(str(e))
                     return False
                 file.log_info(f"{self.frameserver.name} script: {served.script}")
+                for note in self.frameserver.notes():
+                    file.log_info(note)
+                    self.info_signal.emit(f"{file.filename}: {note}")
 
             temp_output = file.get_temp_output_path()
             final_output = file.get_full_output_path()

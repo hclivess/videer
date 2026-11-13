@@ -186,12 +186,13 @@ summary), so a file can be reproduced from itself years later.
 |---|---|---|
 | Windows x64 | `videer-<version>-windows-x64-setup.exe` | Installs for your user only — no administrator rights — with a Start-menu entry and an uninstaller |
 | Linux x64 | `videer-<version>-linux-x64.deb` | `sudo apt install ./videer-*.deb` — Debian, Ubuntu 22.04+ and derivatives; adds `videer` to the menu and the PATH |
+| Arch Linux, Manjaro | `videer-<version>-1-any.pkg.tar.zst` | `sudo pacman -U videer-*.pkg.tar.zst` — runs on the distribution's own Python, Qt and FFmpeg, which pacman installs with it; adds `videer` to the menu and the PATH |
 | macOS (Apple silicon) | `videer-<version>-macos-arm64.dmg` | Open it and drag *videer* to *Applications* |
 
 **Portable** — the same release carries `.zip` (Windows) / `.tar.gz` (Linux, macOS) archives: unpack anywhere and
 run `videer`. A portable copy keeps everything it writes (presets, the queue, a downloaded FFmpeg or VapourSynth) in
 its own folder. So does the Windows installer's copy, which lives in your own `%LOCALAPPDATA%\Programs`; the
-`.deb` installs to `/opt`, which is not yours to write to, so there — and wherever videer cannot write beside
+`.deb` installs to `/opt` and the pacman package to `/usr/lib/videer`, which are not yours to write to, so there — and wherever videer cannot write beside
 itself — it uses your user data folder instead (`~/.local/share/videer`, `~/Library/Application Support/videer`,
 `%LOCALAPPDATA%\videer`).
 
@@ -225,12 +226,19 @@ Run this way videer finds the `vspipe` in its own environment, so *Install Vapou
   - *Linux, macOS:* install AviSynth+ from your distribution (`avisynthplus` on Arch / Manjaro) and use an FFmpeg
     built with `--enable-avisynth`. The bundled plugins are Windows DLLs and are not used; AviSynth+ autoloads the
     ones installed on the system. Any script needs one source filter — FFMS2, L-SMASH-Works or BestSource, built as
-    an AviSynth+ plugin. QTGMC also needs mvtools2, masktools2, RgTools and nnedi3 (yadifmod2 for *Ultra Fast*,
-    FFT3DFilter for *Very Slow* / *Placebo*); its `.avsi` scripts come with videer. Pressing Start names whatever
-    is missing. mvtools2, masktools2 and RgTools document a CMake build for Linux in their READMEs; the nnedi3
-    plugin QTGMC calls ([pinterf/NNEDI3](https://github.com/pinterf/NNEDI3)) documents none, and it is needed by
-    every preset except *Ultra Fast* and *Draft*. In practice, on Linux and macOS use QTempGaussMC: the same
-    deinterlacer, with nothing to compile.
+    an AviSynth+ plugin (`ffms2` on Arch / Manjaro brings one). QTGMC also needs mvtools2, masktools2 and RgTools
+    (FFT3DFilter too for *Very Slow* / *Placebo*); its `.avsi` scripts come with videer. Pressing Start names
+    whatever is missing. All three document a CMake build for Linux in their READMEs — configure with
+    `-DCMAKE_INSTALL_PREFIX=/usr`, because AviSynth+ autoloads from `/usr/lib/avisynth` and the default prefix puts
+    them in `/usr/local/lib/avisynth`, where it does not look.
+  - *nnedi3*, the interpolator QTGMC uses at most presets, has no Linux or macOS build
+    ([pinterf/NNEDI3](https://github.com/pinterf/NNEDI3)). QTGMC runs without it: videer hands the interpolation
+    to [NNEDI3CL](https://github.com/Asd-g/AviSynthPlus-NNEDI3CL) when that is installed and works (the same
+    network on OpenCL; it builds on Linux, wants `nnedi3_weights.bin` beside the plugin and an OpenCL device —
+    `pocl` gives one on the CPU), otherwise to yadifmod2, otherwise to a plain bob, and the log says which. The
+    motion-compensated smoothing that makes QTGMC what it is is the same in all three; the yadifmod2 and bob
+    routes are a little softer on fine detail and diagonals. For the full result with nothing to compile, use
+    QTempGaussMC.
 
 ## Windows says the app is not safe
 
@@ -295,7 +303,27 @@ python tools/screenshot.py          # retake thumb.png and demo.gif from a real 
 The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); the `.deb` needs `dpkg-deb`, the
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, encodes with the
-FFmpeg of a newer distribution than the one it was built on, and the `.deb` is installed and run.
+FFmpeg of a newer distribution than the one it was built on, and the `.deb` is installed and run. The pacman
+package is `packaging/arch/PKGBUILD` (`cd packaging/arch && makepkg -si`); CI builds it with `makepkg` in an Arch
+container, installs it there and runs the installed copy.
+
+## Changes in 3.17.8
+
+**QTGMC on Linux and macOS, and a package for Arch and Manjaro** ([#21](https://github.com/hclivess/videer/issues/21))
+
+- **QTGMC no longer needs nnedi3 off Windows.** That plugin has no Linux or macOS build, and videer refused every
+  QTGMC preset except *Ultra Fast* and *Draft* for want of it. Now the interpolation step goes to NNEDI3CL when it
+  is installed and actually works (videer builds a clip with it to find out: it needs an OpenCL device and its
+  weights file), otherwise to yadifmod2, otherwise to a plain bob. The log says which one stood in. mvtools2,
+  masktools2 and RgTools are still required, and still named when missing. Checked against AviSynth+ 3.7.6 on
+  Arch Linux with each of the three in turn: 25i in, 50p out, every frame.
+- **A pacman package**, `videer-<version>-1-any.pkg.tar.zst`: `sudo pacman -U` it. It runs videer on the
+  distribution's own Python, PySide6 and FFmpeg instead of the libraries of the Ubuntu machine the `.tar.gz` is
+  built on — the mismatch behind the GLIBCXX failure fixed in 3.17.7. CI builds it with `makepkg`, installs it
+  and encodes with the installed copy. *Install VapourSynth…* works from it as well.
+- The README says where AviSynth+ looks for plugins on Linux (`/usr/lib/avisynth`, not the `/usr/local` a default
+  CMake install uses).
+- The headless self-test waits for the encoding thread before it exits; it could abort after a run that passed.
 
 ## Changes in 3.17.7
 

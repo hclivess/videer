@@ -1,0 +1,49 @@
+# Maintainer: hclivess <https://github.com/hclivess>
+#
+# videer for Arch Linux and Manjaro, run from source on the system's Python, Qt and FFmpeg. The PyInstaller
+# build that the .tar.gz and .deb carry was made on Ubuntu 22.04 and brings that system's libraries with it;
+# on a rolling distribution the distribution's own are the better fit (issue #21).
+#
+# Every release has this built and attached as videer-<version>-1-any.pkg.tar.zst:
+#     sudo pacman -U videer-<version>-1-any.pkg.tar.zst
+# To build it yourself:  cd packaging/arch && makepkg -si
+# (the workflow puts a `git archive` of the checkout beside this file, so makepkg packages that instead of
+# downloading the tag)
+
+pkgname=videer
+pkgver=3.17.8
+pkgrel=1
+pkgdesc="FFmpeg batch encoder with QTGMC / QTempGaussMC deinterlacing and measured per-file CRF"
+arch=('any')
+url="https://github.com/hclivess/videer"
+license=('MIT')
+depends=('python' 'pyside6' 'python-psutil' 'ffmpeg')
+optdepends=('avisynthplus: QTGMC deinterlacing and AviSynth+ scripts'
+            'ffms2: the source filter AviSynth+ scripts read the video with'
+            'vapoursynth: QTempGaussMC deinterlacing with the system VapourSynth'
+            'pocl: OpenCL on the CPU for NNEDI3CL, where the graphics driver has none'
+            'perl-image-exiftool: metadata transfer')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    local app="$pkgdir/usr/lib/$pkgname"
+
+    install -d "$app"
+    cp -r main.py config.py rename.py requirements-vapoursynth.txt icon.png icon.ico models modules utils "$app/"
+    # Of plugins/ only the AviSynth+ scripts: the rest are Windows DLLs, and here the plugins are the system's
+    install -Dm644 -t "$app/plugins" plugins/*.avsi
+    find "$app" -name __pycache__ -prune -exec rm -r {} +
+    python -m compileall -q -d "/usr/lib/$pkgname" "$app"
+
+    install -d "$pkgdir/usr/bin"
+    printf '#!/bin/sh\nexec python /usr/lib/%s/main.py "$@"\n' "$pkgname" > "$pkgdir/usr/bin/$pkgname"
+    chmod 755 "$pkgdir/usr/bin/$pkgname"
+
+    install -d "$pkgdir/usr/share/applications"
+    python build.py --desktop-entry > "$pkgdir/usr/share/applications/$pkgname.desktop"
+    install -Dm644 icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/$pkgname.png"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -361,7 +361,15 @@ def _run_selftest(window: "MainWindow", path: str):
         good = (ok == total == 1 and os.path.isfile(out) and os.path.getsize(out) > 0 and not os.path.exists(part))
         print(f"selftest: finished {ok}/{total}, output={out} exists={os.path.isfile(out)} part_left={os.path.exists(part)}"
               f" : {'ok' if good else 'FAILED'}", flush=True)
-        QTimer.singleShot(0, lambda: sys.exit(0 if good else 1))
+        QTimer.singleShot(0, lambda: leave(0 if good else 1))
+
+    def leave(code):
+        # The worker announces the end from inside run(). Leaving while it is still on its way out destroys a
+        # running QThread, which is an abort and a core dump after a run that passed.
+        thread = getattr(window.process_manager, "process_thread", None)
+        if thread is not None:
+            thread.wait(10_000)
+        sys.exit(code)
     window.process_manager.processing_finished.disconnect(window.on_processing_finished)
     window.process_manager.processing_finished.connect(finished)
     def start():

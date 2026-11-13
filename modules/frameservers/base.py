@@ -69,6 +69,10 @@ class Frameserver:
         """What stops this frameserver from running with these settings on this machine; empty when nothing"""
         return []
 
+    def notes(self) -> List[str]:
+        """What prepare() did differently from what was asked, for the log; empty when nothing"""
+        return []
+
     def child_env(self, env: Dict[str, str]) -> Dict[str, str]:
         """The environment FFmpeg and the producer run in"""
         return env

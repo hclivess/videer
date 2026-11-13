@@ -721,7 +721,7 @@ class UIManager(QWidget):
             self.controls['deinterlacer'].addItem(text, value)
         self.controls['deinterlacer'].setToolTip(
             "QTGMC: highest quality, needs AviSynth+ (bundled plugins on Windows; on Linux and macOS your own\n"
-            "    AviSynth+ install with a source filter, mvtools2, masktools2, RgTools and nnedi3).\n"
+            "    AviSynth+ install with a source filter, mvtools2, masktools2 and RgTools).\n"
             "QTempGaussMC: the vs-jetpack rewrite of QTGMC — faster, high-bit-depth correct; needs VapourSynth\n"
             "    (any OS: pip install -r requirements-vapoursynth.txt).\n"
             "bwdif / yadif: built into FFmpeg, work on every OS and with any input."
