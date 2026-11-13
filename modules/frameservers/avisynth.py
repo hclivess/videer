@@ -62,6 +62,33 @@ function nnedi3(clip c, int "field", bool "dh", bool "Y", bool "U", bool "V", in
 }
 """
 
+# Where AviSynth+ plugins end up that the library does not look. It autoloads from the prefix it was built
+# with — /usr/lib/avisynth for a distribution's package — plus ~/.avisynth and ~/.local/lib/avisynth, while a
+# plugin's own `cmake --install` defaults to /usr/local, and some distributions use lib64 or a multiarch
+# folder. A plugin installed by the book was then "not installed". Naming a folder twice, or one that is
+# not there, does no harm (checked against 3.7.6), but only those that exist are written.
+EXTRA_PLUGIN_DIRS = (
+    "/usr/local/lib/avisynth",
+    "/usr/local/lib64/avisynth",
+    "/usr/lib64/avisynth",
+    f"/usr/lib/{os.uname().machine if hasattr(os, 'uname') else 'x86_64'}-linux-gnu/avisynth",
+    "/usr/lib/avisynth",
+    "/opt/homebrew/lib/avisynth",       # Homebrew on Apple silicon
+    "/opt/local/lib/avisynth",          # MacPorts
+)
+
+
+def autoload_lines(folders: Optional[Tuple[str, ...]] = None) -> List[str]:
+    """
+    AddAutoloadDir() for every plugin folder that exists. They have to be the first lines of a script:
+    AviSynth+ refuses to change the list once anything has made it load the plugins.
+    """
+    if WINDOWS:
+        return []
+    folders = EXTRA_PLUGIN_DIRS if folders is None else folders
+    return [f'AddAutoloadDir({avs_string(folder)})' for folder in folders if os.path.isdir(folder)]
+
+
 _PROBE_MARK = re.compile(r'videer-probe:\[(.*?)\]')
 
 
@@ -122,7 +149,7 @@ def probe_avisynth(ffmpeg: Optional[str] = None) -> AviSynthInstall:
                                      "builds are published — or disable AviSynth+ and use bwdif/yadif.")
 
     asked = [name for entry in SOURCE_FILTERS for name in entry[:2]] + list(QTGMC_PLUGIN_FUNCTIONS)
-    lines = ['found = ""']
+    lines = autoload_lines() + ['found = ""']
     lines += [f'found = FunctionExists("{name}") ? found + "{name} " : found' for name in asked]
     # NNEDI3CL being loaded is not NNEDI3CL working: it needs an OpenCL device and its weights file, and says
     # so only when a clip is built with it. So build one.
@@ -251,8 +278,9 @@ class AviSynthFrameserver(Frameserver):
                        and function not in install.functions]
             if plugins:
                 issues.append(f"QTGMC ({self.settings.get('preset', 'Medium')}) needs AviSynth+ plugins that are "
-                              f"not installed on this system: {', '.join(plugins)}. Install them, or use "
-                              f"QTempGaussMC or bwdif instead.")
+                              f"not installed on this system: {', '.join(plugins)}. Install them — AviSynth+ "
+                              f"loads plugins from ~/.local/lib/avisynth, /usr/lib/avisynth and "
+                              f"/usr/local/lib/avisynth — or use QTempGaussMC or bwdif instead.")
         return issues
 
     def _interpolation(self) -> Tuple[Optional[str], bool, Optional[str]]:
@@ -323,6 +351,8 @@ class AviSynthFrameserver(Frameserver):
             # The bundled DLLs are Windows binaries. Here the plugins are the system's own, which AviSynth+
             # autoloads; only the scripts below are portable, and only QTGMC needs them.
             avs_file.write('# plugins: autoloaded from the system AviSynth+ plugin directories\n')
+            for line in autoload_lines():
+                avs_file.write(line + '\n')
             if not self._uses_qtgmc():
                 avs_file.write('\n')
                 return

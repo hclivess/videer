@@ -9,6 +9,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import atexit
+import shutil
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -25,6 +27,7 @@ from utils.file_utils import FileOperations, backup_path
 
 failures = []
 work = tempfile.mkdtemp(prefix="videer-test-")
+atexit.register(shutil.rmtree, work, ignore_errors=True)
 
 
 def check(name, condition, detail=""):

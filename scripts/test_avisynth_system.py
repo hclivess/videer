@@ -7,7 +7,9 @@ tells the user and what script it writes. It does not prove AviSynth+ itself acc
 
 Run from the repository root:  python scripts/test_avisynth_system.py
 """
+import atexit
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -47,6 +49,8 @@ if mode == "nolib":
     sys.stderr.write("[avisynth @ 0x1] AviSynth library could not be loaded: libavisynth.so\n")
     sys.stderr.write("Error opening input file %s.\n" % script)
     sys.exit(1)
+if os.environ.get("FAKE_AVS_KEEP"):
+    open(os.environ["FAKE_AVS_KEEP"], "w").write(open(script).read())
 asked = re.findall(r'FunctionExists\("(\w+)"\)', open(script).read())
 have = os.environ.get("FAKE_AVS_HAVE", "").split()
 if ".NNEDI3CL(" in open(script).read():      # not asked by name: the probe builds a clip with it
@@ -57,6 +61,7 @@ sys.exit(1)
 '''
 
 work = tempfile.mkdtemp(prefix="videer-test-")
+atexit.register(shutil.rmtree, work, ignore_errors=True)
 fake = os.path.join(work, "ffmpeg")
 with open(fake, "w") as fh:
     fh.write(FAKE)
@@ -158,6 +163,24 @@ check("nothing of this in a script without QTGMC", "function nnedi3" not in text
 open(video.filepath + ".lwi", "w").close()
 _, video = script(QTGMC, "LWLibavVideoSource LWLibavAudioSource " + QTGMC_ALL)
 check("an index that was already there is left alone", video.index_files == [], video.index_files)
+
+print("plugins installed where AviSynth+ does not look")
+local = os.path.join(work, "usr-local-lib-avisynth")
+os.mkdir(local)
+avisynth.EXTRA_PLUGIN_DIRS = (local, os.path.join(work, "not-there"))
+text, _ = script(QTGMC, "FFVideoSource FFAudioSource " + QTGMC_ALL)
+first = [line for line in text.splitlines() if line and not line.startswith("#")][0]
+check("the folder that exists is added to the autoload list", f'AddAutoloadDir("{local}")' in text, text)
+check("before anything else, or AviSynth+ refuses", first.startswith("AddAutoloadDir("), first)
+check("a folder that is not there is not written", "not-there" not in text, text)
+seen = os.path.join(work, "probe-seen.avs")
+os.environ["FAKE_AVS_KEEP"] = seen
+issues(BASE, have="FFVideoSource FFAudioSource")
+check("the check asks with the same folders", os.path.isfile(seen)
+      and open(seen).read().startswith(f'AddAutoloadDir("{local}")'), seen)
+avisynth.EXTRA_PLUGIN_DIRS = ()
+text, _ = script(BASE, "FFVideoSource FFAudioSource")
+check("nothing is added when there is no such folder", "AddAutoloadDir" not in text, text)
 
 print()
 print("FAILED: " + ", ".join(failures) if failures else "all passed")

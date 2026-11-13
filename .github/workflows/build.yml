@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          python -m pip install -r requirements.txt pyinstaller certifi
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
             sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 ffmpeg
@@ -148,23 +148,34 @@ jobs:
           ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$OUT" | grep -q aac
 
       # The build machine is the oldest system the binary supports, so every other step here runs the frozen app
-      # against an FFmpeg exactly as old as its bundled libstdc++ - and cannot see the bundle's libraries leaking
-      # into the programs it starts. On a newer distribution the system FFmpeg then fails with "GLIBCXX_3.4.32
-      # not found" (issue #21). So: the same self-test, with the FFmpeg of a newer release.
-      - name: The frozen build drives a newer system's FFmpeg (Linux)
+      # where its bundled libraries are at home - and cannot see them failing anywhere else. On a newer
+      # distribution the system FFmpeg got the bundle's libstdc++ ("GLIBCXX_3.4.32 not found"), and on one that
+      # keeps its certificates elsewhere no download verified (CERTIFICATE_VERIFY_FAILED) - both issue #21. So:
+      # encode and install VapourSynth with the release build on four other distributions.
+      - name: The frozen build on other distributions (Linux)
         if: runner.os == 'Linux'
         run: |
           python scripts/test_child_environment.py
-          mkdir -p "$RUNNER_TEMP/newer"
-          cp /tmp/clip.mp4 "$RUNNER_TEMP/newer/clip.mp4"
-          docker run --rm -v "$RUNNER_TEMP/frozen:/frozen:ro" -v "$RUNNER_TEMP/newer:/work" ubuntu:24.04 bash -ec '
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ffmpeg libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 >/dev/null
-            mkdir /opt/app && cp -r /frozen/videer-*-linux-x64 /opt/app/
-            QT_QPA_PLATFORM=offscreen VIDEER_SELFTEST=/work/clip.mp4 timeout 600 /opt/app/*/videer
-          '
-          ls -la "$RUNNER_TEMP/newer/clip_libx264_aac_crf30_abr96.mkv"
+          python scripts/test_download_certificates.py
+          for image in ubuntu:24.04 archlinux:latest fedora:latest opensuse/tumbleweed:latest; do
+            docker run --rm -v "$RUNNER_TEMP/frozen:/frozen:ro" -v "$PWD/scripts:/scripts:ro" "$image" bash /scripts/ci_other_distro.sh
+          done
+
+      # What videer does about AviSynth+ where it is not bundled. The stand-in FFmpeg covers the decisions; on
+      # macOS the real Homebrew packages must then get the real reason: that FFmpeg has no AviSynth support.
+      - name: AviSynth+ off Windows
+        if: runner.os != 'Windows'
+        run: |
+          python scripts/test_avisynth_system.py
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install avisynthplus ffmpeg >/dev/null
+            python - <<'PY'
+          from modules import frameservers
+          issues = frameservers.frameserver_issues({"use_avisynth": True})
+          print(issues)
+          assert len(issues) == 1 and ("--enable-avisynth" in issues[0] or "source filter" in issues[0]), issues
+          PY
+          fi
 
       - name: Install the .deb and run the installed copy (Linux)
         if: runner.os == 'Linux'

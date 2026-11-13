@@ -14,7 +14,7 @@ Usage:  python build.py                       (run from the repository root)
         python build.py --no-installer        (archive only, for a quick local build)
         python build.py --checksum FILE...    (rewrite the .sha256 of files that came back signed)
         python build.py --desktop-entry       (print the Linux menu entry; packaging/arch/PKGBUILD installs it)
-Needs:  pip install -r requirements.txt pyinstaller
+Needs:  pip install -r requirements.txt pyinstaller certifi
         Windows installer: Inno Setup 6 (ISCC.exe on PATH or in its default folder)
 """
 import hashlib
@@ -131,6 +131,9 @@ def pyinstaller_command() -> list:
         # what the in-app VapourSynth install feeds to pip
         f"--add-data={os.path.join(ROOT, 'requirements-vapoursynth.txt')}{os.pathsep}.",
         "--copy-metadata=psutil",
+        # certificate authorities for the in-app downloads, for a system that keeps its own somewhere the
+        # bundled OpenSSL does not look (utils/download.py)
+        "--hidden-import=certifi", "--collect-data=certifi",
     ]
     if platform.system() != "Darwin":
         cmd.append(f"--icon={os.path.join(ROOT, 'icon.ico')}")

@@ -228,9 +228,12 @@ Run this way videer finds the `vspipe` in its own environment, so *Install Vapou
     ones installed on the system. Any script needs one source filter — FFMS2, L-SMASH-Works or BestSource, built as
     an AviSynth+ plugin (`ffms2` on Arch / Manjaro brings one). QTGMC also needs mvtools2, masktools2 and RgTools
     (FFT3DFilter too for *Very Slow* / *Placebo*); its `.avsi` scripts come with videer. Pressing Start names
-    whatever is missing. All three document a CMake build for Linux in their READMEs — configure with
-    `-DCMAKE_INSTALL_PREFIX=/usr`, because AviSynth+ autoloads from `/usr/lib/avisynth` and the default prefix puts
-    them in `/usr/local/lib/avisynth`, where it does not look.
+    whatever is missing. All three document a CMake build for Linux in their READMEs. Where they land does not
+    matter: besides AviSynth+'s own folders (`/usr/lib/avisynth` for a distribution's package,
+    `~/.local/lib/avisynth` with no root needed) videer has it load from `/usr/local/lib/avisynth`, where a
+    default `cmake --install` puts them, the `lib64` and multiarch variants, and Homebrew's and MacPorts' folders.
+  - *macOS:* Homebrew has `avisynthplus`, but its `ffmpeg` is built without AviSynth support, so QTGMC there
+    needs an FFmpeg you configure yourself — videer says so when you press Start. Use QTempGaussMC.
   - *nnedi3*, the interpolator QTGMC uses at most presets, has no Linux or macOS build
     ([pinterf/NNEDI3](https://github.com/pinterf/NNEDI3)). QTGMC runs without it: videer hands the interpolation
     to [NNEDI3CL](https://github.com/Asd-g/AviSynthPlus-NNEDI3CL) when that is installed and works (the same
@@ -293,7 +296,7 @@ videer --install-vapoursynth        install VapourSynth for QTempGaussMC without
 ## Build
 
 ```
-pip install -r requirements.txt pyinstaller
+pip install -r requirements.txt pyinstaller certifi
 python build.py                     # archive + installer for this OS, each with a .sha256
 python build.py --no-installer      # archive only
 python tools/layout_check.py        # no clipped controls, no widget attribute shadowing a Qt method
@@ -303,9 +306,29 @@ python tools/screenshot.py          # retake thumb.png and demo.gif from a real 
 The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); the `.deb` needs `dpkg-deb`, the
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
 own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, encodes with the
-FFmpeg of a newer distribution than the one it was built on, and the `.deb` is installed and run. The pacman
+FFmpeg of four other distributions (Ubuntu 24.04, Arch, Fedora, openSUSE Tumbleweed) and installs VapourSynth on
+each, and the `.deb` is installed and run. The pacman
 package is `packaging/arch/PKGBUILD` (`cd packaging/arch && makepkg -si`); CI builds it with `makepkg` in an Arch
 container, installs it there and runs the installed copy.
+
+## Changes in 3.17.9
+
+**The Linux build on distributions that are not Ubuntu** ([#21](https://github.com/hclivess/videer/issues/21))
+
+- ***Install VapourSynth…* and *Tools ▸ FFmpeg Features* could not download anything** from the `.tar.gz` or
+  `.deb` on Arch, Manjaro, Fedora or openSUSE: `CERTIFICATE_VERIFY_FAILED`. The packaged app looked for the
+  certificate authorities where Ubuntu, its build machine, keeps them. Downloads are now verified against the
+  system's own bundle wherever the distribution keeps it, and against a bundle the app carries when there is none.
+  This is the setup-button failure from the report, reproduced on Arch at last.
+- **AviSynth+ plugins in `/usr/local` are found.** A plugin's default `cmake --install` puts it in
+  `/usr/local/lib/avisynth`, a distribution's AviSynth+ loads from `/usr/lib/avisynth`, and videer reported the
+  plugin as not installed. videer now has AviSynth+ load from every usual folder that exists, in the check and in
+  the script; the message about missing plugins names the folders.
+- **The release build is run on four other distributions before it is published** — Ubuntu 24.04, Arch, Fedora
+  and openSUSE Tumbleweed: an encode with that system's FFmpeg and a VapourSynth install on each. Until now it was
+  only ever tested where it was built, which is how both failures in this report got out.
+- macOS: Homebrew's FFmpeg has no AviSynth support, so QTGMC cannot run there with stock packages. The README says
+  so, and CI checks on a Mac that videer names that as the reason.
 
 ## Changes in 3.17.8
 
