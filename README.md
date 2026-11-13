@@ -197,7 +197,17 @@ itself — it uses your user data folder instead (`~/.local/share/videer`, `~/Li
 
 Every file has a `.sha256` beside it.
 
-**From source** — Python 3.12: `pip install -r requirements.txt && python main.py` (or `run.cmd` / `run.sh`).
+**From source** — Python 3.12: `pip install -r requirements.txt && python main.py` (`run.cmd` does both on
+Windows). With [uv](https://docs.astral.sh/uv/), in the repository:
+
+```
+uv venv --python 3.12
+uv pip install -r requirements.txt
+uv pip install -r requirements-vapoursynth.txt    # optional: VapourSynth for QTempGaussMC, in the same venv
+uv run main.py
+```
+
+Run this way videer finds the `vspipe` in its own environment, so *Install VapourSynth…* is not needed.
 
 **External tools**
 
@@ -217,7 +227,10 @@ Every file has a `.sha256` beside it.
     ones installed on the system. Any script needs one source filter — FFMS2, L-SMASH-Works or BestSource, built as
     an AviSynth+ plugin. QTGMC also needs mvtools2, masktools2, RgTools and nnedi3 (yadifmod2 for *Ultra Fast*,
     FFT3DFilter for *Very Slow* / *Placebo*); its `.avsi` scripts come with videer. Pressing Start names whatever
-    is missing. If those plugins will not build for you, QTempGaussMC is the same deinterlacer with nothing to compile.
+    is missing. mvtools2, masktools2 and RgTools document a CMake build for Linux in their READMEs; the nnedi3
+    plugin QTGMC calls ([pinterf/NNEDI3](https://github.com/pinterf/NNEDI3)) documents none, and it is needed by
+    every preset except *Ultra Fast* and *Draft*. In practice, on Linux and macOS use QTempGaussMC: the same
+    deinterlacer, with nothing to compile.
 
 ## Windows says the app is not safe
 
@@ -281,8 +294,23 @@ python tools/screenshot.py          # retake thumb.png and demo.gif from a real 
 
 The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); the `.deb` needs `dpkg-deb`, the
 `.dmg` `hdiutil`. CI builds all three on every tag and proves them: the frozen build installs VapourSynth with its
-own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, and the `.deb` is
-installed and run.
+own code on every OS, deinterlaces a generated interlaced clip through QTempGaussMC on Linux, encodes with the
+FFmpeg of a newer distribution than the one it was built on, and the `.deb` is installed and run.
+
+## Changes in 3.17.7
+
+**The Linux build on a system newer than the one it was built on** ([#21](https://github.com/hclivess/videer/issues/21))
+
+- The Linux `.tar.gz` and `.deb` could not run the system's FFmpeg on a distribution newer than Ubuntu 22.04:
+  every encode failed at once with ``version `GLIBCXX_3.4.32' not found``. The packaged app carries the libraries
+  of the machine it was built on and was passing them on to every program it started, where the system's FFmpeg
+  found a libstdc++ older than the one it needs. Programs videer starts now get the system's libraries. Reported
+  on Manjaro; reproduced on Ubuntu 24.04, where 3.17.6 encodes 0 of 1 files and this build 1 of 1.
+- The release build is now also run in a newer system than its build machine before it is published, with that
+  system's FFmpeg — the case every earlier check missed, because they all ran where the build was made.
+- Running from source with `uv` is in the README, with thanks to the reporter for the commands.
+- The README no longer mentions a `run.sh` that does not exist, and says what is known about building QTGMC's
+  AviSynth+ plugins on Linux: nnedi3 documents no Linux build, so QTempGaussMC is the practical route there.
 
 ## Changes in 3.17.6
 

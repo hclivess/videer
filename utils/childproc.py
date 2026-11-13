@@ -14,10 +14,49 @@ Three layers:
   macOS has no parent-death signal; there the first layer applies (keep helpers stoppable).
 """
 import atexit
+import os
 import subprocess
 import sys
 import threading
-from typing import Optional, Set
+from typing import MutableMapping, Optional, Set
+
+# The variables a PyInstaller bootloader points at the bundle's own libraries before it starts Python. It keeps
+# what the user had in <NAME>_ORIG.
+_BUNDLE_LIBRARY_VARS = ("LD_LIBRARY_PATH", "LIBPATH")
+
+
+def restore_system_library_path(env: Optional[MutableMapping[str, str]] = None, frozen: Optional[bool] = None) -> bool:
+    """
+    Give child processes the system's libraries back. Returns whether anything was changed.
+
+    A frozen videer is started with LD_LIBRARY_PATH set to its _internal/ folder, which holds the libstdc++,
+    libssl, glib and the rest of the machine it was built on. Every child inherits that: the user's own ffmpeg,
+    ffprobe, vspipe, pip, the browser opened for a link. On a distribution newer than the build machine their
+    libraries need a newer libstdc++ than the bundled one, and nothing starts: "version `GLIBCXX_3.4.32' not
+    found" before a single frame is read (issue #21, Manjaro; the same on Ubuntu 24.04).
+
+    videer itself does not need the variable once it is running. The dynamic loader read it when the process
+    started and keeps its own copy, so taking it out of the environment changes what children get and nothing
+    else.
+    """
+    env = os.environ if env is None else env
+    if not (getattr(sys, "frozen", False) if frozen is None else frozen):
+        return False
+    changed = False
+    for name in _BUNDLE_LIBRARY_VARS:
+        original = env.get(name + "_ORIG")
+        if original:
+            changed = changed or env.get(name) != original
+            env[name] = original
+        elif name in env:
+            del env[name]
+            changed = True
+    return changed
+
+
+# At import, which is before anything in videer starts a process: every spawn in the app goes through this
+# module or inherits os.environ.
+restore_system_library_path()
 
 _procs: Set[subprocess.Popen] = set()
 _lock = threading.Lock()
