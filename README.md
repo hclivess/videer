@@ -323,6 +323,13 @@ each, and the `.deb` is installed and run. The pacman
 package is `packaging/arch/PKGBUILD` (`cd packaging/arch && makepkg -si`); CI builds it with `makepkg` in an Arch
 container, installs it there and runs the installed copy.
 
+## Changes in 3.17.10
+
+- **The README is whole again.** Since 3.17.1 it ended in unresolved merge-conflict markers over an older copy of
+  the feature list, and the live sections had lost what 3.17.1 added. *Preserve film grain*, *Settings per file*,
+  the newer bundled presets and the one *When an encode succeeds* choice are described again; the stale copy, its
+  outdated requirements and a setting that does not exist are gone. No change to the app itself.
+
 ## Changes in 3.17.9
 
 **The Linux build on distributions that are not Ubuntu** ([#21](https://github.com/hclivess/videer/issues/21))
